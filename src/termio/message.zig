@@ -94,6 +94,9 @@ pub const Message = union(enum) {
     /// Join collab session (triggered by OSC 1343;host:port)
     collab_join: [256]u8,
 
+    /// Connect NeovimGui to remote Neovim TCP (triggered by OSC 1344;host:port)
+    collab_nvim_connect: [256]u8,
+
     /// Return a write request for the given data. This will use
     /// write_small if it fits or write_alloc otherwise. This should NOT
     /// be used for stable pointers which can be manually set to write_stable.

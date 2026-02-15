@@ -20,6 +20,12 @@ pub const MessageType = enum(u8) {
     peer_left = 0x04,
     /// Bidirectional: cursor position + buffer name update
     presence = 0x10,
+    /// Bidirectional: buffer edit (line-level changes for live sync)
+    buffer_edit = 0x11,
+    /// Bidirectional: request full file content from peer
+    file_request = 0x12,
+    /// Bidirectional: full file content response
+    file_content = 0x13,
     /// Server -> Client: session token for auth
     session_token = 0x20,
 };
@@ -80,6 +86,99 @@ pub const Presence = struct {
             @memcpy(p.file_name[0..p.file_name_len], buf[12 .. 12 + p.file_name_len]);
         }
         return p;
+    }
+};
+
+/// A buffer edit: line-level change for live collaborative editing.
+/// Sent when nvim_buf_attach detects changes. Format matches nvim_buf_lines_event:
+///   firstline (0-based), lastline (0-based exclusive), new lines
+/// This is the same format as nvim_buf_set_lines expects, so the receiver
+/// can apply it directly.
+pub const BufferEdit = struct {
+    peer_id: u8 = 0,
+    /// File being edited (relative path)
+    file_name: [256]u8 = .{0} ** 256,
+    file_name_len: u16 = 0,
+    /// Range of lines replaced (0-based, lastline exclusive)
+    firstline: u32 = 0,
+    lastline: u32 = 0,
+    /// New line content (newline-separated, may be empty for pure deletion)
+    lines_data: [8192]u8 = .{0} ** 8192,
+    lines_data_len: u16 = 0,
+
+    pub fn getFileName(self: *const BufferEdit) []const u8 {
+        return self.file_name[0..self.file_name_len];
+    }
+
+    pub fn setFileName(self: *BufferEdit, name: []const u8) void {
+        const len: u16 = @intCast(@min(name.len, 256));
+        @memcpy(self.file_name[0..len], name[0..len]);
+        self.file_name_len = len;
+    }
+
+    pub fn getLinesData(self: *const BufferEdit) []const u8 {
+        return self.lines_data[0..self.lines_data_len];
+    }
+
+    pub fn setLinesData(self: *BufferEdit, data: []const u8) void {
+        const len: u16 = @intCast(@min(data.len, 8192));
+        @memcpy(self.lines_data[0..len], data[0..len]);
+        self.lines_data_len = len;
+    }
+
+    /// Serialize: [1 peer_id][2 file_len][N file][4 firstline][4 lastline][2 data_len][N data]
+    pub fn serialize(self: *const BufferEdit, buf: []u8) u16 {
+        const header_size: u16 = 1 + 2 + 4 + 4 + 2;
+        const total: u16 = header_size + self.file_name_len + self.lines_data_len;
+        if (buf.len < total) return 0;
+
+        var pos: u16 = 0;
+        buf[pos] = self.peer_id;
+        pos += 1;
+        std.mem.writeInt(u16, buf[pos..][0..2], self.file_name_len, .big);
+        pos += 2;
+        if (self.file_name_len > 0) {
+            @memcpy(buf[pos .. pos + self.file_name_len], self.file_name[0..self.file_name_len]);
+            pos += self.file_name_len;
+        }
+        std.mem.writeInt(u32, buf[pos..][0..4], self.firstline, .big);
+        pos += 4;
+        std.mem.writeInt(u32, buf[pos..][0..4], self.lastline, .big);
+        pos += 4;
+        std.mem.writeInt(u16, buf[pos..][0..2], self.lines_data_len, .big);
+        pos += 2;
+        if (self.lines_data_len > 0) {
+            @memcpy(buf[pos .. pos + self.lines_data_len], self.lines_data[0..self.lines_data_len]);
+            pos += self.lines_data_len;
+        }
+        return pos;
+    }
+
+    /// Deserialize from bytes.
+    pub fn deserialize(buf: []const u8) ?BufferEdit {
+        if (buf.len < 13) return null; // minimum: 1+2+4+4+2
+        var edit = BufferEdit{};
+        var pos: u16 = 0;
+
+        edit.peer_id = buf[pos];
+        pos += 1;
+        edit.file_name_len = std.mem.readInt(u16, buf[pos..][0..2], .big);
+        pos += 2;
+        if (edit.file_name_len > 0 and buf.len >= pos + edit.file_name_len) {
+            @memcpy(edit.file_name[0..edit.file_name_len], buf[pos .. pos + edit.file_name_len]);
+            pos += edit.file_name_len;
+        }
+        if (buf.len < pos + 10) return null;
+        edit.firstline = std.mem.readInt(u32, buf[pos..][0..4], .big);
+        pos += 4;
+        edit.lastline = std.mem.readInt(u32, buf[pos..][0..4], .big);
+        pos += 4;
+        edit.lines_data_len = std.mem.readInt(u16, buf[pos..][0..2], .big);
+        pos += 2;
+        if (edit.lines_data_len > 0 and buf.len >= pos + edit.lines_data_len) {
+            @memcpy(edit.lines_data[0..edit.lines_data_len], buf[pos .. pos + edit.lines_data_len]);
+        }
+        return edit;
     }
 };
 

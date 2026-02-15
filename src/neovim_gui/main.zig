@@ -136,9 +136,6 @@ pub const NeovimGui = struct {
     peer_screen_positions: [16]u32 = .{0} ** 16,
     peer_screen_count: u8 = 0, // number of peers (positions = count * 2)
 
-    /// Frame counter for throttling periodic updates (badges etc.)
-    frame_counter: u32 = 0,
-
     /// Neovim options received via option_set event
     /// Key is the option name (owned), value is the option value
     options: std.StringHashMap(OptionValue),
@@ -477,6 +474,50 @@ pub const NeovimGui = struct {
             "'ModeChanged','BufEnter','WinEnter'" ++
             "}, {callback = ghostty_presence}) " ++
             "ghostty_presence() " ++
+            // -- Live buffer sync: nvim_buf_attach sends line-level edits --
+            "local _ghostty_applying = false " ++
+            "local _ghostty_attached = {} " ++
+            "local function attach_buf(buf) " ++
+            "if _ghostty_attached[buf] then return end " ++
+            "_ghostty_attached[buf] = true " ++
+            "vim.api.nvim_buf_attach(buf, false, {" ++
+            "on_lines = function(_, b, _, firstline, lastline, new_lastline, ...) " ++
+            "if _ghostty_applying then return end " ++
+            "local c = get_chan() " ++
+            "if not c then return end " ++
+            "local name = vim.api.nvim_buf_get_name(b) or '' " ++
+            "if name ~= '' then name = vim.fn.fnamemodify(name, ':~:.') end " ++
+            "if name == '' then return end " ++
+            "local ok, lines = pcall(vim.api.nvim_buf_get_lines, b, firstline, new_lastline, false) " ++
+            "if not ok then return end " ++
+            "local data = table.concat(lines, '\\n') " ++
+            "vim.rpcnotify(c, 'ghostty_buf_edit', name, firstline, lastline, data) " ++
+            "end, " ++
+            "on_detach = function(_, b) _ghostty_attached[b] = nil end" ++
+            "}) end " ++
+            "vim.api.nvim_create_autocmd({'BufEnter','BufReadPost'}, {" ++
+            "callback = function() attach_buf(vim.api.nvim_get_current_buf()) end}) " ++
+            "attach_buf(vim.api.nvim_get_current_buf()) " ++
+            // Function to apply remote edits (called by Ghostty via nvim_command)
+            "function _ghostty_apply_edit(file, firstline, lastline, data) " ++
+            "_ghostty_applying = true " ++
+            "local lines = {} " ++
+            "if data ~= '' then " ++
+            "for line in (data .. '\\n'):gmatch('([^\\n]*)\\n') do " ++
+            "lines[#lines+1] = line " ++
+            "end " ++
+            "if #lines > 0 and lines[#lines] == '' then table.remove(lines) end " ++
+            "end " ++
+            // Find the buffer with this file
+            "for _, b in ipairs(vim.api.nvim_list_bufs()) do " ++
+            "if vim.api.nvim_buf_is_loaded(b) then " ++
+            "local bname = vim.api.nvim_buf_get_name(b) " ++
+            "if bname ~= '' then bname = vim.fn.fnamemodify(bname, ':~:.') end " ++
+            "if bname == file then " ++
+            "pcall(vim.api.nvim_buf_set_lines, b, firstline, lastline, false, lines) " ++
+            "break end end end " ++
+            "_ghostty_applying = false " ++
+            "end " ++
             // -- Live file sync: auto-save on edit, auto-reload on change --
             "vim.o.autoread = true " ++
             "vim.o.updatetime = 200 " ++
@@ -710,6 +751,18 @@ pub const NeovimGui = struct {
                 self.peer_screen_count = data.count;
                 self.dirty = true;
                 self.updateCollabPeerBadges();
+            },
+            .collab_buf_edit => |data| {
+                // Forward local buffer edit to peers via CollabState
+                const collab_main = @import("../collab/main.zig");
+                const cs = collab_main.CollabState.global_instance orelse return;
+                var edit = @import("../collab/protocol.zig").BufferEdit{};
+                edit.peer_id = cs.local_profile.peer_id;
+                edit.firstline = data.firstline;
+                edit.lastline = data.lastline;
+                edit.setFileName(data.file_name);
+                edit.setLinesData(data.lines_data);
+                cs.sendBufferEdit(edit);
             },
             .win_viewport_margins => |data| {
                 self.handleWinViewportMargins(data);

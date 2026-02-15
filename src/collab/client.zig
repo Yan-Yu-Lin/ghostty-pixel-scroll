@@ -110,6 +110,12 @@ pub const Client = struct {
         _ = posix.write(fd, msg_buf[0..len]) catch {};
     }
 
+    /// Send a raw pre-encoded message to the server.
+    pub fn sendRaw(self: *Self, msg: []const u8) void {
+        const fd = self.socket orelse return;
+        _ = posix.write(fd, msg) catch {};
+    }
+
     fn sendJoin(self: *Self) void {
         const fd = self.socket orelse return;
         var payload: [38]u8 = undefined;
@@ -236,6 +242,12 @@ pub const Client = struct {
                         };
                     }
                     if (self.presence_callback) |cb| cb(presence.peer_id, presence, profile);
+                }
+            },
+            .buffer_edit => {
+                if (protocol.BufferEdit.deserialize(payload)) |edit| {
+                    const collab_main = @import("main.zig");
+                    if (collab_main.CollabState.buffer_edit_callback) |cb| cb(edit);
                 }
             },
             else => {},

@@ -164,6 +164,9 @@ pub const Command = union(Key) {
     /// Ghostty: Join collab session (OSC 1343;host:port)
     collab_join: struct { value: [:0]const u8 },
 
+    /// Ghostty: Connect NeovimGui to remote Neovim TCP (OSC 1344;host:port)
+    collab_nvim_connect: struct { value: [:0]const u8 },
+
     pub const SemanticPrompt = parsers.semantic_prompt.Command;
 
     pub const Key = LibEnum(
@@ -197,6 +200,7 @@ pub const Command = union(Key) {
             "toggle_panel_gui",
             "collab_share",
             "collab_join",
+            "collab_nvim_connect",
         },
     );
 
@@ -361,6 +365,7 @@ pub const Parser = struct {
         @"134",
         @"1342",
         @"1343",
+        @"1344",
     };
 
     pub fn init(alloc: ?Allocator) Parser {
@@ -427,6 +432,7 @@ pub const Parser = struct {
             .collab_share,
             => {},
             .collab_join => {},
+            .collab_nvim_connect => {},
         }
 
         self.state = .start;
@@ -640,11 +646,13 @@ pub const Parser = struct {
             .@"134" => switch (c) {
                 '2' => self.state = .@"1342",
                 '3' => self.state = .@"1343",
+                '4' => self.state = .@"1344",
                 else => self.state = .invalid,
             },
 
             .@"1342",
             .@"1343",
+            .@"1344",
             => switch (c) {
                 ';' => self.writeToFixed(),
                 else => self.state = .invalid,
@@ -765,6 +773,19 @@ pub const Parser = struct {
                 const data = writer.buffered();
                 if (data.len <= 1) return null;
                 self.command = .{ .collab_join = .{
+                    .value = data[0 .. data.len - 1 :0],
+                } };
+                return &self.command;
+            },
+
+            .@"1344" => {
+                // OSC 1344 - Connect NeovimGui to remote Neovim TCP
+                // Usage: printf '\e]1344;host:port\a'
+                const writer = self.writer orelse return null;
+                writer.writeByte(0) catch return null;
+                const data = writer.buffered();
+                if (data.len <= 1) return null;
+                self.command = .{ .collab_nvim_connect = .{
                     .value = data[0 .. data.len - 1 :0],
                 } };
                 return &self.command;

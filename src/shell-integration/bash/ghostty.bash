@@ -261,25 +261,171 @@ fi
 
 # Collab session commands: ghostty-share starts hosting, ghostty-join connects.
 ghostty-share() {
+    local share_dir="${1:-.}"
+    share_dir="$(cd "$share_dir" 2>/dev/null && pwd)"
+
     builtin printf '\e]1342\a'
     sleep 0.3
     if [[ -f /tmp/ghostty-collab-info ]]; then
         local addr port local_ip
         addr=$(< /tmp/ghostty-collab-info)
         port="${addr##*:}"
-        # Get local network IP for sharing
         local_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
         [[ -z "$local_ip" ]] && local_ip=$(ipconfig getifaddr en0 2>/dev/null)
         [[ -z "$local_ip" ]] && local_ip="<your-ip>"
-        builtin echo "Collab session started!"
-        builtin echo "Local:  ghostty-join $addr"
-        builtin echo "Remote: ghostty-join ${local_ip}:${port}"
+
+        # Store shared directory path for guests
+        builtin echo "$share_dir" > /tmp/ghostty-collab-share-dir
+
+        builtin echo "=== Ghostty Collab Session Started ==="
+        builtin echo ""
+        builtin echo "Sharing: $share_dir"
+        builtin echo ""
+        builtin echo "--- Join Options ---"
+        builtin echo ""
+        builtin echo "1) Same machine (shared Neovim, host config):"
+        builtin echo "   ghostty-join 127.0.0.1:${port}"
+        builtin echo "   Both edit in the same Neovim instance. Instant, zero latency."
+        builtin echo "   Guest uses YOUR Neovim config/plugins."
+        builtin echo ""
+        builtin echo "2) Remote, host config (guest connects to your Neovim):"
+        builtin echo "   ghostty-join ${local_ip}:${port}"
+        builtin echo "   Guest connects to your Neovim over the network."
+        builtin echo "   Guest uses YOUR config. ~1ms latency on LAN."
+        builtin echo ""
+        builtin echo "3) Remote, own config (SSHFS mount):"
+        builtin echo "   ghostty-join $(whoami)@${local_ip}:${port}"
+        builtin echo "   Guest runs THEIR OWN Neovim with their config/plugins/LSP."
+        builtin echo "   Your files are mounted on their machine via SSHFS."
+        builtin echo "   Live edits synced character-by-character."
+        builtin echo ""
+        builtin echo "--- Requirements ---"
+        builtin echo "Option 1: Nothing extra."
+        builtin echo "Option 2: Guest can reach ${local_ip}:${port} (same LAN or port forward)."
+        builtin echo "Option 3: Guest needs 'sshfs' + SSH access to $(whoami)@${local_ip}."
+        builtin echo "  Install sshfs:"
+        builtin echo "    Ubuntu/Debian: sudo apt install sshfs"
+        builtin echo "    Arch:          sudo pacman -S sshfs"
+        builtin echo "    Fedora:        sudo dnf install fuse-sshfs"
+        builtin echo "    macOS:         brew install macfuse sshfs"
+        builtin echo "    NixOS:         nix-env -iA nixpkgs.sshfs"
+        builtin echo ""
+        builtin echo "==================================="
     fi
 }
 ghostty-join() {
     if [[ -z "$1" ]]; then
-        builtin echo "Usage: ghostty-join <host:port>"
+        builtin echo "Usage: ghostty-join [user@]host:port"
+        builtin echo ""
+        builtin echo "  Local:  ghostty-join 192.168.1.50:34399"
+        builtin echo "  Remote: ghostty-join parker@192.168.1.50:34399"
         return 1
     fi
-    builtin printf '\e]1343;%s\a' "$1"
+
+    local target="$1"
+    local user="" host="" port=""
+
+    # Parse user@host:port or host:port
+    if [[ "$target" == *@* ]]; then
+        user="${target%%@*}"
+        local hostport="${target#*@}"
+        host="${hostport%%:*}"
+        port="${hostport##*:}"
+    else
+        host="${target%%:*}"
+        port="${target##*:}"
+    fi
+
+    if [[ -z "$host" || -z "$port" ]]; then
+        builtin echo "Invalid format. Usage: ghostty-join [user@]host:port"
+        return 1
+    fi
+
+    # Step 1: Join collab session (presence/cursors)
+    builtin printf '\e]1343;%s:%s\a' "$host" "$port"
+
+    if [[ -n "$user" ]]; then
+        # Remote mode: SSHFS mount + local Neovim with own config
+
+        # Check for sshfs
+        if ! command -v sshfs &>/dev/null; then
+            builtin echo "Error: sshfs is required for remote collab."
+            builtin echo ""
+            builtin echo "Install it:"
+            builtin echo "  Ubuntu/Debian: sudo apt install sshfs"
+            builtin echo "  Arch:          sudo pacman -S sshfs"
+            builtin echo "  Fedora:        sudo dnf install fuse-sshfs"
+            builtin echo "  macOS:         brew install macfuse sshfs"
+            builtin echo "  NixOS:         nix-env -iA nixpkgs.sshfs"
+            return 1
+        fi
+
+        # Get the shared directory from host
+        local share_dir
+        share_dir=$(ssh -o StrictHostKeyChecking=accept-new "${user}@${host}" \
+            "cat /tmp/ghostty-collab-share-dir 2>/dev/null" 2>/dev/null)
+
+        if [[ -z "$share_dir" ]]; then
+            builtin echo "Warning: Could not detect shared directory. Using home dir."
+            share_dir="/home/${user}"
+        fi
+
+        # Mount point
+        local mount_dir="/tmp/ghostty-collab-mount-$$"
+        mkdir -p "$mount_dir"
+
+        builtin echo "Mounting ${user}@${host}:${share_dir} ..."
+
+        sshfs "${user}@${host}:${share_dir}" "$mount_dir" \
+            -o StrictHostKeyChecking=accept-new \
+            -o reconnect \
+            -o ServerAliveInterval=15 \
+            -o cache=yes \
+            -o auto_cache
+
+        if [[ $? -ne 0 ]]; then
+            builtin echo ""
+            builtin echo "Error: SSHFS mount failed."
+            builtin echo "Troubleshooting:"
+            builtin echo "  1. Can you SSH? Try: ssh ${user}@${host}"
+            builtin echo "  2. Does the path exist? ${share_dir}"
+            builtin echo "  3. Is FUSE available? Check: ls /dev/fuse"
+            builtin echo "  4. On NixOS, add 'programs.fuse.userAllowOther = true;' to config"
+            rmdir "$mount_dir" 2>/dev/null
+            return 1
+        fi
+
+        builtin echo "Mounted! Files available at: $mount_dir"
+        builtin echo ""
+        builtin echo "Your Neovim, your config, their files."
+        builtin echo "cd $mount_dir to start editing."
+        builtin echo ""
+        builtin echo "To disconnect: ghostty-leave"
+
+        # Store mount info for cleanup
+        builtin echo "$mount_dir" > /tmp/ghostty-collab-mount
+
+        # cd into the mounted directory
+        cd "$mount_dir" || true
+    else
+        # Local mode: connect to host's Neovim directly (same machine)
+        local nvim_port=$((port + 1))
+        sleep 0.3
+        builtin printf '\e]1344;%s:%s\a' "$host" "$nvim_port"
+    fi
+}
+
+# Disconnect from collab session and clean up
+ghostty-leave() {
+    if [[ -f /tmp/ghostty-collab-mount ]]; then
+        local mount_dir
+        mount_dir=$(< /tmp/ghostty-collab-mount)
+        if [[ -n "$mount_dir" && -d "$mount_dir" ]]; then
+            builtin echo "Unmounting $mount_dir ..."
+            fusermount -u "$mount_dir" 2>/dev/null || umount "$mount_dir" 2>/dev/null
+            rmdir "$mount_dir" 2>/dev/null
+        fi
+        rm -f /tmp/ghostty-collab-mount
+    fi
+    builtin echo "Disconnected from collab session."
 }

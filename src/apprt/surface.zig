@@ -120,6 +120,9 @@ pub const Message = union(enum) {
     /// Join collab session (triggered by OSC 1343;host:port)
     collab_join: [256]u8,
 
+    /// Connect NeovimGui to remote Neovim TCP (triggered by OSC 1344;host:port)
+    collab_nvim_connect: [256]u8,
+
     pub const ReportTitleStyle = enum {
         csi_21_t,
 

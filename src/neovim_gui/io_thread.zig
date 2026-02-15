@@ -147,6 +147,9 @@ pub const Event = union(enum) {
     // Flat array: [row0, col0, row1, col1, ...]. Row=0 means off-screen.
     collab_peer_screen: CollabPeerScreen,
 
+    // Buffer edit from local nvim_buf_attach (to send to peers)
+    collab_buf_edit: CollabBufEdit,
+
     // Message events (ext_messages)
     msg_show: MsgShow,
     msg_clear,
@@ -194,6 +197,19 @@ pub const Event = union(enum) {
     pub const CollabPeerScreen = struct {
         positions: [16]u32 = .{0} ** 16,
         count: u8 = 0, // number of peers (array has count*2 entries)
+    };
+
+    /// Buffer edit from local nvim_buf_attach (line-level change to send to peers).
+    pub const CollabBufEdit = struct {
+        file_name: []const u8 = "",
+        firstline: u32 = 0,
+        lastline: u32 = 0,
+        lines_data: []const u8 = "",
+
+        pub fn deinit(self: *CollabBufEdit, alloc: Allocator) void {
+            if (self.file_name.len > 0) alloc.free(self.file_name);
+            if (self.lines_data.len > 0) alloc.free(self.lines_data);
+        }
     };
 
     pub const GridResize = struct {
@@ -610,6 +626,7 @@ pub const Event = union(enum) {
             .popupmenu_show => |*ps| ps.deinit(alloc),
             .tabline_update => |*tu| tu.deinit(alloc),
             .collab_presence => |*cp| cp.deinit(alloc),
+            .collab_buf_edit => |*cbe| cbe.deinit(alloc),
             else => {},
         }
     }
@@ -1233,6 +1250,48 @@ pub const IoThread = struct {
                             screen_data.count += 1;
                         }
                         self.event_queue.push(.{ .collab_peer_screen = screen_data }) catch {};
+                    }
+                } else if (std.mem.eql(u8, notif.method, "ghostty_buf_edit")) {
+                    // Buffer edit: ghostty_buf_edit(filename, firstline, lastline, lines_data)
+                    const params = notif.params;
+                    const arr = switch (params) {
+                        .arr => |a| a,
+                        else => return {},
+                    };
+                    if (arr.len >= 4) {
+                        const file_name = switch (arr[0]) {
+                            .str => |s| s.value(),
+                            else => return {},
+                        };
+                        const firstline: u32 = switch (arr[1]) {
+                            .uint => |v| @intCast(v),
+                            .int => |v| @intCast(@max(0, v)),
+                            else => 0,
+                        };
+                        const lastline: u32 = switch (arr[2]) {
+                            .uint => |v| @intCast(v),
+                            .int => |v| @intCast(@max(0, v)),
+                            else => 0,
+                        };
+                        const lines_data = switch (arr[3]) {
+                            .str => |s| s.value(),
+                            else => "",
+                        };
+                        const duped_file = self.alloc.dupe(u8, file_name) catch return {};
+                        const duped_data = self.alloc.dupe(u8, lines_data) catch {
+                            self.alloc.free(duped_file);
+                            return {};
+                        };
+                        self.event_queue.push(.{ .collab_buf_edit = .{
+                            .file_name = duped_file,
+                            .firstline = firstline,
+                            .lastline = lastline,
+                            .lines_data = duped_data,
+                        } }) catch {
+                            self.alloc.free(duped_file);
+                            self.alloc.free(duped_data);
+                            return {};
+                        };
                     }
                 } else if (std.mem.eql(u8, notif.method, "ghostty_image")) {
                     const params = notif.params;

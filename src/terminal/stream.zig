@@ -2104,6 +2104,17 @@ pub fn Stream(comptime Handler: type) type {
                     }
                 },
 
+                .collab_nvim_connect => |v| {
+                    // OSC 1344 - Connect NeovimGui to remote Neovim TCP
+                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                        log.info("OSC 1344 received - connecting to remote Neovim: {s}", .{v.value});
+                        var buf: [256]u8 = .{0} ** 256;
+                        const len = @min(v.value.len, 255);
+                        @memcpy(buf[0..len], v.value[0..len]);
+                        _ = self.handler.surface_mailbox.push(.{ .collab_nvim_connect = buf }, .{ .instant = {} });
+                    }
+                },
+
                 .conemu_output_environment_variable,
                 .conemu_run_process,
                 .kitty_text_sizing,

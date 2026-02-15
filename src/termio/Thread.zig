@@ -351,6 +351,10 @@ fn drainMailbox(
                 log.info("termio: collab_join message - forwarding to surface", .{});
                 _ = io.surface_mailbox.push(.{ .collab_join = buf }, .{ .forever = {} });
             },
+            .collab_nvim_connect => |buf| {
+                log.info("termio: collab_nvim_connect message - forwarding to surface", .{});
+                _ = io.surface_mailbox.push(.{ .collab_nvim_connect = buf }, .{ .forever = {} });
+            },
             .write_small => |v| try io.queueWrite(
                 data,
                 v.data[0..v.len],

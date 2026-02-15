@@ -267,6 +267,23 @@ pub const Server = struct {
                     );
                 }
             },
+            .buffer_edit => {
+                // Broadcast buffer edit to all OTHER peers (not sender)
+                var msg_buf: [16400]u8 = undefined;
+                if (protocol.encodeMessage(.buffer_edit, payload, &msg_buf)) |len| {
+                    for (&self.peers, 0..) |*slot, i| {
+                        if (i == peer_idx) continue;
+                        const other = &(slot.* orelse continue);
+                        if (!other.connected) continue;
+                        _ = posix.write(other.fd, msg_buf[0..len]) catch {};
+                    }
+                }
+                // Notify host to apply the edit locally
+                if (protocol.BufferEdit.deserialize(payload)) |edit| {
+                    const collab_main = @import("main.zig");
+                    if (collab_main.CollabState.buffer_edit_callback) |cb| cb(edit);
+                }
+            },
             else => {},
         }
     }
@@ -325,6 +342,16 @@ pub const Server = struct {
             const peer = &(slot.* orelse continue);
             if (!peer.connected) continue;
             _ = posix.write(peer.fd, msg_buf[0..len]) catch {};
+        }
+    }
+
+    /// Broadcast a raw pre-encoded message to all peers, optionally skipping a sender.
+    pub fn broadcastRaw(self: *Self, msg: []const u8, skip_peer_id: u8) void {
+        for (&self.peers) |*slot| {
+            const peer = &(slot.* orelse continue);
+            if (!peer.connected) continue;
+            if (peer.profile.peer_id == skip_peer_id) continue;
+            _ = posix.write(peer.fd, msg) catch {};
         }
     }
 

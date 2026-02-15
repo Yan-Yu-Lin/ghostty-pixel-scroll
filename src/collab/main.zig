@@ -162,6 +162,26 @@ pub const CollabState = struct {
         }
     }
 
+    /// Send a buffer edit to all peers. Called from nvim_buf_attach hook.
+    pub fn sendBufferEdit(self: *Self, edit: protocol.BufferEdit) void {
+        var buf: [16384]u8 = undefined;
+        const payload_len = edit.serialize(&buf);
+        if (payload_len == 0) return;
+
+        var msg_buf: [16400]u8 = undefined;
+        const msg_len = protocol.encodeMessage(.buffer_edit, buf[0..payload_len], &msg_buf) orelse return;
+
+        switch (self.role) {
+            .host => if (self.server) |s| s.broadcastRaw(msg_buf[0..msg_len], edit.peer_id),
+            .guest => if (self.client) |c| c.sendRaw(msg_buf[0..msg_len]),
+            .none => {},
+        }
+    }
+
+    /// Callback for receiving buffer edits from peers.
+    /// Set by NeovimGui to apply remote edits to local Neovim.
+    pub var buffer_edit_callback: ?*const fn (edit: protocol.BufferEdit) void = null;
+
     /// Get a snapshot of peer cursors for the renderer. Lock-free read.
     pub fn getPeers(self: *Self, out: *[MAX_PEERS]?PeerCursor) u8 {
         self.mutex.lock();

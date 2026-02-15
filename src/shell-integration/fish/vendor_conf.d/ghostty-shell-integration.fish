@@ -230,28 +230,127 @@ end
 
 # Collab session commands
 function ghostty-share
+    set -l share_dir (test (count $argv) -gt 0; and echo $argv[1]; or echo ".")
+    set share_dir (cd "$share_dir" 2>/dev/null; and pwd)
+
     printf '\e]1342\a'
     sleep 0.3
     if test -f /tmp/ghostty-collab-info
         set -l addr (cat /tmp/ghostty-collab-info)
         set -l port (string split ':' $addr)[-1]
         set -l local_ip (hostname -I 2>/dev/null | awk '{print $1}')
-        if test -z "$local_ip"
-            set local_ip (ipconfig getifaddr en0 2>/dev/null)
-        end
-        if test -z "$local_ip"
-            set local_ip "<your-ip>"
-        end
-        echo "Collab session started!"
-        echo "Local:  ghostty-join $addr"
-        echo "Remote: ghostty-join $local_ip:$port"
+        test -z "$local_ip"; and set local_ip (ipconfig getifaddr en0 2>/dev/null)
+        test -z "$local_ip"; and set local_ip "<your-ip>"
+
+        echo "$share_dir" > /tmp/ghostty-collab-share-dir
+
+        echo "=== Ghostty Collab Session Started ==="
+        echo ""
+        echo "Sharing: $share_dir"
+        echo ""
+        echo "--- Join Options ---"
+        echo ""
+        echo "1) Same machine (shared Neovim, host config):"
+        echo "   ghostty-join 127.0.0.1:$port"
+        echo "   Both edit in the same Neovim instance. Instant, zero latency."
+        echo "   Guest uses YOUR Neovim config/plugins."
+        echo ""
+        echo "2) Remote, host config (guest connects to your Neovim):"
+        echo "   ghostty-join $local_ip:$port"
+        echo "   Guest connects to your Neovim over the network."
+        echo "   Guest uses YOUR config. ~1ms latency on LAN."
+        echo ""
+        echo "3) Remote, own config (SSHFS mount):"
+        echo "   ghostty-join (whoami)@$local_ip:$port"
+        echo "   Guest runs THEIR OWN Neovim with their config/plugins/LSP."
+        echo "   Your files are mounted on their machine via SSHFS."
+        echo "   Live edits synced character-by-character."
+        echo ""
+        echo "--- Requirements ---"
+        echo "Option 1: Nothing extra."
+        echo "Option 2: Guest can reach $local_ip:$port (same LAN or port forward)."
+        echo "Option 3: Guest needs 'sshfs' + SSH access to (whoami)@$local_ip."
+        echo "  Install sshfs:"
+        echo "    Ubuntu/Debian: sudo apt install sshfs"
+        echo "    Arch:          sudo pacman -S sshfs"
+        echo "    Fedora:        sudo dnf install fuse-sshfs"
+        echo "    macOS:         brew install macfuse sshfs"
+        echo "    NixOS:         nix-env -iA nixpkgs.sshfs"
+        echo ""
+        echo "==================================="
     end
 end
 
 function ghostty-join
     if test (count $argv) -eq 0
-        echo "Usage: ghostty-join <host:port>"
+        echo "Usage: ghostty-join [user@]host:port"
         return 1
     end
-    printf '\e]1343;%s\a' $argv[1]
+
+    set -l target $argv[1]
+    set -l user ""
+    set -l host ""
+    set -l port ""
+
+    if string match -q '*@*' $target
+        set user (string split '@' $target)[1]
+        set -l hostport (string split '@' $target)[2]
+        set host (string split ':' $hostport)[1]
+        set port (string split ':' $hostport)[-1]
+    else
+        set host (string split ':' $target)[1]
+        set port (string split ':' $target)[-1]
+    end
+
+    printf '\e]1343;%s:%s\a' $host $port
+
+    if test -n "$user"
+        if not command -v sshfs &>/dev/null
+            echo "Error: sshfs is required for remote collab."
+            echo "  Ubuntu/Debian: sudo apt install sshfs"
+            echo "  Arch:          sudo pacman -S sshfs"
+            echo "  macOS:         brew install macfuse sshfs"
+            return 1
+        end
+
+        set -l share_dir (ssh -o StrictHostKeyChecking=accept-new "$user@$host" \
+            "cat /tmp/ghostty-collab-share-dir 2>/dev/null" 2>/dev/null)
+        test -z "$share_dir"; and set share_dir "/home/$user"
+
+        set -l mount_dir "/tmp/ghostty-collab-mount-%self"
+        mkdir -p "$mount_dir"
+
+        echo "Mounting $user@$host:$share_dir ..."
+        sshfs "$user@$host:$share_dir" "$mount_dir" \
+            -o StrictHostKeyChecking=accept-new -o reconnect \
+            -o ServerAliveInterval=15 -o cache=yes -o kernel_cache \
+            -o auto_cache -o compression=no 2>/dev/null
+
+        if test $status -ne 0
+            echo "Error: SSHFS mount failed."
+            rmdir "$mount_dir" 2>/dev/null
+            return 1
+        end
+
+        echo "$mount_dir" > /tmp/ghostty-collab-mount
+        echo "Mounted! cd $mount_dir to start editing."
+        echo "To disconnect: ghostty-leave"
+        cd "$mount_dir"
+    else
+        set -l nvim_port (math $port + 1)
+        sleep 0.3
+        printf '\e]1344;%s:%s\a' $host $nvim_port
+    end
+end
+
+function ghostty-leave
+    if test -f /tmp/ghostty-collab-mount
+        set -l mount_dir (cat /tmp/ghostty-collab-mount)
+        if test -n "$mount_dir" -a -d "$mount_dir"
+            fusermount -u "$mount_dir" 2>/dev/null; or umount "$mount_dir" 2>/dev/null
+            rmdir "$mount_dir" 2>/dev/null
+        end
+        rm -f /tmp/ghostty-collab-mount
+    end
+    echo "Disconnected."
 end

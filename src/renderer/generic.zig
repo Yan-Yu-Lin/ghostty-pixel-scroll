@@ -2461,26 +2461,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     const is_top_level = (w_row == split_top_row_u);
                     const w_bot_px = pad_top + (w.grid_row + @as(f32, @floatFromInt(w.render_height))) * cell_h;
 
-                    if (is_top_level and w.margin_top > 0) {
-                        // Top-level with winbar: extend up to include tabline.
-                        // The winbar (margin_top) acts as a non-scrolling barrier
-                        // between the tabline and scrollable content.
+                    if (is_top_level) {
+                        // Top-level: extend up to include tabline, use own bottom
                         self.uniforms.window_rects[next_wid - 1] = .{
                             px_x + win_pad,
                             pad_top + win_pad,
                             rw * cell_w - win_pad * 2.0,
                             w_bot_px - pad_top - win_pad * 2.0,
-                        };
-                    } else if (is_top_level) {
-                        // Top-level WITHOUT winbar: rect starts at split's own
-                        // grid_row. Don't extend into the tabline — that would
-                        // cause scroll animation to leak into the tabline area
-                        // since there's no non-scrolling winbar barrier.
-                        self.uniforms.window_rects[next_wid - 1] = .{
-                            px_x + win_pad,
-                            px_y + win_pad,
-                            rw * cell_w - win_pad * 2.0,
-                            w_bot_px - px_y - win_pad * 2.0,
                         };
                     } else {
                         // Non-top (e.g. terminal below buffer): own rect
@@ -2755,28 +2742,31 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             for (windows) |sw| {
                                 if (sw.window_type != .split) continue;
                                 // Only assign tabline cells to top-level splits
-                                // that have a winbar (margin_top > 0). Without a
-                                // winbar, the split's rect doesn't extend into the
-                                // tabline, so tabline cells shouldn't get that
-                                // split's window_id.
+                                // (at split_top_row). Stacked splits below (e.g.
+                                // terminal) share the same columns but shouldn't
+                                // own the tabline.
                                 const sw_row: u32 = @intFromFloat(sw.grid_row);
                                 if (sw_row != split_top_row) continue;
-                                if (sw.margin_top == 0) continue;
                                 const sw_col: u32 = @intFromFloat(sw.grid_col);
                                 const sw_end = sw_col + sw.render_width;
                                 if (x >= sw_col and x < sw_end) {
                                     bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
+                                    // When the split has no winbar (margin_top=0),
+                                    // the tabline cells must scroll with the content
+                                    // to avoid a visual seam at the boundary.
+                                    if (sw.margin_top == 0 and sw.has_scroll_animation and sw.scroll_raw_offset != 0) {
+                                        const sw_offset: i16 = @intFromFloat(std.math.clamp(sw.scroll_pixel_offset * 256.0, -32768.0, 32767.0));
+                                        bg_cell.offset_y_fixed = sw_offset;
+                                    }
                                     assigned = true;
                                     break;
                                 }
                             }
-                            // Unassigned tabline cells: either separator column
-                            // between splits, or above a split without winbar.
-                            // Give them sentinel + default_bg so they render as
-                            // a flat bar matching the gap color.
+                            // Separator column between splits — force bg to
+                            // default_bg so it matches the gap on first launch
+                            // (before Lua highlight injection takes effect).
                             if (!assigned) {
                                 bg_cell.color = .{ bg_r, bg_g, bg_b, 255 };
-                                bg_cell.window_id = bar_sentinel;
                             }
                         }
                     }

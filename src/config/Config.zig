@@ -992,9 +992,13 @@ palette: Palette = .{},
 /// Gap color between Neovim windows. Visible when neovim-corner-radius > 0.
 @"neovim-gap-color": Color = .{ .r = 0x0a, .g = 0x0a, .b = 0x0a },
 
+/// Gap size in pixels between Neovim windows. Creates visible padding
+/// between each pane so rounded corners are fully visible on all sides.
+/// Recommended: 4-8 pixels. Set to 0 for edge-to-edge windows.
+@"neovim-window-padding": f32 = 0.0,
+
 /// Rounded corner radius (pixels) for Neovim windows. 0 = sharp corners.
-/// Recommended: 8.0 for a polished look.
-/// When neovim-gui is active and this is 0, defaults to 8.0 automatically.
+/// Recommended: 8-12 for a polished look similar to VS Code / Cursor.
 @"neovim-corner-radius": f32 = 0.0,
 
 /// Your display name for collaborative sessions. Other participants see

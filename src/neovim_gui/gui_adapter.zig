@@ -38,6 +38,7 @@ pub fn buildGuiState(
     alloc: Allocator,
     cell_height: f32,
     corner_radius: f32,
+    window_padding: f32,
     gap_color: [3]u8,
     bg_opacity: f32,
 ) !gui.GuiState {
@@ -100,6 +101,7 @@ pub fn buildGuiState(
             .default_bg = nvim.default_background,
             .default_fg = nvim.default_foreground,
             .corner_radius = corner_radius,
+            .window_padding = window_padding,
             .gap_color = gap_color,
             .bg_opacity = bg_opacity,
         },
@@ -124,8 +126,10 @@ fn windowToGui(w: *RenderedWindow, is_float: bool, cell_h: f32) gui.GuiWindow {
             gui.WindowType.message
         else if (is_float)
             gui.WindowType.floating
+        else if (w.id == 1)
+            gui.WindowType.root
         else
-            gui.WindowType.root,
+            gui.WindowType.split,
 
         .grid_col = w.grid_position[0],
         .grid_row = w.grid_position[1],

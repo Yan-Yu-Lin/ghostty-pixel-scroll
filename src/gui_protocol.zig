@@ -58,6 +58,7 @@ pub const GuiConfig = struct {
     default_bg: u32,
     default_fg: u32,
     corner_radius: f32,
+    window_padding: f32,
     gap_color: [3]u8,
     bg_opacity: f32,
 };
@@ -94,6 +95,7 @@ pub const GuiCell = struct {
 
 pub const WindowType = enum {
     root,
+    split,
     floating,
     message,
 };

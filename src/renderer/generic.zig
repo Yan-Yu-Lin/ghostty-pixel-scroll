@@ -670,6 +670,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             scroll_animation_duration: f32,
             scroll_animation_bounciness: f32,
             neovim_corner_radius: f32,
+            neovim_window_padding: f32,
             neovim_gap_color: [3]u8,
             matte_rendering: f32,
             font_thicken_strength: u8,
@@ -754,10 +755,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     @as(f32, 0.3) // Match Neovide's default scroll_animation_length (0.3s)
                 else
                     config.@"scroll-animation-duration";
-                const corner_radius = if (nvim_active and config.@"neovim-corner-radius" == 0)
-                    @as(f32, 8.0)
-                else
-                    config.@"neovim-corner-radius";
+                const corner_radius = config.@"neovim-corner-radius";
 
                 return .{
                     .background_opacity = @max(0, @min(1, config.@"background-opacity")),
@@ -771,6 +769,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .scroll_animation_duration = scroll_dur,
                     .scroll_animation_bounciness = config.@"scroll-animation-bounciness",
                     .neovim_corner_radius = corner_radius,
+                    .neovim_window_padding = config.@"neovim-window-padding",
                     .neovim_gap_color = .{ config.@"neovim-gap-color".r, config.@"neovim-gap-color".g, config.@"neovim-gap-color".b },
                     .matte_rendering = @max(0, @min(1, config.@"matte-rendering")),
                     .font_thicken_strength = config.@"font-thicken-strength",
@@ -1968,6 +1967,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     self.alloc,
                     @floatFromInt(self.grid_metrics.cell_height),
                     self.config.neovim_corner_radius,
+                    self.config.neovim_window_padding,
                     self.config.neovim_gap_color,
                     @floatCast(self.config.background_opacity),
                 ) catch {
@@ -2337,6 +2337,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.uniforms.text_gamma = self.config.text_gamma;
             self.uniforms.text_contrast = self.config.text_contrast;
 
+            const win_pad = state.config.window_padding;
+
             for (windows) |w| {
                 if (next_wid > 16) break;
                 // The root window spans the entire grid. We still need to
@@ -2361,7 +2363,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const px_x = pad_left + w.grid_col * cell_w;
                 const px_y = pad_top + w.grid_row * cell_h;
                 window_id_map.put(w.id, next_wid) catch {};
-                self.uniforms.window_rects[next_wid - 1] = .{ px_x, px_y, rw * cell_w, rh * cell_h };
+                // Inset each non-root window rect by the window_padding amount.
+                // This creates visible gap between adjacent panes where the
+                // gap_color shows through, giving each window its own fully
+                // rounded rectangle (like VS Code / Cursor style).
+                self.uniforms.window_rects[next_wid - 1] = .{
+                    px_x + win_pad,
+                    px_y + win_pad,
+                    rw * cell_w - win_pad * 2.0,
+                    rh * cell_h - win_pad * 2.0,
+                };
                 next_wid += 1;
             }
             self.uniforms.window_rect_count = next_wid - 1;
@@ -2410,7 +2421,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const cur_wid: u8 = window_id_map.get(window.id) orelse 0;
                 const render_width = window.render_width;
                 const render_height = window.render_height;
-                const is_float = window.window_type != .root;
+                const is_float = (window.window_type == .floating or window.window_type == .message);
                 const is_msg = window.window_type == .message;
                 const skip_text = self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?;
                 const win_opacity: u8 = @intFromFloat(std.math.clamp(window.opacity * 255.0, 0.0, 255.0));

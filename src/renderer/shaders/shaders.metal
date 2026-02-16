@@ -524,26 +524,26 @@ fragment float4 cell_bg_fragment(
   // Apply TUI scroll offset: shift pixels within the scroll region
   // This makes content in the scroll region slide smoothly while
   // status bars, headers, etc. outside the region stay fixed.
-  bool in_tui_scroll_region = false;
+  // If the shift would move the fragment outside the scroll region,
+  // revert to the unshifted position so the content "freezes" rather
+  // than stretching the boundary row's color or showing black.
   if (uniforms.tui_scroll_offset_y != 0.0) {
     int2 pre_grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
     if (pre_grid_pos.y >= int(uniforms.tui_scroll_region_top) &&
         pre_grid_pos.y <= int(uniforms.tui_scroll_region_bottom)) {
-      adjusted_pos.y += uniforms.tui_scroll_offset_y;
-      in_tui_scroll_region = true;
+      float2 shifted_pos = adjusted_pos;
+      shifted_pos.y += uniforms.tui_scroll_offset_y;
+      int2 shifted_grid = int2(floor((shifted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
+      // Only apply the shift if the result stays within the scroll region
+      if (shifted_grid.y >= int(uniforms.tui_scroll_region_top) &&
+          shifted_grid.y <= int(uniforms.tui_scroll_region_bottom)) {
+        adjusted_pos = shifted_pos;
+      }
+      // Otherwise adjusted_pos stays unshifted — content freezes in place
     }
   }
 
   int2 grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
-
-  // If a scroll-region fragment shifted outside the region, show the
-  // default background instead of clamping to the boundary row.
-  // Clamping caused the boundary row's color to "stretch" visually.
-  if (in_tui_scroll_region) {
-    if (grid_pos.y < int(uniforms.tui_scroll_region_top) || grid_pos.y > int(uniforms.tui_scroll_region_bottom)) {
-      return load_color(uniforms.bg_color, uniforms.use_display_p3, uniforms.use_linear_blending);
-    }
-  }
   
   // Apply per-cell offset for per-window smooth scrolling (Neovim GUI mode)
   bool allow_fixed_overlap = (uniforms.window_rect_count == 0);

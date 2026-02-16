@@ -1936,21 +1936,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Each window has its own scroll animation handled via per-cell offsets
             self.uniforms.pixel_scroll_offset_y = 0;
 
-            // Island UI: set bg_color AND gap_color to Neovim's actual
-            // default_background every frame. Only after Neovim has sent
-            // default_colors_set (has_default_colors) — before that, the
-            // init value is a stale hardcoded color that doesn't match
-            // any theme. Until then, keep whatever bg_color was set at init
-            // (the terminal background) which is a better initial guess.
-            if (nvim.has_default_colors) {
+            // Island UI: set bg_color AND gap_color from Neovim's default_background.
+            // Always set these — before Neovim sends default_colors_set, the init
+            // value (0x1d1f21) is close enough; once real theme colors arrive they
+            // overwrite immediately and stay in sync when the user changes themes.
+            {
                 const nbg = nvim.default_background;
                 const nr: u8 = @intCast((nbg >> 16) & 0xFF);
                 const ng: u8 = @intCast((nbg >> 8) & 0xFF);
                 const nb: u8 = @intCast(nbg & 0xFF);
                 self.uniforms.bg_color = .{ nr, ng, nb, 0xFF };
-                if (self.config.neovim_corner_radius > 0) {
-                    self.uniforms.gap_color = .{ nr, ng, nb, 0xFF };
-                }
+                self.uniforms.gap_color = .{ nr, ng, nb, 0xFF };
             }
 
             // Determine if we actually need a full cell rebuild.

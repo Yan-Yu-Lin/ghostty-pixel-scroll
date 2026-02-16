@@ -56,12 +56,13 @@ pub const NeovimGui = struct {
     cell_width: f32 = 0,
     cell_height: f32 = 0,
 
-    /// Default colors (Neovim's built-in defaults, overridden by default_colors_set)
-    default_background: u32 = 0x1d1f21,
+    /// Default colors (overridden by default_colors_set from Neovim).
+    /// default_background is initialised from gap_color in init() so the
+    /// first frame uses the user's configured gap color instead of a
+    /// hardcoded value that doesn't match any theme.
+    default_background: u32 = 0x0a0a0a,
     default_foreground: u32 = 0xe0e0e0,
     default_special: u32 = 0xff0000,
-    /// Set to true once Neovim sends default_colors_set with real theme colors.
-    has_default_colors: bool = false,
 
     /// NormalFloat highlight ID (for floating window backgrounds)
     normal_float_hl_id: ?u64 = null,
@@ -168,6 +169,11 @@ pub const NeovimGui = struct {
             .hl_attrs = std.AutoHashMap(u64, HlAttr).init(alloc),
             .options = std.StringHashMap(OptionValue).init(alloc),
         };
+        // Seed default_background from gap_color so the first frame uses the
+        // user's configured color instead of a hardcoded value.
+        self.default_background = (@as(u32, self.gap_color[0]) << 16) |
+            (@as(u32, self.gap_color[1]) << 8) |
+            @as(u32, self.gap_color[2]);
         return self;
     }
 
@@ -629,23 +635,16 @@ pub const NeovimGui = struct {
 
         const io = self.io.?;
 
-        // 1) Rounded box-drawing chars + WinSeparator/FloatBorder + global statusline
+        // 1) Rounded box-drawing chars + global statusline
         {
-            var cmd_buf: [1024]u8 = undefined;
-            const cmd = std.fmt.bufPrint(
-                &cmd_buf,
+            const cmd =
                 "lua " ++
-                    "vim.opt.fillchars:append({{" ++
-                    "horiz='━',horizup='┻',horizdown='┳'," ++
-                    "vert='┃',vertleft='┫',vertright='┣'," ++
-                    "verthoriz='╋'" ++
-                    "}}) " ++
-                    // Global statusline: one bar across the bottom, not per-split
-                    "vim.o.laststatus = 3 " ++
-                    "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
-                    "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}})",
-                .{ gap_hex, gap_hex, gap_hex },
-            ) catch return;
+                "vim.opt.fillchars:append({" ++
+                "horiz='━',horizup='┻',horizdown='┳'," ++
+                "vert='┃',vertleft='┫',vertright='┣'," ++
+                "verthoriz='╋'" ++
+                "}) " ++
+                "vim.o.laststatus = 3";
             io.sendCommand(cmd) catch {};
         }
 
@@ -664,6 +663,9 @@ pub const NeovimGui = struct {
                     "local norm = vim.api.nvim_get_hl(0, {{name='Normal', link=false}}) " ++
                     "local nbg = norm.bg " ++
                     "if not nbg then return end " ++
+                    // WinSeparator + FloatBorder: use Normal bg dynamically
+                    "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg=nbg, bg=nbg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg=0x565f89, bg=nbg}}) " ++
                     // TabLineFill + TabLineSel -> Normal bg
                     "vim.api.nvim_set_hl(0, 'TabLineFill', {{bg=nbg}}) " ++
                     "vim.api.nvim_set_hl(0, 'TabLineSel', {{bg=nbg, fg=norm.fg, bold=true}}) " ++
@@ -686,10 +688,10 @@ pub const NeovimGui = struct {
                     "local tree_hl = vim.api.nvim_get_hl(0, {{name='NvimTreeNormal', link=false}}) " ++
                     "local tbg = tree_hl.bg or nbg " ++
                     "local tfg = tree_hl.fg or norm.fg " ++
-                    "vim.api.nvim_set_hl(0, 'NvimTreeWinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'NvimTreeWinSeparator', {{fg=nbg, bg=nbg}}) " ++
                     "vim.api.nvim_set_hl(0, 'NvimTreeEndOfBuffer', {{bg=tbg, fg=tbg}}) " ++
                     // bufferline offset area (above NvimTree) -> tree bg
-                    "vim.api.nvim_set_hl(0, 'BufferLineOffsetSeparator', {{bg=tbg, fg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineOffsetSeparator', {{bg=tbg, fg=nbg}}) " ++
                     "vim.api.nvim_set_hl(0, 'BufferLineOffsetText', {{bg=tbg, fg=tfg, bold=true}}) " ++
                     "end) " ++
                     "end " ++
@@ -697,7 +699,7 @@ pub const NeovimGui = struct {
                     "vim.api.nvim_create_autocmd('ColorScheme', {{callback=ghostty_island_hl}}) " ++
                     "vim.api.nvim_create_autocmd('User', {{pattern='BufferLineLoaded', callback=function() " ++
                     "vim.defer_fn(ghostty_island_hl, 50) end}})",
-                .{ gap_hex, gap_hex, gap_hex },
+                .{},
             ) catch return;
             io.sendCommand(cmd) catch {};
         }

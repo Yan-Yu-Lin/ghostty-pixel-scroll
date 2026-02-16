@@ -202,8 +202,11 @@ vec4 cell_bg() {
 
         if (alpha < 1.0) {
             if (is_float_win) {
-                // Float: just clip corners, blend to transparent/discard
-                result.a *= alpha;
+                // Float: blend corners to gap color (same as splits but no shadow).
+                // Using alpha transparency causes artifacts when the float is
+                // interacted with (e.g. LSP completion selection).
+                vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);
+                result = mix(gap_bg, result, alpha);
             } else {
                 // Split: blend to gap color with subtle shadow
                 vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);

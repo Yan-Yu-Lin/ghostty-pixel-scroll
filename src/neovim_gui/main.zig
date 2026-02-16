@@ -627,12 +627,6 @@ pub const NeovimGui = struct {
 
         log.info("installing rounded borders (radius={})", .{self.corner_radius});
 
-        // Build gap color as hex string for Neovim highlight
-        var hex_buf: [8]u8 = undefined;
-        const gap_hex = std.fmt.bufPrint(&hex_buf, "#{x:0>2}{x:0>2}{x:0>2}", .{
-            self.gap_color[0], self.gap_color[1], self.gap_color[2],
-        }) catch "#0a0a0a";
-
         const io = self.io.?;
 
         // 1) Rounded box-drawing chars + global statusline
@@ -697,6 +691,8 @@ pub const NeovimGui = struct {
                     "end " ++
                     "ghostty_island_hl() " ++
                     "vim.api.nvim_create_autocmd('ColorScheme', {{callback=ghostty_island_hl}}) " ++
+                    "vim.api.nvim_create_autocmd('VimEnter', {{callback=function() " ++
+                    "ghostty_island_hl() vim.defer_fn(ghostty_island_hl, 100) end}}) " ++
                     "vim.api.nvim_create_autocmd('User', {{pattern='BufferLineLoaded', callback=function() " ++
                     "vim.defer_fn(ghostty_island_hl, 50) end}})",
                 .{},
@@ -706,21 +702,7 @@ pub const NeovimGui = struct {
 
         // 3) (reserved — user's winbar plugin e.g. dropbar.nvim handles winbar)
 
-        // 4) Re-apply separator highlights after colorscheme changes
-        {
-            var cmd_buf: [512]u8 = undefined;
-            const cmd = std.fmt.bufPrint(
-                &cmd_buf,
-                "lua " ++
-                    "vim.api.nvim_create_autocmd('ColorScheme', {{callback=function() " ++
-                    "vim.o.laststatus = 3 " ++
-                    "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
-                    "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
-                    "end}})",
-                .{ gap_hex, gap_hex, gap_hex },
-            ) catch return;
-            io.sendCommand(cmd) catch {};
-        }
+        // 4) (merged into step 2 — ghostty_island_hl handles ColorScheme autocmd)
 
         // 5) Deferred re-apply: bufferline.nvim loads at VimEnter and
         //    overrides highlight groups. Re-apply multiple times to win the race.

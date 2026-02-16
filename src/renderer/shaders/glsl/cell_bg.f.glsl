@@ -191,20 +191,21 @@ vec4 cell_bg() {
         vec2 frag_pos = gl_FragCoord.xy;
         vec2 center = win_pos + win_size * 0.5;
         vec2 half_size = win_size * 0.5;
-        float r = corner_radius;
+        // Floats use a smaller radius so the SDF rounding doesn't eat
+        // into the border characters drawn by Neovim at the edges.
+        float r = is_float_win ? min(corner_radius, 8.0) : corner_radius;
 
         // SDF for rounded rectangle
         vec2 d = abs(frag_pos - center) - half_size + vec2(r);
         float dist = length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
 
-        // Anti-aliased edge
-        float alpha = 1.0 - smoothstep(-1.0, 0.5, dist);
+        // Anti-aliased edge (floats use tighter edge to preserve border)
+        float edge_lo = is_float_win ? -0.5 : -1.0;
+        float alpha = 1.0 - smoothstep(edge_lo, 0.5, dist);
 
         if (alpha < 1.0) {
             if (is_float_win) {
-                // Float: blend corners to gap color (same as splits but no shadow).
-                // Using alpha transparency causes artifacts when the float is
-                // interacted with (e.g. LSP completion selection).
+                // Float: blend corners to gap color (no shadow).
                 vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);
                 result = mix(gap_bg, result, alpha);
             } else {

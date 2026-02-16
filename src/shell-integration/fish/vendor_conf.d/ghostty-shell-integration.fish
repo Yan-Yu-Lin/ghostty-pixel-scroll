@@ -302,6 +302,7 @@ function ghostty-join
         set port (string split ':' $target)[-1]
     end
 
+    echo "Connecting to collab session at $host:$port..."
     printf '\e]1343;%s:%s\a' $host $port
 
     if test -n "$user"
@@ -346,8 +347,17 @@ function ghostty-join
         cd "$mount_dir"
     else
         set -l nvim_port (math $port + 1)
+        echo "Connecting to host Neovim at $host:$nvim_port..."
         sleep 0.3
         printf '\e]1344;%s:%s\a' $host $nvim_port
+        echo ""
+        echo "=== Joined Collab Session ==="
+        echo "Connected to $host:$port"
+        echo "You are now sharing cursors with the host."
+        echo "Your cursor is visible to other participants."
+        echo ""
+        echo "To disconnect: ghostty-leave"
+        echo "============================="
     end
 end
 

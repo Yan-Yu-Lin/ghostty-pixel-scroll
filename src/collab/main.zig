@@ -259,8 +259,42 @@ pub const CollabState = struct {
 
     fn onPeerJoined(profile: Profile) void {
         const self = global_instance orelse return;
-        _ = self;
-        log.info("peer joined session: {s}", .{profile.getName()});
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        // Add the peer immediately so the sidebar shows them as connected,
+        // even before their first cursor position update arrives.
+        var slot_idx: ?usize = null;
+        for (&self.peers, 0..) |*slot, i| {
+            if (slot.*) |*existing| {
+                if (existing.peer_id == profile.peer_id) {
+                    slot_idx = i;
+                    break;
+                }
+            }
+        }
+        if (slot_idx == null) {
+            for (&self.peers, 0..) |*slot, i| {
+                if (slot.* == null) {
+                    slot_idx = i;
+                    self.peer_count += 1;
+                    break;
+                }
+            }
+        }
+        if (slot_idx) |idx| {
+            const cursor = &self.peers[idx];
+            if (cursor.* == null) {
+                cursor.* = PeerCursor{};
+            }
+            const c = &(cursor.*.?);
+            c.peer_id = profile.peer_id;
+            c.color = profile.color;
+            c.name_len = profile.name_len;
+            @memcpy(&c.name, &profile.name);
+        }
+
+        log.info("peer joined session: {s} (id={d})", .{ profile.getName(), profile.peer_id });
     }
 
     fn onPeerLeft(peer_id: u8) void {

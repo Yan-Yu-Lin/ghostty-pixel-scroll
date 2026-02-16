@@ -381,6 +381,8 @@ const DerivedConfig = struct {
     collab_color_r: u8,
     collab_color_g: u8,
     collab_color_b: u8,
+    /// Resolved cursor-color as packed 0xRRGGBB, or null if dynamic (cell-foreground/cell-background).
+    cursor_color_rgb: ?u32,
 
     const Link = struct {
         regex: oni.Regex,
@@ -483,6 +485,10 @@ const DerivedConfig = struct {
             .collab_color_r = config.@"collab-color".r,
             .collab_color_g = config.@"collab-color".g,
             .collab_color_b = config.@"collab-color".b,
+            .cursor_color_rgb = if (config.@"cursor-color") |cc| switch (cc) {
+                .color => |c| @as(u32, c.r) << 16 | @as(u32, c.g) << 8 | @as(u32, c.b),
+                else => null,
+            } else null,
 
             // Assignments happen sequentially so we have to do this last
             // so that the memory is captured from allocs above.
@@ -1138,6 +1144,7 @@ pub fn connectRemoteNeovim(self: *Surface, host: []const u8, nvim_port: u16) !vo
     // Pass rounding config so Neovim borders match
     nvim.corner_radius = self.config.neovim_corner_radius;
     nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
+    nvim.cursor_color = self.config.cursor_color_rgb;
 
     // Set grid size
     const content_scale = self.rt_surface.getContentScale() catch .{ .x = 1, .y = 1 };
@@ -1201,6 +1208,7 @@ pub fn initNeovimGui(self: *Surface) !void {
     // Pass rounding config so Neovim borders match
     nvim.corner_radius = self.config.neovim_corner_radius;
     nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
+    nvim.cursor_color = self.config.cursor_color_rgb;
 
     // Set initial grid size based on terminal size
     // Note: We use the exact terminal grid size. Neovim handles its own
@@ -1305,6 +1313,7 @@ pub fn initNeovimGuiWithCwd(self: *Surface, cwd: ?[]const u8) !void {
     // Pass rounding config so Neovim borders match
     nvim.corner_radius = self.config.neovim_corner_radius;
     nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
+    nvim.cursor_color = self.config.cursor_color_rgb;
 
     const content_scale = self.rt_surface.getContentScale() catch .{ .x = 1, .y = 1 };
     const x_dpi = content_scale.x * font.face.default_dpi;

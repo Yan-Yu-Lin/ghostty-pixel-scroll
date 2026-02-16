@@ -64,6 +64,11 @@ pub const NeovimGui = struct {
     default_foreground: u32 = 0xe0e0e0,
     default_special: u32 = 0xff0000,
 
+    /// User's configured cursor-color (from Ghostty config).
+    /// When set, used as cursor color fallback when Neovim's guicursor
+    /// doesn't specify an attr_id highlight. Null means use default_foreground.
+    cursor_color: ?u32 = null,
+
     /// NormalFloat highlight ID (for floating window backgrounds)
     normal_float_hl_id: ?u64 = null,
     /// WinBar highlight IDs (for auto-detecting winbar when margins are missing)

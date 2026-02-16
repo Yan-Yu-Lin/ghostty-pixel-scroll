@@ -199,10 +199,13 @@ pub const Client = struct {
                 self.my_peer_id = payload[0];
                 self.profile.peer_id = payload[0];
                 self.host_profile = Profile.deserialize(payload[1..39]);
+                self.host_profile.peer_id = 0; // host is always peer_id 0
                 log.info("welcome! assigned peer_id={d}, host={s}", .{
                     self.my_peer_id,
                     self.host_profile.getName(),
                 });
+                // Notify join callback so the host appears in the peer list immediately
+                if (self.join_callback) |cb| cb(self.host_profile);
             },
             .peer_joined => {
                 if (payload.len < 38) return;

@@ -320,6 +320,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         peer_last_grid_pos: [8][2]u32 = .{.{ std.math.maxInt(u32), std.math.maxInt(u32) }} ** 8,
         peer_animating: bool = false,
 
+        /// Content columns: the number of columns occupied by actual content
+        /// (terminal text or Neovim grid), excluding panel gap columns.
+        /// Used by rebuildCellsFromPanel to know where the gap area starts.
+        content_cols: u16 = 0,
+
         /// Scratch buffers for the neovim→gui adapter. Reused across frames.
         nvim_adapter_state: nvim_adapter.AdapterState = .{},
 
@@ -2103,6 +2108,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             self.updateNvimImagePlacement(nvim);
 
+            // Overlay panel content on top of Neovim cells (same as terminal path).
+            if (self.panel) |panel| {
+                panel.processOutput() catch |err| {
+                    log.warn("error processing panel output in nvim mode err={}", .{err});
+                };
+                const panel_dt: f32 = 1.0 / 120.0;
+                _ = panel.animate(panel_dt);
+                if (panel.isVisible()) {
+                    self.rebuildCellsFromPanel(panel) catch |err| {
+                        log.warn("error rebuilding panel cells in nvim mode err={}", .{err});
+                    };
+                }
+                panel.clearDirty();
+            }
+
             const bg = nvim.default_background;
             self.uniforms.bg_color = .{
                 @intCast((bg >> 16) & 0xFF),
@@ -2307,10 +2327,36 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const cols: u16 = @intCast(grid1.render_width);
             if (rows == 0 or cols == 0) return;
 
-            if (self.cells.size.rows != rows or self.cells.size.columns != cols) {
-                try self.cells.resize(self.alloc, .{ .rows = rows, .columns = cols });
-                self.uniforms.grid_size = .{ cols, rows };
+            // When a panel is open, extend the cell buffer to include panel columns
+            // (same logic as the terminal path in rebuildCells).
+            const real_cols: u16 = if (self.panel) |p| blk: {
+                if (!p.isVisible() and !p.slide.isOpen()) break :blk cols;
+                const cell_w: u32 = self.grid_metrics.cell_width;
+                if (cell_w == 0) break :blk cols;
+                const effective_w: f32 = @floatFromInt(self.size.screen.width);
+                const real_w: f32 = if (self.real_screen_width > 0)
+                    @floatFromInt(self.real_screen_width)
+                else if (p.size_fraction < 1.0)
+                    effective_w / (1.0 - p.size_fraction)
+                else
+                    effective_w;
+                const progress = if (p.slide.isOpen()) @as(f32, 1.0) else p.slide.progress;
+                const panel_px: u32 = @intFromFloat(
+                    real_w * p.size_fraction * progress,
+                );
+                if (panel_px == 0) break :blk cols;
+                const extra_cols: u16 = @intCast(@min(
+                    (panel_px + cell_w - 1) / cell_w,
+                    std.math.maxInt(u16) - cols,
+                ));
+                break :blk cols +| extra_cols;
+            } else cols;
+
+            if (self.cells.size.rows != rows or self.cells.size.columns != real_cols) {
+                try self.cells.resize(self.alloc, .{ .rows = rows, .columns = real_cols });
+                self.uniforms.grid_size = .{ real_cols, rows };
             }
+            self.content_cols = cols;
 
             const default_bg = state.config.default_bg;
 
@@ -2319,7 +2365,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const bg_g: u8 = @intCast((default_bg >> 8) & 0xFF);
             const bg_b: u8 = @intCast(default_bg & 0xFF);
             for (0..rows) |y| {
-                for (0..cols) |x| {
+                for (0..real_cols) |x| {
                     self.cells.bgCell(y, x).* = .{
                         .color = .{ bg_r, bg_g, bg_b, 255 },
                         .offset_y_fixed = 0,
@@ -2413,20 +2459,23 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     const w_row: u32 = @intFromFloat(w.grid_row);
                     const split_top_row_u: u32 = @intFromFloat(split_top_row_f);
                     const is_top_level = (w_row == split_top_row_u);
+                    const w_bot_px = pad_top + (w.grid_row + @as(f32, @floatFromInt(w.render_height))) * cell_h;
 
                     if (is_top_level) {
+                        // Top-level: extend up to include tabline, use own bottom
                         self.uniforms.window_rects[next_wid - 1] = .{
                             px_x + win_pad,
                             pad_top + win_pad,
                             rw * cell_w - win_pad * 2.0,
-                            split_bot_px - pad_top - win_pad * 2.0,
+                            w_bot_px - pad_top - win_pad * 2.0,
                         };
                     } else {
+                        // Non-top (e.g. terminal below buffer): own rect
                         self.uniforms.window_rects[next_wid - 1] = .{
                             px_x + win_pad,
                             px_y + win_pad,
                             rw * cell_w - win_pad * 2.0,
-                            @as(f32, @floatFromInt(w.render_height)) * cell_h - win_pad * 2.0,
+                            rh * cell_h - win_pad * 2.0,
                         };
                     }
                 } else {
@@ -3084,11 +3133,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const panel_bg_g: u8 = @intCast((panel_bg >> 8) & 0xFF);
             const panel_bg_b: u8 = @intCast(panel_bg & 0xFF);
 
-            // Determine the gap columns (extended area beyond the terminal grid).
-            // These columns exist because rebuildCells expanded the cell buffer
-            // to real_cols = term_cols + gap_cols.
-            // term_cols is the terminal's actual column count from terminal state.
-            const term_cols: u16 = self.terminal_state.cols;
+            // Determine the gap columns (extended area beyond the content grid).
+            // These columns exist because rebuildCells/rebuildCellsFromGui expanded
+            // the cell buffer to real_cols = content_cols + gap_cols.
+            const term_cols: u16 = self.content_cols;
             const total_cols = self.cells.size.columns;
             const total_rows = self.cells.size.rows;
 
@@ -3245,10 +3293,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             // Draw a 1-cell-wide border/separator along the panel's inner edge.
-            // Use a subtle Surface0 color to visually separate panel from terminal.
-            const border_color_r: u8 = 0x31; // Catppuccin Surface0
-            const border_color_g: u8 = 0x32;
-            const border_color_b: u8 = 0x44;
+            // Use the panel's dynamic border color (blended from user's bg/fg).
+            const border_rgb = panel.border_color;
+            const border_color_r: u8 = @intCast((border_rgb >> 16) & 0xFF);
+            const border_color_g: u8 = @intCast((border_rgb >> 8) & 0xFF);
+            const border_color_b: u8 = @intCast(border_rgb & 0xFF);
 
             switch (panel.position) {
                 .right => {
@@ -4720,6 +4769,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 ));
                 break :blk state.cols +| extra_cols;
             } else state.cols;
+
+            self.content_cols = state.cols;
 
             const grid_size_diff =
                 self.cells.size.rows != state.rows or

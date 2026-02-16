@@ -482,6 +482,7 @@ _ghostty_deferred_init() {
             return 1
         fi
 
+        builtin echo "Connecting to collab session at ${host}:${port}..."
         builtin print -nu $_ghostty_fd "\e]1343;${host}:${port}\a"
 
         if [[ -n "$user" ]]; then
@@ -527,8 +528,17 @@ _ghostty_deferred_init() {
             cd "$mount_dir" || true
         else
             local nvim_port=$((port + 1))
+            builtin echo "Connecting to host Neovim at ${host}:${nvim_port}..."
             sleep 0.3
             builtin print -nu $_ghostty_fd "\e]1344;${host}:${nvim_port}\a"
+            builtin echo ""
+            builtin echo "=== Joined Collab Session ==="
+            builtin echo "Connected to ${host}:${port}"
+            builtin echo "You are now sharing cursors with the host."
+            builtin echo "Your cursor is visible to other participants."
+            builtin echo ""
+            builtin echo "To disconnect: ghostty-leave"
+            builtin echo "============================="
         fi
     }
 

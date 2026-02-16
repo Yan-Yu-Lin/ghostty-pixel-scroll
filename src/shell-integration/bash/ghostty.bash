@@ -342,6 +342,7 @@ ghostty-join() {
     fi
 
     # Step 1: Join collab session (presence/cursors)
+    builtin echo "Connecting to collab session at ${host}:${port}..."
     builtin printf '\e]1343;%s:%s\a' "$host" "$port"
 
     if [[ -n "$user" ]]; then
@@ -418,8 +419,17 @@ ghostty-join() {
     else
         # Local mode: connect to host's Neovim directly (same machine)
         local nvim_port=$((port + 1))
+        builtin echo "Connecting to host Neovim at ${host}:${nvim_port}..."
         sleep 0.3
         builtin printf '\e]1344;%s:%s\a' "$host" "$nvim_port"
+        builtin echo ""
+        builtin echo "=== Joined Collab Session ==="
+        builtin echo "Connected to ${host}:${port}"
+        builtin echo "You are now sharing cursors with the host."
+        builtin echo "Your cursor is visible to other participants."
+        builtin echo ""
+        builtin echo "To disconnect: ghostty-leave"
+        builtin echo "============================="
     fi
 }
 

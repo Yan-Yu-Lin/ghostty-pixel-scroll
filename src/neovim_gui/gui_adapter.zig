@@ -233,6 +233,22 @@ fn buildCursor(nvim: *const NeovimGui) gui.GuiCursor {
         .horizontal => .horizontal,
     } else .block;
 
+    // Resolve cursor color: prefer the mode's highlight attr (from guicursor),
+    // then fall back to the user's cursor-color config, then default foreground.
+    const cursor_color: u32 = blk: {
+        if (mode) |m| {
+            if (m.attr_id) |attr_id| {
+                if (nvim.hl_attrs.get(attr_id)) |attr| {
+                    if (attr.background) |bg| break :blk bg;
+                    if (attr.foreground) |fg| break :blk fg;
+                }
+            }
+        }
+        // Fall back to configured cursor-color if set, otherwise default foreground
+        if (nvim.cursor_color) |cc| break :blk cc;
+        break :blk nvim.default_foreground;
+    };
+
     return .{
         .visible = true,
         .grid_x = grid_x,
@@ -242,7 +258,7 @@ fn buildCursor(nvim: *const NeovimGui) gui.GuiCursor {
         .shape = shape,
         .cell_percentage = if (mode) |m| m.cell_percentage orelse 0.25 else 0.25,
         .blink = if (mode) |m| (m.blinkon orelse 0) > 0 else false,
-        .color = nvim.default_foreground,
+        .color = cursor_color,
         .scroll_pos = scroll_pos,
     };
 }

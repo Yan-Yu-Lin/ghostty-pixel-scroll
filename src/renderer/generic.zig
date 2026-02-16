@@ -2280,6 +2280,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// This is the generic version — no backend-specific types appear here.
         fn rebuildCellsFromGui(self: *Self, state: gui_protocol.GuiState) !void {
             self.cells.reset();
+            // Nvim-gui manages its own grid; don't extend padding colors
+            // into the gutter area (which would duplicate the statusline).
+            self.uniforms.padding_extend = .{};
 
             const windows = state.windows;
             if (windows.len == 0) return;

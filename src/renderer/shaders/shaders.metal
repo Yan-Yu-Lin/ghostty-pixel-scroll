@@ -50,6 +50,8 @@ struct Uniforms {
   float corner_radius;            // Corner radius in pixels (0 = disabled)
   uchar4 gap_color;               // Gap color between rounded windows
   float matte_intensity;          // Matte/ink post-processing (0 = off, 1 = full)
+  float text_gamma;               // Text gamma adjustment (0 = standard sRGB)
+  float text_contrast;            // Text contrast adjustment (0 = no change)
   uint window_rect_count;         // Number of active window rects
   float4 window_rects[16];        // Window pixel rects: {x, y, w, h}
 };

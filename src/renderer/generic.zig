@@ -2378,15 +2378,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Each split gets its own island rect starting at its own
-                    // grid_row with win_pad inset on all sides. The tabline row
-                    // (above splits) and statusline (below splits) stay OUTSIDE
-                    // the islands as flat bars — no rounding, no shadow.
+                    // Each split's island extends from the top of the grid
+                    // (to include the tabline row — buffer tabs / NvimTree
+                    // offset) down to the bottom of the splits (above the
+                    // statusline). Each island is a separate rounded rect.
+                    // win_pad creates the gap between side-by-side islands
+                    // (horizontal) and between the island and the grid edge
+                    // (vertical).
                     self.uniforms.window_rects[next_wid - 1] = .{
                         px_x + win_pad,
-                        px_y + win_pad,
+                        pad_top + win_pad,
                         rw * cell_w - win_pad * 2.0,
-                        split_bot_px - px_y - win_pad * 2.0,
+                        split_bot_px - pad_top - win_pad * 2.0,
                     };
                 } else {
                     // Floats/messages: exact rect, clean rounding without gap
@@ -2622,14 +2625,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
 
-            // Post-pass: tabline and statusline are flat bars outside the
-            // split islands. Give them a sentinel window_id so the shader
-            // skips both SDF rounding AND gap shadow. They render with their
-            // true Neovim highlight colors, no darkening.
-            //
-            // Detect rows by split positions (root margin_top/bottom are
-            // unreliable — Neovim often doesn't send win_viewport_margins
-            // for grid 1).
+            // Post-pass: assign tabline and statusline rows to appropriate
+            // window_ids. Tabline cells go to their respective split (so
+            // they're inside the island's rounded rect). Statusline cells
+            // get a sentinel id (flat bar, no rounding, no shadow).
             if (state.config.corner_radius > 0) {
                 var split_top_row: u32 = rows;
                 var split_bot_row: u32 = 0;
@@ -2643,19 +2642,34 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 const bar_sentinel: u8 = @intCast(@min(self.uniforms.window_rect_count + 1, 255));
 
-                // Tabline rows (0..split_top_row): flat bar above islands
+                // Tabline rows (0..split_top_row): assign to the split whose
+                // column range covers each cell. This makes buffer tabs part
+                // of the buffer island, NvimTree offset part of the tree island.
                 if (split_top_row > 0 and split_top_row < rows) {
                     for (0..split_top_row) |r| {
                         for (0..cols) |x| {
                             const bg_cell = self.cells.bgCell(r, x);
-                            if (bg_cell.window_id == 0) {
+                            if (bg_cell.window_id != 0) continue;
+                            var assigned = false;
+                            for (windows) |sw| {
+                                if (sw.window_type != .split) continue;
+                                const sw_col: u32 = @intFromFloat(sw.grid_col);
+                                const sw_end = sw_col + sw.render_width;
+                                if (x >= sw_col and x < sw_end) {
+                                    bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
+                                    assigned = true;
+                                    break;
+                                }
+                            }
+                            // Separator column between splits — use sentinel
+                            if (!assigned) {
                                 bg_cell.window_id = bar_sentinel;
                             }
                         }
                     }
                 }
 
-                // Statusline rows (split_bot_row..rows): flat bar below islands
+                // Statusline rows (split_bot_row..rows): flat bar, sentinel id
                 if (split_bot_row > 0 and split_bot_row < rows) {
                     var srow: u32 = split_bot_row;
                     while (srow < rows) : (srow += 1) {

@@ -99,6 +99,10 @@ vec4 cell_bg() {
     // treat it as out-of-bounds regardless of where the scroll offset maps it.
     // This prevents the extra pixel-scroll rows from showing in the padding.
     if (in_padding) {
+        // Island UI: padding area uses gap_color (the background behind islands)
+        if (corner_radius > 0.0 && window_rect_count > 0u) {
+            return load_color(unpack4u8(gap_color_packed), use_linear_blending);
+        }
         // Use the shifted grid_pos to find the edge row's color (the shifted
         // pos correctly accounts for pixel_scroll_offset_y).
         int clamped_y = clamp(grid_pos.y, 1, int(grid_size.y) - 2);
@@ -124,15 +128,22 @@ vec4 cell_bg() {
         return bg;
     }
 
+    // Island UI: any out-of-grid fragment uses gap_color
+    bool is_island_ui = (corner_radius > 0.0 && window_rect_count > 0u);
+
     // Clamp x position, extends edge bg colors in to padding on sides.
     if (grid_pos.x < 0) {
-        if ((padding_extend & EXTEND_LEFT) != 0) {
+        if (is_island_ui) {
+            return load_color(unpack4u8(gap_color_packed), use_linear_blending);
+        } else if ((padding_extend & EXTEND_LEFT) != 0) {
             grid_pos.x = 0;
         } else {
             return bg;
         }
     } else if (grid_pos.x > grid_size.x - 1) {
-        if ((padding_extend & EXTEND_RIGHT) != 0) {
+        if (is_island_ui) {
+            return load_color(unpack4u8(gap_color_packed), use_linear_blending);
+        } else if ((padding_extend & EXTEND_RIGHT) != 0) {
             grid_pos.x = int(grid_size.x) - 1;
         } else {
             return bg;
@@ -141,13 +152,17 @@ vec4 cell_bg() {
 
     // Clamp y position if we should extend, otherwise discard if out of bounds.
     if (grid_pos.y < 0) {
-        if ((padding_extend & EXTEND_UP) != 0) {
+        if (is_island_ui) {
+            return load_color(unpack4u8(gap_color_packed), use_linear_blending);
+        } else if ((padding_extend & EXTEND_UP) != 0) {
             grid_pos.y = 0;
         } else {
             return bg;
         }
     } else if (grid_pos.y > grid_size.y - 1) {
-        if ((padding_extend & EXTEND_DOWN) != 0) {
+        if (is_island_ui) {
+            return load_color(unpack4u8(gap_color_packed), use_linear_blending);
+        } else if ((padding_extend & EXTEND_DOWN) != 0) {
             grid_pos.y = int(grid_size.y) - 1;
         } else {
             return bg;

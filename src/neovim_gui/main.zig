@@ -700,32 +700,7 @@ pub const NeovimGui = struct {
             io.sendCommand(cmd) catch {};
         }
 
-        // 3) NvimTree winbar: show "EXPLORER" title with tree bg
-        {
-            const cmd =
-                "lua pcall(function() " ++
-                "vim.api.nvim_create_autocmd('FileType', {pattern='NvimTree', callback=function() " ++
-                "local tree_hl = vim.api.nvim_get_hl(0, {name='NvimTreeNormal', link=false}) " ++
-                "local nbg = (vim.api.nvim_get_hl(0, {name='Normal', link=false})).bg " ++
-                "local tbg = tree_hl.bg or nbg " ++
-                "local tfg = tree_hl.fg or 0xc0caf5 " ++
-                "vim.api.nvim_set_hl(0, 'GhosttyTreeBar', {bg=tbg, fg=tfg, bold=true}) " ++
-                "vim.wo.winbar = '%#GhosttyTreeBar# EXPLORER%=' " ++
-                "end}) " ++
-                "for _, win in ipairs(vim.api.nvim_list_wins()) do " ++
-                "local buf = vim.api.nvim_win_get_buf(win) " ++
-                "if vim.bo[buf].filetype == 'NvimTree' then " ++
-                "local tree_hl = vim.api.nvim_get_hl(0, {name='NvimTreeNormal', link=false}) " ++
-                "local nbg = (vim.api.nvim_get_hl(0, {name='Normal', link=false})).bg " ++
-                "local tbg = tree_hl.bg or nbg " ++
-                "local tfg = tree_hl.fg or 0xc0caf5 " ++
-                "vim.api.nvim_set_hl(0, 'GhosttyTreeBar', {bg=tbg, fg=tfg, bold=true}) " ++
-                "vim.api.nvim_set_option_value('winbar', " ++
-                "'%#GhosttyTreeBar# EXPLORER%=', {win=win}) " ++
-                "end end " ++
-                "end)";
-            io.sendCommand(cmd) catch {};
-        }
+        // 3) (reserved — user's winbar plugin e.g. dropbar.nvim handles winbar)
 
         // 4) Re-apply separator highlights after colorscheme changes
         {
@@ -743,12 +718,19 @@ pub const NeovimGui = struct {
             io.sendCommand(cmd) catch {};
         }
 
-        // 5) Deferred re-apply for async plugin loading
+        // 5) Deferred re-apply: bufferline.nvim loads at VimEnter and
+        //    overrides highlight groups. Re-apply multiple times to win the race.
         {
             const cmd =
-                "lua vim.defer_fn(function() " ++
+                "lua " ++
+                "for _, ms in ipairs({100, 300, 500, 1000}) do " ++
+                "vim.defer_fn(function() " ++
                 "if ghostty_island_hl then ghostty_island_hl() end " ++
-                "end, 200)";
+                "end, ms) end " ++
+                "vim.api.nvim_create_autocmd({'BufAdd','BufEnter'}, {callback=function() " ++
+                "vim.defer_fn(function() " ++
+                "if ghostty_island_hl then ghostty_island_hl() end " ++
+                "end, 50) end})";
             io.sendCommand(cmd) catch {};
         }
     }

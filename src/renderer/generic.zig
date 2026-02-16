@@ -2623,30 +2623,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Post-pass: assign root tabline cells (NOT statusline) to the
             // nearest split so they're inside the rounded rect.
-            // Also replace their bg color with the split's actual bg so
-            // the tabline row visually matches the content below it
-            // (e.g. NvimTree bg above the tree, Normal bg above the buffer).
+            // BG colors come from Neovim's highlight groups (e.g. BufferLineFill,
+            // NvimTreeNormal via bufferline offsets) — we only touch window_id.
             if (state.config.corner_radius > 0) {
-                // Pre-sample each split's bg from its first content row.
-                var split_bgs: [17][4]u8 = undefined;
-                for (windows) |sw| {
-                    if (sw.window_type != .split) continue;
-                    const wid = window_id_map.get(sw.id) orelse continue;
-                    // Sample from first row after top margin (actual content)
-                    const sample_row = sw.margin_top;
-                    if (sw.getCell(sw.ctx, sample_row, 0)) |cell| {
-                        const sbg = if (cell.style.reverse) cell.style.fg else cell.style.bg;
-                        split_bgs[wid] = .{
-                            @intCast((sbg >> 16) & 0xFF),
-                            @intCast((sbg >> 8) & 0xFF),
-                            @intCast(sbg & 0xFF),
-                            255,
-                        };
-                    } else {
-                        split_bgs[wid] = .{ bg_r, bg_g, bg_b, 255 };
-                    }
-                }
-
                 for (windows) |rcheck| {
                     if (rcheck.window_type != .root) continue;
                     if (rcheck.margin_top == 0) break;
@@ -2663,14 +2642,37 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 const sw_col: u32 = @intFromFloat(sw.grid_col);
                                 const sw_end = sw_col + sw.render_width;
                                 if (x >= sw_col and x < sw_end) {
-                                    const wid = window_id_map.get(sw.id) orelse 0;
-                                    bg_cell.window_id = wid;
-                                    // Replace bg with the split's actual content bg
-                                    if (wid > 0 and wid < split_bgs.len) {
-                                        bg_cell.color = split_bgs[wid];
-                                    }
+                                    bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
                                     break;
                                 }
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+
+            // Post-pass 2: give root statusline cells a sentinel window_id
+            // so the shader's gap shadow pass skips them. Without this,
+            // all window_id==0 cells (including the statusline) get darkened
+            // by the drop shadow, making the statusline text/bg look wrong.
+            // Sentinel = window_rect_count + 1: high enough that SDF rounding
+            // is skipped (> rect_count) but non-zero so gap shadow is skipped too.
+            if (state.config.corner_radius > 0) {
+                const statusline_sentinel: u8 = @intCast(@min(self.uniforms.window_rect_count + 1, 255));
+                for (windows) |rcheck| {
+                    if (rcheck.window_type != .root) continue;
+                    if (rcheck.margin_bottom == 0) break;
+                    const root_row: u32 = @intFromFloat(rcheck.grid_row);
+                    const root_height = rcheck.render_height;
+                    const status_start = root_row + root_height -| rcheck.margin_bottom;
+                    var srow: u32 = status_start;
+                    while (srow < root_row + root_height) : (srow += 1) {
+                        if (srow >= rows) continue;
+                        for (0..cols) |x| {
+                            const bg_cell = self.cells.bgCell(srow, x);
+                            if (bg_cell.window_id == 0) {
+                                bg_cell.window_id = statusline_sentinel;
                             }
                         }
                     }

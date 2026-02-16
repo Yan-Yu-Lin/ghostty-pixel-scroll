@@ -2296,6 +2296,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.uniforms.grid_size = .{ cols, rows };
             }
 
+            // Neovim GUI manages its own layout — don't extend cell colors
+            // into padding. This prevents the statusline from being duplicated
+            // in the blank space below the grid.
+            self.uniforms.padding_extend = .{};
+
             const default_bg = state.config.default_bg;
 
             // Fill grid with default bg.
@@ -2336,6 +2341,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             for (windows) |w| {
                 if (next_wid > 16) break;
+                // Don't assign SDF rounding to the root window — it spans
+                // the entire grid and rounding its corners clips the
+                // statusline edges, producing black squares.
+                if (w.window_type == .root) {
+                    window_id_map.put(w.id, 0) catch {};
+                    continue;
+                }
                 const rw: f32 = @floatFromInt(w.render_width);
                 const rh: f32 = @floatFromInt(w.render_height);
                 const px_x = pad_left + w.grid_col * cell_w;

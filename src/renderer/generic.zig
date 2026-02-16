@@ -2528,11 +2528,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
 
                             const cell_text = c.getText();
-                            // Root inner content with default bg = separator area
-                            // (box-drawing chars, spaces between windows). Replace
-                            // with gap color so the gap is uniform. Tabline and
-                            // statusline are in margin regions, not here.
-                            const is_separator = is_root and rounding_active and bg == default_bg;
+                            // In root inner content (NOT margin/tabline/statusline):
+                            // cells with default bg are separators — replace with gap.
+                            // Box-drawing chars are also separators regardless of bg.
+                            const is_separator = is_root and rounding_active and
+                                (bg == default_bg or isBoxDrawing(cell_text));
 
                             if (is_separator) {
                                 bg = (@as(u32, state.config.gap_color[0]) << 16) |

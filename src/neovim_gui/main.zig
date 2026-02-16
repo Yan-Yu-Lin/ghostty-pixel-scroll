@@ -739,8 +739,6 @@ pub const NeovimGui = struct {
 
                 if (self.collab_presence_callback) |cb| {
                     cb(data.row, data.col, data.file_name, data.mode);
-                } else {
-                    log.warn("no collab_presence_callback set", .{});
                 }
 
                 // Update NvimTree badges with peer file info

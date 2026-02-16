@@ -2336,11 +2336,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             for (windows) |w| {
                 if (next_wid > 16) break;
-                // Don't assign SDF rounding to the root window — it spans
-                // the entire grid and rounding its corners clips the
-                // statusline edges, producing black squares.
+                // The root window spans the entire grid. We still need to
+                // add it to window_rects so window_rect_count stays correct
+                // (the shader uses rect_count == 0 to toggle allow_fixed_overlap
+                // which controls statusline bleed during scroll). But we map
+                // root cells to window_id 0 so SDF corner rounding is skipped
+                // for them (the SDF check requires cell_window_id > 0).
                 if (w.window_type == .root) {
                     window_id_map.put(w.id, 0) catch {};
+                    // Still add to rects to keep the count accurate
+                    const rw_root: f32 = @floatFromInt(w.render_width);
+                    const rh_root: f32 = @floatFromInt(w.render_height);
+                    const px_x_root = pad_left + w.grid_col * cell_w;
+                    const px_y_root = pad_top + w.grid_row * cell_h;
+                    self.uniforms.window_rects[next_wid - 1] = .{ px_x_root, px_y_root, rw_root * cell_w, rh_root * cell_h };
+                    next_wid += 1;
                     continue;
                 }
                 const rw: f32 = @floatFromInt(w.render_width);

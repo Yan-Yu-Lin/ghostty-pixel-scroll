@@ -536,10 +536,13 @@ fragment float4 cell_bg_fragment(
 
   int2 grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
 
-  // Clamp grid_pos.y to scroll region for shifted pixels so they
-  // don't sample from header/status bar rows
+  // If a scroll-region fragment shifted outside the region, show the
+  // default background instead of clamping to the boundary row.
+  // Clamping caused the boundary row's color to "stretch" visually.
   if (in_tui_scroll_region) {
-    grid_pos.y = clamp(grid_pos.y, int(uniforms.tui_scroll_region_top), int(uniforms.tui_scroll_region_bottom));
+    if (grid_pos.y < int(uniforms.tui_scroll_region_top) || grid_pos.y > int(uniforms.tui_scroll_region_bottom)) {
+      return load_color(uniforms.bg_color, uniforms.use_display_p3, uniforms.use_linear_blending);
+    }
   }
   
   // Apply per-cell offset for per-window smooth scrolling (Neovim GUI mode)

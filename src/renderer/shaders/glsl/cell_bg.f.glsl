@@ -54,9 +54,14 @@ vec4 cell_bg() {
     
     ivec2 grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
 
-    // Clamp grid_pos.y to scroll region for shifted pixels
+    // If a scroll-region fragment shifted outside the region, show the
+    // default background instead of clamping to the boundary row.
+    // Clamping caused the boundary row's color to "stretch" visually.
     if (in_tui_scroll_region) {
-        grid_pos.y = clamp(grid_pos.y, int(tui_region.x), int(tui_region.y));
+        if (grid_pos.y < int(tui_region.x) || grid_pos.y > int(tui_region.y)) {
+            uvec4 bg_raw = unpack4u8(bg_color_packed_4u8);
+            return load_color(bg_raw, use_linear_blending);
+        }
     }
     
     // Apply per-cell offset for per-window smooth scrolling

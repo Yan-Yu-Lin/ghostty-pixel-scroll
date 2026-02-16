@@ -2368,41 +2368,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Splits: build rect that includes adjacent root margin
-                    // rows (tabline above, statusline below) so they appear
-                    // as part of this window's rounded rectangle.
-                    // Check if this split touches the top of the content area
-                    // (right below root's top margin / tabline).
-                    var rect_y = px_y;
-                    var rect_h = rh * cell_h;
-
-                    // Find the root window to get its margins
-                    for (windows) |rw_check| {
-                        if (rw_check.window_type == .root) {
-                            const root_margin_top_px = @as(f32, @floatFromInt(rw_check.margin_top)) * cell_h;
-                            const root_margin_bottom_px = @as(f32, @floatFromInt(rw_check.margin_bottom)) * cell_h;
-                            const root_content_top = pad_top + rw_check.grid_row * cell_h + root_margin_top_px;
-                            const root_content_bottom = pad_top + rw_check.grid_row * cell_h + @as(f32, @floatFromInt(rw_check.render_height)) * cell_h - root_margin_bottom_px;
-
-                            // If split top is at root content top, extend up to include tabline
-                            if (@abs(px_y - root_content_top) < cell_h * 0.5) {
-                                rect_y = px_y - root_margin_top_px;
-                                rect_h += root_margin_top_px;
-                            }
-                            // If split bottom is at root content bottom, extend down to include statusline
-                            const split_bottom = px_y + rh * cell_h;
-                            if (@abs(split_bottom - root_content_bottom) < cell_h * 0.5) {
-                                rect_h += root_margin_bottom_px;
-                            }
-                            break;
-                        }
-                    }
-
+                    // Splits: extend rect to full screen height within this
+                    // window's column range. This makes the tabline (above)
+                    // and statusline (below) part of the rounded rectangle.
+                    const screen_h: f32 = @floatFromInt(rows);
                     self.uniforms.window_rects[next_wid - 1] = .{
                         px_x + win_pad,
-                        rect_y + win_pad,
+                        pad_top + win_pad,
                         rw * cell_w - win_pad * 2.0,
-                        rect_h - win_pad * 2.0,
+                        screen_h * cell_h - win_pad * 2.0,
                     };
                 } else {
                     // Floats/messages: exact rect, clean rounding without gap

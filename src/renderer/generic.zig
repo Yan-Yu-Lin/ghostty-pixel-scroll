@@ -2364,15 +2364,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Pre-compute split vertical boundaries for island rects.
             // split_top_row_f = first row where a split starts (tabline is above)
-            // split_bot_px = pixel Y where splits end (statusline is below)
+            // split_bot_px = pixel Y where the tallest top-level split ends.
+            //   Use MAX (not min) so full-height splits like NvimTree aren't
+            //   cut short when another column has horizontal sub-splits.
             var split_top_row_f: f32 = @floatFromInt(rows);
-            var split_bot_px: f32 = pad_top + @as(f32, @floatFromInt(rows)) * cell_h;
+            var split_bot_px: f32 = 0;
             for (windows) |sw| {
                 if (sw.window_type != .split) continue;
                 if (sw.grid_row < split_top_row_f) split_top_row_f = sw.grid_row;
                 const sb_px = pad_top + (sw.grid_row + @as(f32, @floatFromInt(sw.render_height))) * cell_h;
-                if (sb_px < split_bot_px) split_bot_px = sb_px;
+                if (sb_px > split_bot_px) split_bot_px = sb_px;
             }
+            // Fallback if no splits found
+            if (split_bot_px == 0) split_bot_px = pad_top + @as(f32, @floatFromInt(rows)) * cell_h;
 
             for (windows) |w| {
                 if (next_wid > 16) break;

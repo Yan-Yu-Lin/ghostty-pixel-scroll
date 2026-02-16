@@ -2365,15 +2365,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const px_x = pad_left + w.grid_col * cell_w;
                 const px_y = pad_top + w.grid_row * cell_h;
                 window_id_map.put(w.id, next_wid) catch {};
-                // Inset each non-root window rect by the window_padding amount.
-                // This creates visible gap between adjacent panes where the
-                // gap_color shows through, giving each window its own fully
-                // rounded rectangle (like VS Code / Cursor style).
+                // Inset split window rects by the window_padding amount.
+                // Floats/messages keep their exact bounds (they have their own borders).
+                const is_split_win = (w.window_type == .split);
+                const p = if (is_split_win) win_pad else @as(f32, 0);
                 self.uniforms.window_rects[next_wid - 1] = .{
-                    px_x + win_pad,
-                    px_y + win_pad,
-                    rw * cell_w - win_pad * 2.0,
-                    rh * cell_h - win_pad * 2.0,
+                    px_x + p,
+                    px_y + p,
+                    rw * cell_w - p * 2.0,
+                    rh * cell_h - p * 2.0,
                 };
                 next_wid += 1;
             }
@@ -2425,13 +2425,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const render_height = window.render_height;
                 const is_float = (window.window_type == .floating or window.window_type == .message);
                 const is_msg = window.window_type == .message;
-                // When rounding is active, the root grid (grid 1) only contains
-                // separator chars and empty cells. Skip its text so the SDF gap
-                // provides clean visual separation between rounded panes.
                 const is_root = (window.window_type == .root);
                 const rounding_active = (state.config.corner_radius > 0);
-                const skip_text = (self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?) or
-                    (is_root and rounding_active);
+                const skip_text = self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?;
                 const win_opacity: u8 = @intFromFloat(std.math.clamp(window.opacity * 255.0, 0.0, 255.0));
                 const scroll_offset = window.scroll_pixel_offset;
                 const bg_offset_fixed: i16 = @intFromFloat(std.math.clamp(scroll_offset * 256.0, -32768.0, 32767.0));
@@ -2456,18 +2452,24 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg = t;
                             }
                             if (is_root and rounding_active) {
-                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                    (@as(u32, state.config.gap_color[1]) << 8) |
-                                    @as(u32, state.config.gap_color[2]);
+                                const mtxt = cell.getText();
+                                if (mtxt.len == 0 or (mtxt[0] == ' ') or (mtxt[0] == 0) or isBoxDrawing(mtxt)) {
+                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                        (@as(u32, state.config.gap_color[1]) << 8) |
+                                        @as(u32, state.config.gap_color[2]);
+                                }
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (!skip_text) {
+                            {
                                 const text = cell.getText();
-                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                if (text.len > 0) {
+                                    const skip_sep = is_root and rounding_active and isBoxDrawing(text);
+                                    if (!skip_sep and !skip_text) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                }
                             }
                         } else {
                             // Null cell: write default bg with window_id for SDF rounding.
@@ -2515,13 +2517,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg = t;
                             }
 
-                            // Root cells become gap-colored when rounding is active.
-                            // This hides Neovim's separator chars and makes the
-                            // background between rounded panes uniform.
+                            // Root separator cells become gap-colored when rounding
+                            // is active. Only override cells that are empty or contain
+                            // box-drawing chars — keep statusline/tabline bg intact.
                             if (is_root and rounding_active) {
-                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                    (@as(u32, state.config.gap_color[1]) << 8) |
-                                    @as(u32, state.config.gap_color[2]);
+                                const txt = c.getText();
+                                if (txt.len == 0 or (txt[0] == ' ') or (txt[0] == 0) or isBoxDrawing(txt)) {
+                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                        (@as(u32, state.config.gap_color[1]) << 8) |
+                                        @as(u32, state.config.gap_color[2]);
+                                }
                             }
 
                             // Background — skip the extra animation row (would corrupt statusline).
@@ -2559,8 +2564,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             if (!skip_text and (owns_cell or is_extra)) {
                                 const text = c.getText();
                                 if (text.len > 0) {
-                                    const eff_offset: f32 = if (is_float) 0 else scroll_offset;
-                                    self.addGuiGlyph(sx, sy, text, fg, c.style, eff_offset) catch {};
+                                    // When rounding is active, skip box-drawing separator
+                                    // chars on root grid (they're replaced by the SDF gap).
+                                    const skip_separator = is_root and rounding_active and isBoxDrawing(text);
+                                    if (!skip_separator) {
+                                        const eff_offset: f32 = if (is_float) 0 else scroll_offset;
+                                        self.addGuiGlyph(sx, sy, text, fg, c.style, eff_offset) catch {};
+                                    }
                                 }
                             }
                         } else if (!is_extra) {
@@ -2599,18 +2609,24 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg = t;
                             }
                             if (is_root and rounding_active) {
-                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                    (@as(u32, state.config.gap_color[1]) << 8) |
-                                    @as(u32, state.config.gap_color[2]);
+                                const btxt = cell.getText();
+                                if (btxt.len == 0 or (btxt[0] == ' ') or (btxt[0] == 0) or isBoxDrawing(btxt)) {
+                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                        (@as(u32, state.config.gap_color[1]) << 8) |
+                                        @as(u32, state.config.gap_color[2]);
+                                }
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (owns_cell and !skip_text) {
+                            if (owns_cell) {
                                 const text = cell.getText();
-                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                if (text.len > 0) {
+                                    const skip_sep = is_root and rounding_active and isBoxDrawing(text);
+                                    if (!skip_sep and !skip_text) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                }
                             }
                         } else {
                             self.cells.bgCell(sy, sx).* = .{
@@ -2865,6 +2881,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         }
 
         /// Render a single GUI cell's text glyph + decorations at (x, y).
+        /// Returns true if the text starts with a Unicode box-drawing character
+        /// (U+2500..U+257F) or heavy/light line chars used as window separators.
+        fn isBoxDrawing(text: []const u8) bool {
+            if (text.len < 3) return false;
+            // UTF-8 for U+2500..U+257F is E2 94 80 .. E2 95 BF
+            if (text[0] == 0xE2) {
+                if (text[1] == 0x94 or text[1] == 0x95) return true;
+                // Also catch U+2580..U+259F (block elements) which some themes use
+                if (text[1] == 0x96 or text[1] == 0x97) return true;
+            }
+            return false;
+        }
+
         fn addGuiGlyph(
             self: *Self,
             x: u16,

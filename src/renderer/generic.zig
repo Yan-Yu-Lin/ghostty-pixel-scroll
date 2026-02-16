@@ -2296,11 +2296,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.uniforms.grid_size = .{ cols, rows };
             }
 
-            // Neovim GUI manages its own layout — don't extend cell colors
-            // into padding. This prevents the statusline from being duplicated
-            // in the blank space below the grid.
-            self.uniforms.padding_extend = .{};
-
             const default_bg = state.config.default_bg;
 
             // Fill grid with default bg.

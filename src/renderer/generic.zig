@@ -2301,12 +2301,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             const default_bg = state.config.default_bg;
 
-            // Fill grid with default bg (or gap color when rounding is active,
-            // so the space between rounded panes shows the gap color).
-            const use_gap_bg = (state.config.corner_radius > 0);
-            const bg_r: u8 = if (use_gap_bg) state.config.gap_color[0] else @intCast((default_bg >> 16) & 0xFF);
-            const bg_g: u8 = if (use_gap_bg) state.config.gap_color[1] else @intCast((default_bg >> 8) & 0xFF);
-            const bg_b: u8 = if (use_gap_bg) state.config.gap_color[2] else @intCast(default_bg & 0xFF);
+            // Fill grid with default bg.
+            const bg_r: u8 = @intCast((default_bg >> 16) & 0xFF);
+            const bg_g: u8 = @intCast((default_bg >> 8) & 0xFF);
+            const bg_b: u8 = @intCast(default_bg & 0xFF);
             for (0..rows) |y| {
                 for (0..cols) |x| {
                     self.cells.bgCell(y, x).* = .{
@@ -2438,8 +2436,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const render_height = window.render_height;
                 const is_float = (window.window_type == .floating or window.window_type == .message);
                 const is_msg = window.window_type == .message;
-                const is_root = (window.window_type == .root);
-                const rounding_active = (state.config.corner_radius > 0);
                 const skip_text = self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?;
                 const win_opacity: u8 = @intFromFloat(std.math.clamp(window.opacity * 255.0, 0.0, 255.0));
                 const scroll_offset = window.scroll_pixel_offset;
@@ -2464,22 +2460,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            {
-                                const mtxt = cell.getText();
-                                const msep = is_root and rounding_active and isBoxDrawing(mtxt);
-                                if (msep) {
-                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                        (@as(u32, state.config.gap_color[1]) << 8) |
-                                        @as(u32, state.config.gap_color[2]);
-                                }
-                                self.cells.bgCell(sy, sx).* = .{
-                                    .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
-                                    .offset_y_fixed = 0,
-                                    .window_id = cur_wid,
-                                };
-                                if (!skip_text and !msep and mtxt.len > 0) {
-                                    self.addGuiGlyph(sx, sy, mtxt, fg, cell.style, 0) catch {};
-                                }
+                            self.cells.bgCell(sy, sx).* = .{
+                                .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
+                                .offset_y_fixed = 0,
+                                .window_id = cur_wid,
+                            };
+                            if (!skip_text) {
+                                const text = cell.getText();
+                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
                             }
                         } else {
                             // Null cell: write default bg with window_id for SDF rounding.
@@ -2528,17 +2516,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
 
                             const cell_text = c.getText();
-                            // In root inner content (NOT margin/tabline/statusline):
-                            // cells with default bg are separators — replace with gap.
-                            // Box-drawing chars are also separators regardless of bg.
-                            const is_separator = is_root and rounding_active and
-                                (bg == default_bg or isBoxDrawing(cell_text));
-
-                            if (is_separator) {
-                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                    (@as(u32, state.config.gap_color[1]) << 8) |
-                                    @as(u32, state.config.gap_color[2]);
-                            }
 
                             // Background — skip the extra animation row (would corrupt statusline).
                             if (!is_extra) {
@@ -2571,8 +2548,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 }
                             }
 
-                            // Text — skip separator box-drawing chars (SDF gap replaces them).
-                            if (!skip_text and !is_separator and (owns_cell or is_extra)) {
+                            // Text
+                            if (!skip_text and (owns_cell or is_extra)) {
                                 if (cell_text.len > 0) {
                                     const eff_offset: f32 = if (is_float) 0 else scroll_offset;
                                     self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};
@@ -2613,22 +2590,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            {
-                                const btxt = cell.getText();
-                                const bsep = is_root and rounding_active and isBoxDrawing(btxt);
-                                if (bsep) {
-                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                        (@as(u32, state.config.gap_color[1]) << 8) |
-                                        @as(u32, state.config.gap_color[2]);
-                                }
-                                self.cells.bgCell(sy, sx).* = .{
-                                    .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
-                                    .offset_y_fixed = 0,
-                                    .window_id = cur_wid,
-                                };
-                                if (owns_cell and !skip_text and !bsep and btxt.len > 0) {
-                                    self.addGuiGlyph(sx, sy, btxt, fg, cell.style, 0) catch {};
-                                }
+                            self.cells.bgCell(sy, sx).* = .{
+                                .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
+                                .offset_y_fixed = 0,
+                                .window_id = cur_wid,
+                            };
+                            if (owns_cell and !skip_text) {
+                                const text = cell.getText();
+                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
                             }
                         } else {
                             self.cells.bgCell(sy, sx).* = .{
@@ -2911,19 +2880,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         }
 
         /// Render a single GUI cell's text glyph + decorations at (x, y).
-        /// Returns true if the text starts with a Unicode box-drawing character
-        /// (U+2500..U+257F) or heavy/light line chars used as window separators.
-        fn isBoxDrawing(text: []const u8) bool {
-            if (text.len < 3) return false;
-            // UTF-8 for U+2500..U+257F is E2 94 80 .. E2 95 BF
-            if (text[0] == 0xE2) {
-                if (text[1] == 0x94 or text[1] == 0x95) return true;
-                // Also catch U+2580..U+259F (block elements) which some themes use
-                if (text[1] == 0x96 or text[1] == 0x97) return true;
-            }
-            return false;
-        }
-
         fn addGuiGlyph(
             self: *Self,
             x: u16,

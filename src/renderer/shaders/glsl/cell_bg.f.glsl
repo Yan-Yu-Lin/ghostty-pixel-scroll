@@ -163,11 +163,14 @@ vec4 cell_bg() {
     vec4 result = load_color(raw_color, use_linear_blending);
 
     // SDF Rounded Corners: apply rounded rectangle clipping per-window
+    // Negative height = float window (clean rounding, no gap color blend)
+    // Positive height = split window (rounding with gap color blend + shadow)
     if (corner_radius > 0.0 && cell_window_id > 0u &&
         cell_window_id <= window_rect_count) {
         vec4 wrect = window_rects[cell_window_id - 1u];
         vec2 win_pos = wrect.xy;
-        vec2 win_size = wrect.zw;
+        bool is_float_win = (wrect.w < 0.0);
+        vec2 win_size = vec2(wrect.z, abs(wrect.w));
 
         // Position relative to window center
         vec2 frag_pos = gl_FragCoord.xy;
@@ -182,28 +185,33 @@ vec4 cell_bg() {
         // Anti-aliased edge
         float alpha = 1.0 - smoothstep(-1.0, 0.5, dist);
 
-        // Outside the rounded rect: show gap color with subtle shadow
         if (alpha < 1.0) {
-            vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);
+            if (is_float_win) {
+                // Float: just clip corners, blend to transparent/discard
+                result.a *= alpha;
+            } else {
+                // Split: blend to gap color with subtle shadow
+                vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);
 
-            // Soft drop shadow: offset SDF slightly (light from top-left)
-            vec2 shadow_offset = vec2(2.0, 3.0);
-            vec2 sd = abs(frag_pos - shadow_offset - center) - half_size + vec2(r);
-            float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
-            float shadow = smoothstep(0.0, corner_radius * 1.5, shadow_dist);
-            shadow = shadow * 0.35; // shadow intensity
-            gap_bg.rgb *= (1.0 - shadow);
+                // Soft drop shadow
+                vec2 shadow_offset = vec2(2.0, 3.0);
+                vec2 sd = abs(frag_pos - shadow_offset - center) - half_size + vec2(r);
+                float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
+                float shadow = smoothstep(0.0, corner_radius * 1.5, shadow_dist) * 0.35;
+                gap_bg.rgb *= (1.0 - shadow);
 
-            result = mix(gap_bg, result, alpha);
+                result = mix(gap_bg, result, alpha);
+            }
         }
     }
 
     // Gap shadow pass: for cells NOT inside any window (window_id == 0),
-    // check distance to all nearby window rects and apply shadow darkening.
+    // check distance to split window rects and apply shadow darkening.
     if (corner_radius > 0.0 && cell_window_id == 0u && window_rect_count > 0u) {
         float min_shadow = 1.0;
         for (uint wi = 0u; wi < window_rect_count; wi++) {
             vec4 wrect = window_rects[wi];
+            if (wrect.w < 0.0) continue; // skip floats (negative h)
             vec2 win_pos = wrect.xy;
             vec2 win_size = wrect.zw;
             if (win_size.x <= 0.0 || win_size.y <= 0.0) continue;
@@ -212,7 +220,6 @@ vec4 cell_bg() {
             vec2 half_size = win_size * 0.5;
             float r = corner_radius;
 
-            // Shadow SDF with offset (light from top-left)
             vec2 shadow_offset = vec2(2.0, 3.0);
             vec2 sd = abs(gl_FragCoord.xy - shadow_offset - center) - half_size + vec2(r);
             float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;

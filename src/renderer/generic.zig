@@ -2364,17 +2364,56 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const rh: f32 = @floatFromInt(w.render_height);
                 const px_x = pad_left + w.grid_col * cell_w;
                 const px_y = pad_top + w.grid_row * cell_h;
+
                 window_id_map.put(w.id, next_wid) catch {};
-                // Inset split window rects by the window_padding amount.
-                // Floats/messages keep their exact bounds (they have their own borders).
-                const is_split_win = (w.window_type == .split);
-                const p = if (is_split_win) win_pad else @as(f32, 0);
-                self.uniforms.window_rects[next_wid - 1] = .{
-                    px_x + p,
-                    px_y + p,
-                    rw * cell_w - p * 2.0,
-                    rh * cell_h - p * 2.0,
-                };
+
+                if (w.window_type == .split) {
+                    // Splits: build rect that includes adjacent root margin
+                    // rows (tabline above, statusline below) so they appear
+                    // as part of this window's rounded rectangle.
+                    // Check if this split touches the top of the content area
+                    // (right below root's top margin / tabline).
+                    var rect_y = px_y;
+                    var rect_h = rh * cell_h;
+
+                    // Find the root window to get its margins
+                    for (windows) |rw_check| {
+                        if (rw_check.window_type == .root) {
+                            const root_margin_top_px = @as(f32, @floatFromInt(rw_check.margin_top)) * cell_h;
+                            const root_margin_bottom_px = @as(f32, @floatFromInt(rw_check.margin_bottom)) * cell_h;
+                            const root_content_top = pad_top + rw_check.grid_row * cell_h + root_margin_top_px;
+                            const root_content_bottom = pad_top + rw_check.grid_row * cell_h + @as(f32, @floatFromInt(rw_check.render_height)) * cell_h - root_margin_bottom_px;
+
+                            // If split top is at root content top, extend up to include tabline
+                            if (@abs(px_y - root_content_top) < cell_h * 0.5) {
+                                rect_y = px_y - root_margin_top_px;
+                                rect_h += root_margin_top_px;
+                            }
+                            // If split bottom is at root content bottom, extend down to include statusline
+                            const split_bottom = px_y + rh * cell_h;
+                            if (@abs(split_bottom - root_content_bottom) < cell_h * 0.5) {
+                                rect_h += root_margin_bottom_px;
+                            }
+                            break;
+                        }
+                    }
+
+                    self.uniforms.window_rects[next_wid - 1] = .{
+                        px_x + win_pad,
+                        rect_y + win_pad,
+                        rw * cell_w - win_pad * 2.0,
+                        rect_h - win_pad * 2.0,
+                    };
+                } else {
+                    // Floats/messages: exact rect, clean rounding without gap
+                    // color. Negative height signals "no gap blend" to shader.
+                    self.uniforms.window_rects[next_wid - 1] = .{
+                        px_x,
+                        px_y,
+                        rw * cell_w,
+                        -(rh * cell_h),
+                    };
+                }
                 next_wid += 1;
             }
             self.uniforms.window_rect_count = next_wid - 1;
@@ -2514,13 +2553,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg = t;
                             }
 
-                            // When rounding is active on root grid, only skip
-                            // box-drawing separator chars. Everything else (tabline,
-                            // statusline, etc.) renders with its Neovim-set colors.
                             const cell_text = c.getText();
-                            const is_separator = is_root and rounding_active and isBoxDrawing(cell_text);
+                            // Root inner content with default bg = separator area
+                            // (box-drawing chars, spaces between windows). Replace
+                            // with gap color so the gap is uniform. Tabline and
+                            // statusline are in margin regions, not here.
+                            const is_separator = is_root and rounding_active and bg == default_bg;
 
-                            // For separator cells, replace bg with gap color
                             if (is_separator) {
                                 bg = (@as(u32, state.config.gap_color[0]) << 16) |
                                     (@as(u32, state.config.gap_color[1]) << 8) |
@@ -2623,6 +2662,34 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
+                        }
+                    }
+                }
+            }
+
+            // Post-pass: when rounding is active, assign ALL root grid cells
+            // (tabline, statusline, separators) the window_id of the nearest
+            // split window that overlaps their column range. This makes the
+            // SDF rounding cover tabline + content + statusline as one shape.
+            if (state.config.corner_radius > 0) {
+                // For each root cell with window_id=0, find the best split
+                for (0..rows) |y| {
+                    for (0..cols) |x| {
+                        const bg_cell = self.cells.bgCell(y, x);
+                        if (bg_cell.window_id != 0) continue;
+                        // Find a split whose column range covers this cell
+                        var best_wid: u8 = 0;
+                        for (windows) |sw| {
+                            if (sw.window_type != .split) continue;
+                            const sw_col: u32 = @intFromFloat(sw.grid_col);
+                            const sw_end_col = sw_col + sw.render_width;
+                            if (x >= sw_col and x < sw_end_col) {
+                                best_wid = window_id_map.get(sw.id) orelse 0;
+                                break;
+                            }
+                        }
+                        if (best_wid > 0) {
+                            bg_cell.window_id = best_wid;
                         }
                     }
                 }

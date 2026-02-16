@@ -1936,16 +1936,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Each window has its own scroll animation handled via per-cell offsets
             self.uniforms.pixel_scroll_offset_y = 0;
 
-            // Island UI: ensure bg_color is gap_color from the very first frame.
-            // This fills the area behind rounded corners, between islands, and
-            // below the statusline with gap_color instead of terminal black.
-            if (self.config.neovim_corner_radius > 0) {
-                self.uniforms.bg_color = .{
-                    self.config.neovim_gap_color[0],
-                    self.config.neovim_gap_color[1],
-                    self.config.neovim_gap_color[2],
-                    0xFF,
-                };
+            // Island UI: set bg_color AND gap_color to Neovim's actual
+            // default_background every frame. This ensures:
+            // - bg_color fills the entire viewport behind islands
+            // - gap_color matches so SDF corner blending is seamless
+            // Both update dynamically when the user changes NvChad theme.
+            {
+                const nbg = nvim.default_background;
+                const nr: u8 = @intCast((nbg >> 16) & 0xFF);
+                const ng: u8 = @intCast((nbg >> 8) & 0xFF);
+                const nb: u8 = @intCast(nbg & 0xFF);
+                self.uniforms.bg_color = .{ nr, ng, nb, 0xFF };
+                if (self.config.neovim_corner_radius > 0) {
+                    self.uniforms.gap_color = .{ nr, ng, nb, 0xFF };
+                }
             }
 
             // Determine if we actually need a full cell rebuild.
@@ -2344,21 +2348,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             var next_wid: u8 = 1;
 
             self.uniforms.corner_radius = state.config.corner_radius;
-            self.uniforms.gap_color = .{ state.config.gap_color[0], state.config.gap_color[1], state.config.gap_color[2], 0xFF };
+            // Use Neovim's actual default_bg as gap_color so it matches the theme.
+            // The config gap_color is a static fallback; the dynamic color from
+            // Neovim ensures gaps match when the user changes themes.
+            self.uniforms.gap_color = .{ bg_r, bg_g, bg_b, 0xFF };
             self.uniforms.matte_intensity = self.config.matte_rendering;
             self.uniforms.text_gamma = self.config.text_gamma;
             self.uniforms.text_contrast = self.config.text_contrast;
 
-            // Island UI: set the fullscreen background to gap_color so
+            // Island UI: set the fullscreen background to Neovim's bg so
             // the area behind rounded corners, between islands, and below
-            // the statusline all show gap_color instead of black.
+            // the statusline all match the Neovim theme.
             if (state.config.corner_radius > 0) {
-                self.uniforms.bg_color = .{
-                    state.config.gap_color[0],
-                    state.config.gap_color[1],
-                    state.config.gap_color[2],
-                    0xFF,
-                };
+                self.uniforms.bg_color = .{ bg_r, bg_g, bg_b, 0xFF };
             }
 
             const win_pad = state.config.window_padding;

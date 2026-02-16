@@ -1936,6 +1936,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Each window has its own scroll animation handled via per-cell offsets
             self.uniforms.pixel_scroll_offset_y = 0;
 
+            // Island UI: ensure bg_color is gap_color from the very first frame.
+            // This fills the area behind rounded corners, between islands, and
+            // below the statusline with gap_color instead of terminal black.
+            if (self.config.neovim_corner_radius > 0) {
+                self.uniforms.bg_color = .{
+                    self.config.neovim_gap_color[0],
+                    self.config.neovim_gap_color[1],
+                    self.config.neovim_gap_color[2],
+                    0xFF,
+                };
+            }
+
             // Determine if we actually need a full cell rebuild.
             // Content-dirty: Neovim sent new grid lines, window show/hide, etc.
             // Scroll-dirty:  a window's scroll offset changed (sub-pixel or integer boundary)

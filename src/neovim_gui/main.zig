@@ -637,8 +637,7 @@ pub const NeovimGui = struct {
                 "horiz='━',horizup='┻',horizdown='┳'," ++
                 "vert='┃',vertleft='┫',vertright='┣'," ++
                 "verthoriz='╋'" ++
-                "}) " ++
-                "vim.o.laststatus = 3";
+                "})";
             io.sendCommand(cmd) catch {};
         }
 

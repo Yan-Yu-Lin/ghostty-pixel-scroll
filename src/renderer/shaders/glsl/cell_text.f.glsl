@@ -80,10 +80,11 @@ void main() {
             if (wid > 0u && wid <= window_rect_count) {
                 vec4 wrect = window_rects[wid - 1u];
                 vec2 win_pos = wrect.xy;
+                bool is_float = (wrect.w < 0.0);
                 vec2 win_size = vec2(wrect.z, abs(wrect.w));
                 vec2 center = win_pos + win_size * 0.5;
                 vec2 half_size = win_size * 0.5;
-                float r = corner_radius;
+                float r = is_float ? min(corner_radius, 8.0) : corner_radius;
                 vec2 d = abs(gl_FragCoord.xy - center) - half_size + vec2(r);
                 float dist = length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
                 if (dist > 0.0) {

@@ -992,14 +992,31 @@ palette: Palette = .{},
 /// Gap color between Neovim windows. Visible when neovim-corner-radius > 0.
 @"neovim-gap-color": Color = .{ .r = 0x0a, .g = 0x0a, .b = 0x0a },
 
-/// Gap size in pixels between Neovim windows. Creates visible padding
-/// between each pane so rounded corners are fully visible on all sides.
+/// Gap size in pixels between Neovim split windows. Creates visible space
+/// between side-by-side panes so rounded corners are visible between them.
 /// Recommended: 4-8 pixels. Set to 0 for edge-to-edge windows.
 @"neovim-window-padding": f32 = 4.0,
 
 /// Rounded corner radius (pixels) for Neovim windows. 0 = sharp corners.
 /// Recommended: 8-12 for a polished look similar to VS Code / Cursor.
 @"neovim-corner-radius": f32 = 25.0,
+
+/// Padding around the island UI in pixels. This adds space between the
+/// window edges and the content islands, giving a VS Code / Cursor look
+/// where content floats inside the window with visible background around it.
+/// Set a single value for uniform padding on all sides, or use
+/// neovim-island-padding-x / neovim-island-padding-y for separate control.
+/// Default 0 = islands extend to the grid edges (padding comes from
+/// Ghostty's own "padding" config).
+@"neovim-island-padding": f32 = 0.0,
+
+/// Horizontal (left/right) island padding override. If > 0, overrides
+/// neovim-island-padding for the left and right sides only.
+@"neovim-island-padding-x": f32 = 0.0,
+
+/// Vertical (top/bottom) island padding override. If > 0, overrides
+/// neovim-island-padding for the top and bottom sides only.
+@"neovim-island-padding-y": f32 = 0.0,
 
 /// Your display name for collaborative sessions. Other participants see
 /// this name floating above your cursor in their terminal. If unset,

@@ -2337,6 +2337,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.uniforms.text_gamma = self.config.text_gamma;
             self.uniforms.text_contrast = self.config.text_contrast;
 
+            // Island UI: set the fullscreen background to gap_color so
+            // the area behind rounded corners, between islands, and below
+            // the statusline all show gap_color instead of black.
+            if (state.config.corner_radius > 0) {
+                self.uniforms.bg_color = .{
+                    state.config.gap_color[0],
+                    state.config.gap_color[1],
+                    state.config.gap_color[2],
+                    0xFF,
+                };
+            }
+
             const win_pad = state.config.window_padding;
 
             // Pre-compute split vertical boundaries for island rects.

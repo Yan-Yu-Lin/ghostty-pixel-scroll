@@ -2401,15 +2401,25 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Each split's island extends from the top of the grid
-                    // (to include the tabline row) down to the bottom of the
-                    // splits (above the statusline).
-                    // win_pad creates the gap between side-by-side islands.
+                    // Each split gets its own rect based on its actual position
+                    // and size. Splits that start at the topmost split row get
+                    // extended up to include the tabline. win_pad creates gaps.
+                    const w_row: u32 = @intFromFloat(w.grid_row);
+                    const split_top_row_u: u32 = @intFromFloat(split_top_row_f);
+                    const w_bot_px = pad_top + (w.grid_row + @as(f32, @floatFromInt(w.render_height))) * cell_h;
+
+                    // Extend top to include tabline if this split starts at the
+                    // topmost row (side-by-side with other top-level splits).
+                    const rect_top: f32 = if (w_row == split_top_row_u and split_top_row_u > 0)
+                        pad_top + win_pad
+                    else
+                        px_y + win_pad;
+
                     self.uniforms.window_rects[next_wid - 1] = .{
                         px_x + win_pad,
-                        pad_top + win_pad,
+                        rect_top,
                         rw * cell_w - win_pad * 2.0,
-                        split_bot_px - pad_top - win_pad * 2.0,
+                        w_bot_px - rect_top - win_pad,
                     };
                 } else {
                     // Floats/messages: exact cell rect. Negative height signals
@@ -2674,6 +2684,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             var assigned = false;
                             for (windows) |sw| {
                                 if (sw.window_type != .split) continue;
+                                // Only assign tabline cells to top-level splits
+                                // (at split_top_row). Stacked splits below (e.g.
+                                // terminal) share the same columns but shouldn't
+                                // own the tabline.
+                                const sw_row: u32 = @intFromFloat(sw.grid_row);
+                                if (sw_row != split_top_row) continue;
                                 const sw_col: u32 = @intFromFloat(sw.grid_col);
                                 const sw_end = sw_col + sw.render_width;
                                 if (x >= sw_col and x < sw_end) {

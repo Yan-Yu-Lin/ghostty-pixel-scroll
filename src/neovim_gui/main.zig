@@ -625,32 +625,132 @@ pub const NeovimGui = struct {
             self.gap_color[0], self.gap_color[1], self.gap_color[2],
         }) catch "#0a0a0a";
 
-        // We need to build the command string with the gap color embedded
-        var cmd_buf: [1024]u8 = undefined;
-        const cmd = std.fmt.bufPrint(
-            &cmd_buf,
-            "lua " ++
-                // Use rounded box-drawing chars for window separators
-                "vim.opt.fillchars:append({{" ++
-                "horiz='━',horizup='┻',horizdown='┳'," ++
-                "vert='┃',vertleft='┫',vertright='┣'," ++
-                "verthoriz='╋'" ++
-                "}}) " ++
-                // Set WinSeparator to gap color - makes borders blend with the gap
-                "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
-                // Set default float border to rounded
-                "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
-                // Re-apply after colorscheme changes
-                "vim.api.nvim_create_autocmd('ColorScheme', {{callback=function() " ++
-                "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
-                "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
-                "end}})",
-            .{ gap_hex, gap_hex, gap_hex, gap_hex, gap_hex, gap_hex },
-        ) catch return;
+        const io = self.io.?;
 
-        self.io.?.sendCommand(cmd) catch |err| {
-            log.warn("failed to send rounded borders cmd: {}", .{err});
-        };
+        // 1) Rounded box-drawing chars + WinSeparator/FloatBorder + global statusline
+        {
+            var cmd_buf: [1024]u8 = undefined;
+            const cmd = std.fmt.bufPrint(
+                &cmd_buf,
+                "lua " ++
+                    "vim.opt.fillchars:append({{" ++
+                    "horiz='━',horizup='┻',horizdown='┳'," ++
+                    "vert='┃',vertleft='┫',vertright='┣'," ++
+                    "verthoriz='╋'" ++
+                    "}}) " ++
+                    // Global statusline: one bar across the bottom, not per-split
+                    "vim.o.laststatus = 3 " ++
+                    "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}})",
+                .{ gap_hex, gap_hex, gap_hex },
+            ) catch return;
+            io.sendCommand(cmd) catch {};
+        }
+
+        // 2) Island highlight unification:
+        //    - Active buffer tab bg -> Normal bg (seamless with editor content)
+        //    - TabLineFill -> Normal bg (tab bar is part of the buffer island)
+        //    - BufferLineOffset* -> NvimTree bg (tab bar above tree matches tree)
+        //    - NvimTree title/endofbuffer -> NvimTree bg
+        //    - DO NOT touch inactive tab colors
+        {
+            var cmd_buf: [4096]u8 = undefined;
+            const cmd = std.fmt.bufPrint(
+                &cmd_buf,
+                "lua " ++
+                    "local function ghostty_island_hl() " ++
+                    "local norm = vim.api.nvim_get_hl(0, {{name='Normal', link=false}}) " ++
+                    "local nbg = norm.bg " ++
+                    "if not nbg then return end " ++
+                    // TabLineFill + TabLineSel -> Normal bg
+                    "vim.api.nvim_set_hl(0, 'TabLineFill', {{bg=nbg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'TabLineSel', {{bg=nbg, fg=norm.fg, bold=true}}) " ++
+                    // bufferline.nvim: active tab + fill -> Normal bg
+                    "pcall(function() " ++
+                    "local sel = vim.api.nvim_get_hl(0, {{name='BufferLineBufferSelected', link=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineBufferSelected', {{bg=nbg, fg=sel.fg or norm.fg, bold=true, italic=sel.italic}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineFill', {{bg=nbg}}) " ++
+                    // Active tab accessories
+                    "local cls = vim.api.nvim_get_hl(0, {{name='BufferLineCloseButtonSelected', link=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineCloseButtonSelected', {{bg=nbg, fg=cls.fg or norm.fg}}) " ++
+                    "local mod = vim.api.nvim_get_hl(0, {{name='BufferLineModifiedSelected', link=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineModifiedSelected', {{bg=nbg, fg=mod.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineIndicatorSelected', {{bg=nbg, fg=nbg}}) " ++
+                    // Separators on selected tab
+                    "vim.api.nvim_set_hl(0, 'BufferLineSeparatorSelected', {{bg=nbg, fg=nbg}}) " ++
+                    "end) " ++
+                    // NvimTree: get tree bg, set offset area + tree highlights
+                    "pcall(function() " ++
+                    "local tree_hl = vim.api.nvim_get_hl(0, {{name='NvimTreeNormal', link=false}}) " ++
+                    "local tbg = tree_hl.bg or nbg " ++
+                    "local tfg = tree_hl.fg or norm.fg " ++
+                    "vim.api.nvim_set_hl(0, 'NvimTreeWinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'NvimTreeEndOfBuffer', {{bg=tbg, fg=tbg}}) " ++
+                    // bufferline offset area (above NvimTree) -> tree bg
+                    "vim.api.nvim_set_hl(0, 'BufferLineOffsetSeparator', {{bg=tbg, fg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineOffsetText', {{bg=tbg, fg=tfg, bold=true}}) " ++
+                    "end) " ++
+                    "end " ++
+                    "ghostty_island_hl() " ++
+                    "vim.api.nvim_create_autocmd('ColorScheme', {{callback=ghostty_island_hl}}) " ++
+                    "vim.api.nvim_create_autocmd('User', {{pattern='BufferLineLoaded', callback=function() " ++
+                    "vim.defer_fn(ghostty_island_hl, 50) end}})",
+                .{ gap_hex, gap_hex, gap_hex },
+            ) catch return;
+            io.sendCommand(cmd) catch {};
+        }
+
+        // 3) NvimTree winbar: show "EXPLORER" title with tree bg
+        {
+            const cmd =
+                "lua pcall(function() " ++
+                "vim.api.nvim_create_autocmd('FileType', {pattern='NvimTree', callback=function() " ++
+                "local tree_hl = vim.api.nvim_get_hl(0, {name='NvimTreeNormal', link=false}) " ++
+                "local nbg = (vim.api.nvim_get_hl(0, {name='Normal', link=false})).bg " ++
+                "local tbg = tree_hl.bg or nbg " ++
+                "local tfg = tree_hl.fg or 0xc0caf5 " ++
+                "vim.api.nvim_set_hl(0, 'GhosttyTreeBar', {bg=tbg, fg=tfg, bold=true}) " ++
+                "vim.wo.winbar = '%#GhosttyTreeBar# EXPLORER%=' " ++
+                "end}) " ++
+                "for _, win in ipairs(vim.api.nvim_list_wins()) do " ++
+                "local buf = vim.api.nvim_win_get_buf(win) " ++
+                "if vim.bo[buf].filetype == 'NvimTree' then " ++
+                "local tree_hl = vim.api.nvim_get_hl(0, {name='NvimTreeNormal', link=false}) " ++
+                "local nbg = (vim.api.nvim_get_hl(0, {name='Normal', link=false})).bg " ++
+                "local tbg = tree_hl.bg or nbg " ++
+                "local tfg = tree_hl.fg or 0xc0caf5 " ++
+                "vim.api.nvim_set_hl(0, 'GhosttyTreeBar', {bg=tbg, fg=tfg, bold=true}) " ++
+                "vim.api.nvim_set_option_value('winbar', " ++
+                "'%#GhosttyTreeBar# EXPLORER%=', {win=win}) " ++
+                "end end " ++
+                "end)";
+            io.sendCommand(cmd) catch {};
+        }
+
+        // 4) Re-apply separator highlights after colorscheme changes
+        {
+            var cmd_buf: [512]u8 = undefined;
+            const cmd = std.fmt.bufPrint(
+                &cmd_buf,
+                "lua " ++
+                    "vim.api.nvim_create_autocmd('ColorScheme', {{callback=function() " ++
+                    "vim.o.laststatus = 3 " ++
+                    "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                    "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
+                    "end}})",
+                .{ gap_hex, gap_hex, gap_hex },
+            ) catch return;
+            io.sendCommand(cmd) catch {};
+        }
+
+        // 5) Deferred re-apply for async plugin loading
+        {
+            const cmd =
+                "lua vim.defer_fn(function() " ++
+                "if ghostty_island_hl then ghostty_island_hl() end " ++
+                "end, 200)";
+            io.sendCommand(cmd) catch {};
+        }
     }
 
     /// Build a unique socket path under XDG_RUNTIME_DIR (or /tmp as fallback).

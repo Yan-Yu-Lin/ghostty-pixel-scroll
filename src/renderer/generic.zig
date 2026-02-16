@@ -2623,7 +2623,30 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Post-pass: assign root tabline cells (NOT statusline) to the
             // nearest split so they're inside the rounded rect.
+            // Also replace their bg color with the split's actual bg so
+            // the tabline row visually matches the content below it
+            // (e.g. NvimTree bg above the tree, Normal bg above the buffer).
             if (state.config.corner_radius > 0) {
+                // Pre-sample each split's bg from its first content row.
+                var split_bgs: [17][4]u8 = undefined;
+                for (windows) |sw| {
+                    if (sw.window_type != .split) continue;
+                    const wid = window_id_map.get(sw.id) orelse continue;
+                    // Sample from first row after top margin (actual content)
+                    const sample_row = sw.margin_top;
+                    if (sw.getCell(sw.ctx, sample_row, 0)) |cell| {
+                        const sbg = if (cell.style.reverse) cell.style.fg else cell.style.bg;
+                        split_bgs[wid] = .{
+                            @intCast((sbg >> 16) & 0xFF),
+                            @intCast((sbg >> 8) & 0xFF),
+                            @intCast(sbg & 0xFF),
+                            255,
+                        };
+                    } else {
+                        split_bgs[wid] = .{ bg_r, bg_g, bg_b, 255 };
+                    }
+                }
+
                 for (windows) |rcheck| {
                     if (rcheck.window_type != .root) continue;
                     if (rcheck.margin_top == 0) break;
@@ -2640,7 +2663,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 const sw_col: u32 = @intFromFloat(sw.grid_col);
                                 const sw_end = sw_col + sw.render_width;
                                 if (x >= sw_col and x < sw_end) {
-                                    bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
+                                    const wid = window_id_map.get(sw.id) orelse 0;
+                                    bg_cell.window_id = wid;
+                                    // Replace bg with the split's actual content bg
+                                    if (wid > 0 and wid < split_bgs.len) {
+                                        bg_cell.color = split_bgs[wid];
+                                    }
                                     break;
                                 }
                             }

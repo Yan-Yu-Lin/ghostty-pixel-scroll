@@ -495,6 +495,24 @@ fragment float4 cell_bg_fragment(
   float2 adjusted_pos = in.position.xy;
   adjusted_pos.y += uniforms.pixel_scroll_offset_y;
 
+  // Detect if this fragment is in the vertical padding area.
+  // With pixel scroll, the grid has 2 extra rows (grid_size.y = visible + 2).
+  // After applying the scroll offset, visible content is in shifted rows [1, grid_size.y - 2].
+  // Use the SHIFTED position so the padding check correctly excludes extra rows
+  // regardless of the current scroll offset value.
+  bool has_extra_rows = (uniforms.pixel_scroll_offset_y > 0.0);
+  int2 unshifted_grid_pos = int2(floor((in.position.xy - uniforms.grid_padding.wx) / uniforms.cell_size));
+  int visible_rows = has_extra_rows ? int(uniforms.grid_size.y) - 2 : int(uniforms.grid_size.y);
+  bool in_padding;
+  if (has_extra_rows) {
+    // Check in shifted space: rows [1, grid_size.y-2] are visible content.
+    // Row 0 is the extra top row, row grid_size.y-1 is the extra bottom row.
+    int2 shifted_grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
+    in_padding = (shifted_grid_pos.y < 1 || shifted_grid_pos.y >= int(uniforms.grid_size.y) - 1);
+  } else {
+    in_padding = (unshifted_grid_pos.y < 0 || unshifted_grid_pos.y >= visible_rows);
+  }
+
   // Apply TUI scroll offset: shift pixels within the scroll region
   // This makes content in the scroll region slide smoothly while
   // status bars, headers, etc. outside the region stay fixed.
@@ -548,6 +566,39 @@ fragment float4 cell_bg_fragment(
 
   float4 bg = float4(0.0);
 
+  // If this fragment is in the padding area (outside the visible grid),
+  // treat it as out-of-bounds regardless of where the scroll offset maps it.
+  // This prevents the extra pixel-scroll rows from showing in the padding.
+  if (in_padding) {
+    // Use the shifted grid_pos to find the edge row's color (the shifted
+    // pos correctly accounts for pixel_scroll_offset_y).
+    int clamped_y = clamp(grid_pos.y, 1, int(uniforms.grid_size.y) - 2);
+    int clamped_x = clamp(grid_pos.x, 0, int(uniforms.grid_size.x) - 1);
+    // Determine extend direction. For pixel scroll, use shifted position
+    // since unshifted may not correctly identify top/bottom padding.
+    bool is_top_padding;
+    if (has_extra_rows) {
+      int2 shifted_gp = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
+      is_top_padding = (shifted_gp.y < 1);
+    } else {
+      is_top_padding = (unshifted_grid_pos.y < 0);
+    }
+    bool should_extend = is_top_padding
+        ? bool(uniforms.padding_extend & EXTEND_UP)
+        : bool(uniforms.padding_extend & EXTEND_DOWN);
+    if (should_extend) {
+      int cell_index_final = clamped_y * int(uniforms.grid_size.x) + clamped_x;
+      uchar4 raw_color = cells[cell_index_final].color;
+      raw_color.a = 255;
+      return load_color(
+        raw_color,
+        uniforms.use_display_p3,
+        uniforms.use_linear_blending
+      );
+    }
+    return bg;
+  }
+
   // Clamp x position, extends edge bg colors in to padding on sides.
   if (grid_pos.x < 0) {
     if (uniforms.padding_extend & EXTEND_LEFT) {
@@ -564,17 +615,14 @@ fragment float4 cell_bg_fragment(
   }
 
   // Clamp y position if we should extend, otherwise discard if out of bounds.
-  // When pixel_scroll_offset_y is non-zero (smooth scrolling active), always clamp
-  // to ensure we fill edges with content from extra rows instead of black.
-  bool scrolling = uniforms.pixel_scroll_offset_y != uniforms.cell_size.y;
   if (grid_pos.y < 0) {
-    if (scrolling || (uniforms.padding_extend & EXTEND_UP)) {
+    if (uniforms.padding_extend & EXTEND_UP) {
       grid_pos.y = 0;
     } else {
       return bg;
     }
   } else if (grid_pos.y > uniforms.grid_size.y - 1) {
-    if (scrolling || (uniforms.padding_extend & EXTEND_DOWN)) {
+    if (uniforms.padding_extend & EXTEND_DOWN) {
       grid_pos.y = uniforms.grid_size.y - 1;
     } else {
       return bg;
@@ -831,6 +879,12 @@ vertex CellTextVertexOut cell_text_vertex(
   
   // Apply cursor animation for cursor glyph
   if ((in.bools & IS_CURSOR_GLYPH) != 0) {
+    // If we are asked to exclude cursor (e.g. for scroll animation frame capture),
+    // discard this vertex by moving it off-screen
+    if (uniforms.exclude_cursor) {
+      out.position = float4(-2.0, -2.0, 0.0, 1.0);
+      return out;
+    }
     if (uniforms.cursor_use_corners) {
       // Neovide-style stretchy cursor: each vertex uses its animated corner position
       // The corner_cursor animation provides absolute pixel positions for each corner.

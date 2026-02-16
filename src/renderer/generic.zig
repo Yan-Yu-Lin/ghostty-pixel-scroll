@@ -2401,26 +2401,30 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Each split gets its own rect based on its actual position
-                    // and size. Splits that start at the topmost split row get
-                    // extended up to include the tabline. win_pad creates gaps.
+                    // Top-level splits (at split_top_row): extend up to include
+                    // the tabline row. Use split_bot_px as bottom (shared among
+                    // all top-level splits so they align).
+                    // Non-top splits (e.g. horizontal terminal split below):
+                    // use their own position and size.
                     const w_row: u32 = @intFromFloat(w.grid_row);
                     const split_top_row_u: u32 = @intFromFloat(split_top_row_f);
-                    const w_bot_px = pad_top + (w.grid_row + @as(f32, @floatFromInt(w.render_height))) * cell_h;
+                    const is_top_level = (w_row == split_top_row_u);
 
-                    // Extend top to include tabline if this split starts at the
-                    // topmost row (side-by-side with other top-level splits).
-                    const rect_top: f32 = if (w_row == split_top_row_u and split_top_row_u > 0)
-                        pad_top + win_pad
-                    else
-                        px_y + win_pad;
-
-                    self.uniforms.window_rects[next_wid - 1] = .{
-                        px_x + win_pad,
-                        rect_top,
-                        rw * cell_w - win_pad * 2.0,
-                        w_bot_px - rect_top - win_pad,
-                    };
+                    if (is_top_level) {
+                        self.uniforms.window_rects[next_wid - 1] = .{
+                            px_x + win_pad,
+                            pad_top + win_pad,
+                            rw * cell_w - win_pad * 2.0,
+                            split_bot_px - pad_top - win_pad * 2.0,
+                        };
+                    } else {
+                        self.uniforms.window_rects[next_wid - 1] = .{
+                            px_x + win_pad,
+                            px_y + win_pad,
+                            rw * cell_w - win_pad * 2.0,
+                            @as(f32, @floatFromInt(w.render_height)) * cell_h - win_pad * 2.0,
+                        };
+                    }
                 } else {
                     // Floats/messages: exact cell rect. Negative height signals
                     // "no gap blend" to shader. The SDF uses a reduced radius

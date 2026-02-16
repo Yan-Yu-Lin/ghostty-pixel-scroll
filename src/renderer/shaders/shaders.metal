@@ -491,6 +491,14 @@ fragment float4 cell_bg_fragment(
   constant Uniforms& uniforms [[buffer(1)]],
   constant CellBgData *cells [[buffer(2)]]
 ) {
+  // Clip fragments that fall outside the visible screen area.
+  // This prevents grid rows that overflow the screen (e.g. due to rounding
+  // differences on macOS) from rendering as duplicate content.
+  if (in.position.x < 0.0 || in.position.x >= uniforms.screen_size.x ||
+      in.position.y < 0.0 || in.position.y >= uniforms.screen_size.y) {
+    return float4(0.0);
+  }
+
   // Apply global pixel scroll offset for smooth scrolling (terminal mode)
   float2 adjusted_pos = in.position.xy;
   adjusted_pos.y += uniforms.pixel_scroll_offset_y;
@@ -990,6 +998,11 @@ fragment float4 cell_text_fragment(
   constant Uniforms& uniforms [[buffer(1)]],
   constant CellBgData *bg_cells [[buffer(2)]]
 ) {
+  // Clip text fragments that fall outside the visible screen area.
+  if (in.position.y < 0.0 || in.position.y >= uniforms.screen_size.y) {
+    discard_fragment();
+  }
+
   // Check if this fragment is scrolling text that landed in a fixed cell (statusline)
   // Only clip if: this text HAS an offset AND lands in a cell with offset=0
   if (in.pixel_offset_y != 0 && uniforms.window_rect_count != 0) {

@@ -1125,7 +1125,15 @@ pub fn connectRemoteNeovim(self: *Surface, host: []const u8, nvim_port: u16) !vo
     const y_dpi = content_scale.y * font.face.default_dpi;
     const explicit_padding = self.config.scaledPadding(x_dpi, y_dpi);
     const screen_without_balanced = self.size.screen.subPadding(explicit_padding);
-    const grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    var grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    if (self.size.cell.height > 0) {
+        const max_rows: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.height / self.size.cell.height);
+        if (grid_size.rows > max_rows) grid_size.rows = max_rows;
+    }
+    if (self.size.cell.width > 0) {
+        const max_cols: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.width / self.size.cell.width);
+        if (grid_size.columns > max_cols) grid_size.columns = max_cols;
+    }
     nvim.grid_width = grid_size.columns;
     nvim.grid_height = grid_size.rows;
 
@@ -1184,7 +1192,16 @@ pub fn initNeovimGui(self: *Surface) !void {
 
     // Calculate grid with only explicit padding (not balanced)
     const screen_without_balanced = self.size.screen.subPadding(explicit_padding);
-    const grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    var grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    // Clamp to integer-division fit to avoid float rounding giving an extra row/col
+    if (self.size.cell.height > 0) {
+        const max_rows: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.height / self.size.cell.height);
+        if (grid_size.rows > max_rows) grid_size.rows = max_rows;
+    }
+    if (self.size.cell.width > 0) {
+        const max_cols: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.width / self.size.cell.width);
+        if (grid_size.columns > max_cols) grid_size.columns = max_cols;
+    }
 
     log.info("initNeovimGui: screen={}x{} explicit_padding=({},{},{},{}) balanced_padding=({},{},{},{}) cell={}x{} grid={}x{}", .{
         self.size.screen.width,
@@ -1265,7 +1282,15 @@ pub fn initNeovimGuiWithCwd(self: *Surface, cwd: ?[]const u8) !void {
     const y_dpi = content_scale.y * font.face.default_dpi;
     const explicit_padding = self.config.scaledPadding(x_dpi, y_dpi);
     const screen_without_balanced = self.size.screen.subPadding(explicit_padding);
-    const grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    var grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+    if (self.size.cell.height > 0) {
+        const max_rows: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.height / self.size.cell.height);
+        if (grid_size.rows > max_rows) grid_size.rows = max_rows;
+    }
+    if (self.size.cell.width > 0) {
+        const max_cols: rendererpkg.GridSize.Unit = @intCast(screen_without_balanced.width / self.size.cell.width);
+        if (grid_size.columns > max_cols) grid_size.columns = max_cols;
+    }
 
     nvim.grid_width = grid_size.columns;
     nvim.grid_height = grid_size.rows;
@@ -3368,7 +3393,27 @@ fn resize(self: *Surface, size: rendererpkg.ScreenSize) !void {
         const y_dpi = content_scale.y * font.face.default_dpi;
         const explicit_padding = self.config.scaledPadding(x_dpi, y_dpi);
         const screen_without_balanced = self.size.screen.subPadding(explicit_padding);
-        const nvim_grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+        var nvim_grid_size = rendererpkg.GridSize.init(screen_without_balanced, self.size.cell);
+
+        // Ensure the grid fits within the screen. On macOS, float-to-int
+        // conversions in the display pipeline can make the reported screen
+        // height slightly larger than the actual drawable, causing one
+        // extra row that overflows and produces a duplicate statusline.
+        // Use integer arithmetic to verify the grid actually fits.
+        if (self.size.cell.height > 0) {
+            const max_rows: rendererpkg.GridSize.Unit =
+                @intCast(screen_without_balanced.height / self.size.cell.height);
+            if (nvim_grid_size.rows > max_rows) {
+                nvim_grid_size.rows = max_rows;
+            }
+        }
+        if (self.size.cell.width > 0) {
+            const max_cols: rendererpkg.GridSize.Unit =
+                @intCast(screen_without_balanced.width / self.size.cell.width);
+            if (nvim_grid_size.columns > max_cols) {
+                nvim_grid_size.columns = max_cols;
+            }
+        }
 
         log.debug("nvim resize: grid {}x{}", .{
             nvim_grid_size.columns,

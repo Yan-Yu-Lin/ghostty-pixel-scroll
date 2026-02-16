@@ -60,6 +60,8 @@ pub const NeovimGui = struct {
     default_background: u32 = 0x1d1f21,
     default_foreground: u32 = 0xe0e0e0,
     default_special: u32 = 0xff0000,
+    /// Set to true once Neovim sends default_colors_set with real theme colors.
+    has_default_colors: bool = false,
 
     /// NormalFloat highlight ID (for floating window backgrounds)
     normal_float_hl_id: ?u64 = null,
@@ -828,6 +830,7 @@ pub const NeovimGui = struct {
                 self.default_foreground = data.fg;
                 self.default_background = data.bg;
                 self.default_special = data.sp;
+                self.has_default_colors = true;
                 self.dirty = true;
             },
             .mode_info_set => |data| {

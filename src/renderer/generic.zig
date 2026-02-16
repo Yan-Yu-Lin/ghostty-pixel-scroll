@@ -1937,11 +1937,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.uniforms.pixel_scroll_offset_y = 0;
 
             // Island UI: set bg_color AND gap_color to Neovim's actual
-            // default_background every frame. This ensures:
-            // - bg_color fills the entire viewport behind islands
-            // - gap_color matches so SDF corner blending is seamless
-            // Both update dynamically when the user changes NvChad theme.
-            {
+            // default_background every frame. Only after Neovim has sent
+            // default_colors_set (has_default_colors) — before that, the
+            // init value is a stale hardcoded color that doesn't match
+            // any theme. Until then, keep whatever bg_color was set at init
+            // (the terminal background) which is a better initial guess.
+            if (nvim.has_default_colors) {
                 const nbg = nvim.default_background;
                 const nr: u8 = @intCast((nbg >> 16) & 0xFF);
                 const ng: u8 = @intCast((nbg >> 8) & 0xFF);
@@ -2687,10 +2688,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     break;
                                 }
                             }
-                            // Separator column between splits — use sentinel
-                            if (!assigned) {
-                                bg_cell.window_id = bar_sentinel;
-                            }
+                            // Separator column between splits — leave at
+                            // window_id=0 so gap shadow blends it naturally
+                            // with the vertical gap between islands.
                         }
                     }
                 }

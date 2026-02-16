@@ -2751,13 +2751,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 const sw_end = sw_col + sw.render_width;
                                 if (x >= sw_col and x < sw_end) {
                                     bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
-                                    // When the split has no winbar (margin_top=0),
-                                    // the tabline cells must scroll with the content
-                                    // to avoid a visual seam at the boundary.
-                                    if (sw.margin_top == 0 and sw.has_scroll_animation and sw.scroll_raw_offset != 0) {
-                                        const sw_offset: i16 = @intFromFloat(std.math.clamp(sw.scroll_pixel_offset * 256.0, -32768.0, 32767.0));
-                                        bg_cell.offset_y_fixed = sw_offset;
-                                    }
                                     assigned = true;
                                     break;
                                 }

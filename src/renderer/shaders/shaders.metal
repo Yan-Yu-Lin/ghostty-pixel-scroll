@@ -24,6 +24,7 @@ struct Uniforms {
   bool use_display_p3;
   bool use_linear_blending;
   bool use_linear_correction;
+  bool exclude_cursor;          // Whether to exclude cursor from rendering
   float pixel_scroll_offset_y;  // Sub-line scroll offset in pixels
   float cursor_offset_x;  // Cursor animation X offset in pixels
   float cursor_offset_y;  // Cursor animation Y offset in pixels

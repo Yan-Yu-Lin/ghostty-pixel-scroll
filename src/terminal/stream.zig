@@ -2071,7 +2071,11 @@ pub fn Stream(comptime Handler: type) type {
                 .enter_neovim_gui => {
                     // OSC 1338 - Enter Neovim GUI mode
                     // Only forward if handler has surface_mailbox (real termio, not inspector)
-                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
                         log.info("OSC 1338 received - forwarding to surface mailbox", .{});
                         _ = self.handler.surface_mailbox.push(.enter_neovim_gui, .{ .instant = {} });
                     }
@@ -2079,7 +2083,11 @@ pub fn Stream(comptime Handler: type) type {
 
                 .toggle_panel_gui => {
                     // OSC 1339 - Toggle panel GUI
-                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
                         log.info("OSC 1339 received - forwarding to surface mailbox", .{});
                         _ = self.handler.surface_mailbox.push(.toggle_panel_gui, .{ .instant = {} });
                     }
@@ -2087,7 +2095,11 @@ pub fn Stream(comptime Handler: type) type {
 
                 .collab_share => {
                     // OSC 1342 - Start collab session (share)
-                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
                         log.info("OSC 1342 received - starting collab share", .{});
                         _ = self.handler.surface_mailbox.push(.collab_share, .{ .instant = {} });
                     }
@@ -2095,7 +2107,11 @@ pub fn Stream(comptime Handler: type) type {
 
                 .collab_join => |v| {
                     // OSC 1343 - Join collab session with host:port
-                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
                         log.info("OSC 1343 received - joining collab session: {s}", .{v.value});
                         var buf: [256]u8 = .{0} ** 256;
                         const len = @min(v.value.len, 255);
@@ -2106,7 +2122,11 @@ pub fn Stream(comptime Handler: type) type {
 
                 .collab_nvim_connect => |v| {
                     // OSC 1344 - Connect NeovimGui to remote Neovim TCP
-                    if (@hasField(@TypeOf(self.handler), "surface_mailbox")) {
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
                         log.info("OSC 1344 received - connecting to remote Neovim: {s}", .{v.value});
                         var buf: [256]u8 = .{0} ** 256;
                         const len = @min(v.value.len, 255);

@@ -250,6 +250,10 @@ pub const Uniforms = extern struct {
         /// with linear alpha blending have a similar apparent weight
         /// (thickness) to gamma-incorrect blending.
         use_linear_correction: bool align(1) = false,
+
+        /// Whether to exclude the cursor from rendering (used for
+        /// screenshot/capture passes that don't want the cursor).
+        exclude_cursor: bool align(1) = false,
     },
 
     /// Sub-line pixel scroll offset for smooth scrolling.

@@ -177,6 +177,9 @@ fn autoAttribute(T: type, attrs: objc.Object) void {
             [4]u32 => mtl.MTLVertexFormat.uint4,
             u8 => mtl.MTLVertexFormat.uchar,
             i8 => mtl.MTLVertexFormat.char,
+            u16 => mtl.MTLVertexFormat.ushort,
+            i16 => mtl.MTLVertexFormat.short,
+            [1]u8 => mtl.MTLVertexFormat.uchar,
             else => comptime unreachable,
         };
 

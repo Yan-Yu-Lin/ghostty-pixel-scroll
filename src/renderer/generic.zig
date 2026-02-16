@@ -2366,15 +2366,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Splits: extend rect to full screen height within this
-                    // window's column range. This makes the tabline (above)
-                    // and statusline (below) part of the rounded rectangle.
-                    const screen_h: f32 = @floatFromInt(rows);
+                    // Each split is its own island — rect covers just this
+                    // window including its margins (winbar/statusline).
+                    // Add extra padding at top for the island header gap.
                     self.uniforms.window_rects[next_wid - 1] = .{
                         px_x + win_pad,
-                        pad_top + win_pad,
+                        px_y + win_pad,
                         rw * cell_w - win_pad * 2.0,
-                        screen_h * cell_h - win_pad * 2.0,
+                        rh * cell_h - win_pad * 2.0,
                     };
                 } else {
                     // Floats/messages: exact rect, clean rounding without gap
@@ -2605,34 +2604,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                        }
-                    }
-                }
-            }
-
-            // Post-pass: when rounding is active, assign ALL root grid cells
-            // (tabline, statusline, separators) the window_id of the nearest
-            // split window that overlaps their column range. This makes the
-            // SDF rounding cover tabline + content + statusline as one shape.
-            if (state.config.corner_radius > 0) {
-                // For each root cell with window_id=0, find the best split
-                for (0..rows) |y| {
-                    for (0..cols) |x| {
-                        const bg_cell = self.cells.bgCell(y, x);
-                        if (bg_cell.window_id != 0) continue;
-                        // Find a split whose column range covers this cell
-                        var best_wid: u8 = 0;
-                        for (windows) |sw| {
-                            if (sw.window_type != .split) continue;
-                            const sw_col: u32 = @intFromFloat(sw.grid_col);
-                            const sw_end_col = sw_col + sw.render_width;
-                            if (x >= sw_col and x < sw_end_col) {
-                                best_wid = window_id_map.get(sw.id) orelse 0;
-                                break;
-                            }
-                        }
-                        if (best_wid > 0) {
-                            bg_cell.window_id = best_wid;
                         }
                     }
                 }

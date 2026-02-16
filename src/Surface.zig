@@ -373,6 +373,10 @@ const DerivedConfig = struct {
     panel_gui_1: ?[]const u8,
     panel_gui_2: ?[]const u8,
     panel_gui_size: f32,
+    neovim_corner_radius: f32,
+    neovim_gap_color_r: u8,
+    neovim_gap_color_g: u8,
+    neovim_gap_color_b: u8,
     collab_name: []const u8,
     collab_color_r: u8,
     collab_color_g: u8,
@@ -468,6 +472,10 @@ const DerivedConfig = struct {
             else
                 null,
             .panel_gui_size = config.@"panel-gui-size",
+            .neovim_corner_radius = config.@"neovim-corner-radius",
+            .neovim_gap_color_r = config.@"neovim-gap-color".r,
+            .neovim_gap_color_g = config.@"neovim-gap-color".g,
+            .neovim_gap_color_b = config.@"neovim-gap-color".b,
             .collab_name = if (config.@"collab-name".len > 0)
                 try alloc.dupe(u8, config.@"collab-name")
             else
@@ -1127,6 +1135,10 @@ pub fn connectRemoteNeovim(self: *Surface, host: []const u8, nvim_port: u16) !vo
     const nvim = try neovim_gui.NeovimGui.init(self.alloc);
     errdefer nvim.deinit();
 
+    // Pass rounding config so Neovim borders match
+    nvim.corner_radius = self.config.neovim_corner_radius;
+    nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
+
     // Set grid size
     const content_scale = self.rt_surface.getContentScale() catch .{ .x = 1, .y = 1 };
     const x_dpi = content_scale.x * font.face.default_dpi;
@@ -1185,6 +1197,10 @@ pub fn initNeovimGui(self: *Surface) !void {
 
     const nvim = try neovim_gui.NeovimGui.init(self.alloc);
     errdefer nvim.deinit();
+
+    // Pass rounding config so Neovim borders match
+    nvim.corner_radius = self.config.neovim_corner_radius;
+    nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
 
     // Set initial grid size based on terminal size
     // Note: We use the exact terminal grid size. Neovim handles its own
@@ -1285,6 +1301,10 @@ pub fn initNeovimGuiWithCwd(self: *Surface, cwd: ?[]const u8) !void {
 
     const nvim = try neovim_gui.NeovimGui.init(self.alloc);
     errdefer nvim.deinit();
+
+    // Pass rounding config so Neovim borders match
+    nvim.corner_radius = self.config.neovim_corner_radius;
+    nvim.gap_color = .{ self.config.neovim_gap_color_r, self.config.neovim_gap_color_g, self.config.neovim_gap_color_b };
 
     const content_scale = self.rt_surface.getContentScale() catch .{ .x = 1, .y = 1 };
     const x_dpi = content_scale.x * font.face.default_dpi;

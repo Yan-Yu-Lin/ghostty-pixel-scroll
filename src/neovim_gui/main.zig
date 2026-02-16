@@ -152,6 +152,11 @@ pub const NeovimGui = struct {
     /// Message history from msg_history_show
     message_history: []Event.MsgHistoryEntry = &.{},
 
+    /// Corner radius for rounded window borders (set from config)
+    corner_radius: f32 = 0.0,
+    /// Gap color between windows as hex RGB (set from config)
+    gap_color: [3]u8 = .{ 0x0a, 0x0a, 0x0a },
+
     pub fn init(alloc: Allocator) !*Self {
         const self = try alloc.create(Self);
         self.* = .{
@@ -299,6 +304,9 @@ pub const NeovimGui = struct {
         };
         self.installCollabPresenceAutocmd() catch |err| {
             log.warn("failed to install collab presence autocmd: {}", .{err});
+        };
+        self.installRoundedBorders() catch |err| {
+            log.warn("failed to install rounded borders: {}", .{err});
         };
     }
 
@@ -601,6 +609,48 @@ pub const NeovimGui = struct {
             "end) " ++
             "end";
         try self.io.?.sendCommand(cmd);
+    }
+
+    /// When corner rounding is enabled, inject Lua to make Neovim's own
+    /// borders use rounded box-drawing characters and match the gap color.
+    fn installRoundedBorders(self: *Self) !void {
+        if (self.io == null) return;
+        if (self.corner_radius < 1.0) return;
+
+        log.info("installing rounded borders (radius={})", .{self.corner_radius});
+
+        // Build gap color as hex string for Neovim highlight
+        var hex_buf: [8]u8 = undefined;
+        const gap_hex = std.fmt.bufPrint(&hex_buf, "#{x:0>2}{x:0>2}{x:0>2}", .{
+            self.gap_color[0], self.gap_color[1], self.gap_color[2],
+        }) catch "#0a0a0a";
+
+        // We need to build the command string with the gap color embedded
+        var cmd_buf: [1024]u8 = undefined;
+        const cmd = std.fmt.bufPrint(
+            &cmd_buf,
+            "lua " ++
+                // Use rounded box-drawing chars for window separators
+                "vim.opt.fillchars:append({{" ++
+                "horiz='━',horizup='┻',horizdown='┳'," ++
+                "vert='┃',vertleft='┫',vertright='┣'," ++
+                "verthoriz='╋'" ++
+                "}}) " ++
+                // Set WinSeparator to gap color - makes borders blend with the gap
+                "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                // Set default float border to rounded
+                "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
+                // Re-apply after colorscheme changes
+                "vim.api.nvim_create_autocmd('ColorScheme', {{callback=function() " ++
+                "vim.api.nvim_set_hl(0, 'WinSeparator', {{fg='{s}', bg='{s}'}}) " ++
+                "vim.api.nvim_set_hl(0, 'FloatBorder', {{fg='#565f89', bg='{s}'}}) " ++
+                "end}})",
+            .{ gap_hex, gap_hex, gap_hex, gap_hex, gap_hex, gap_hex },
+        ) catch return;
+
+        self.io.?.sendCommand(cmd) catch |err| {
+            log.warn("failed to send rounded borders cmd: {}", .{err});
+        };
     }
 
     /// Build a unique socket path under XDG_RUNTIME_DIR (or /tmp as fallback).

@@ -2301,10 +2301,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             const default_bg = state.config.default_bg;
 
-            // Fill grid with default bg.
-            const bg_r: u8 = @intCast((default_bg >> 16) & 0xFF);
-            const bg_g: u8 = @intCast((default_bg >> 8) & 0xFF);
-            const bg_b: u8 = @intCast(default_bg & 0xFF);
+            // Fill grid with default bg (or gap color when rounding is active,
+            // so the space between rounded panes shows the gap color).
+            const use_gap_bg = (state.config.corner_radius > 0);
+            const bg_r: u8 = if (use_gap_bg) state.config.gap_color[0] else @intCast((default_bg >> 16) & 0xFF);
+            const bg_g: u8 = if (use_gap_bg) state.config.gap_color[1] else @intCast((default_bg >> 8) & 0xFF);
+            const bg_b: u8 = if (use_gap_bg) state.config.gap_color[2] else @intCast(default_bg & 0xFF);
             for (0..rows) |y| {
                 for (0..cols) |x| {
                     self.cells.bgCell(y, x).* = .{
@@ -2423,7 +2425,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const render_height = window.render_height;
                 const is_float = (window.window_type == .floating or window.window_type == .message);
                 const is_msg = window.window_type == .message;
-                const skip_text = self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?;
+                // When rounding is active, the root grid (grid 1) only contains
+                // separator chars and empty cells. Skip its text so the SDF gap
+                // provides clean visual separation between rounded panes.
+                const is_root = (window.window_type == .root);
+                const rounding_active = (state.config.corner_radius > 0);
+                const skip_text = (self.nvim_image_active and self.nvim_image_window_id != null and window.id == self.nvim_image_window_id.?) or
+                    (is_root and rounding_active);
                 const win_opacity: u8 = @intFromFloat(std.math.clamp(window.opacity * 255.0, 0.0, 255.0));
                 const scroll_offset = window.scroll_pixel_offset;
                 const bg_offset_fixed: i16 = @intFromFloat(std.math.clamp(scroll_offset * 256.0, -32768.0, 32767.0));
@@ -2447,13 +2455,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
+                            if (is_root and rounding_active) {
+                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                    (@as(u32, state.config.gap_color[1]) << 8) |
+                                    @as(u32, state.config.gap_color[2]);
+                            }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            const text = cell.getText();
-                            if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                            if (!skip_text) {
+                                const text = cell.getText();
+                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                            }
                         } else {
                             // Null cell: write default bg with window_id for SDF rounding.
                             self.cells.bgCell(sy, sx).* = .{
@@ -2498,6 +2513,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 const t = fg;
                                 fg = bg;
                                 bg = t;
+                            }
+
+                            // Root cells become gap-colored when rounding is active.
+                            // This hides Neovim's separator chars and makes the
+                            // background between rounded panes uniform.
+                            if (is_root and rounding_active) {
+                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                    (@as(u32, state.config.gap_color[1]) << 8) |
+                                    @as(u32, state.config.gap_color[2]);
                             }
 
                             // Background — skip the extra animation row (would corrupt statusline).
@@ -2574,12 +2598,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
+                            if (is_root and rounding_active) {
+                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                    (@as(u32, state.config.gap_color[1]) << 8) |
+                                    @as(u32, state.config.gap_color[2]);
+                            }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (owns_cell) {
+                            if (owns_cell and !skip_text) {
                                 const text = cell.getText();
                                 if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
                             }

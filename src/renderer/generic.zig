@@ -671,8 +671,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             scroll_animation_bounciness: f32,
             neovim_corner_radius: f32,
             neovim_window_padding: f32,
-            neovim_island_padding_x: f32,
-            neovim_island_padding_y: f32,
             neovim_gap_color: [3]u8,
             matte_rendering: f32,
             font_thicken_strength: u8,
@@ -772,8 +770,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .scroll_animation_bounciness = config.@"scroll-animation-bounciness",
                     .neovim_corner_radius = corner_radius,
                     .neovim_window_padding = config.@"neovim-window-padding",
-                    .neovim_island_padding_x = if (config.@"neovim-island-padding-x" > 0) config.@"neovim-island-padding-x" else config.@"neovim-island-padding",
-                    .neovim_island_padding_y = if (config.@"neovim-island-padding-y" > 0) config.@"neovim-island-padding-y" else config.@"neovim-island-padding",
                     .neovim_gap_color = .{ config.@"neovim-gap-color".r, config.@"neovim-gap-color".g, config.@"neovim-gap-color".b },
                     .matte_rendering = @max(0, @min(1, config.@"matte-rendering")),
                     .font_thicken_strength = config.@"font-thicken-strength",
@@ -2365,8 +2361,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             const win_pad = state.config.window_padding;
-            const island_pad_x = self.config.neovim_island_padding_x;
-            const island_pad_y = self.config.neovim_island_padding_y;
 
             // Pre-compute split vertical boundaries for island rects.
             // split_top_row_f = first row where a split starts (tabline is above)
@@ -2410,19 +2404,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     // Each split's island extends from the top of the grid
                     // (to include the tabline row) down to the bottom of the
                     // splits (above the statusline).
-                    // win_pad = gap between side-by-side islands.
-                    // island_pad_x/y = extra space between islands and window edges.
-                    // For leftmost split, add island_pad_x on left.
-                    // For rightmost split, add island_pad_x on right.
-                    const is_leftmost = (px_x <= pad_left + cell_w);
-                    const is_rightmost = (px_x + rw * cell_w >= pad_left + @as(f32, @floatFromInt(cols)) * cell_w - cell_w);
-                    const left_pad = win_pad + if (is_leftmost) island_pad_x else 0;
-                    const right_pad = win_pad + if (is_rightmost) island_pad_x else 0;
+                    // win_pad creates the gap between side-by-side islands.
                     self.uniforms.window_rects[next_wid - 1] = .{
-                        px_x + left_pad,
-                        pad_top + win_pad + island_pad_y,
-                        rw * cell_w - left_pad - right_pad,
-                        split_bot_px - pad_top - win_pad * 2.0 - island_pad_y * 2.0,
+                        px_x + win_pad,
+                        pad_top + win_pad,
+                        rw * cell_w - win_pad * 2.0,
+                        split_bot_px - pad_top - win_pad * 2.0,
                     };
                 } else {
                     // Floats/messages: exact cell rect. Negative height signals

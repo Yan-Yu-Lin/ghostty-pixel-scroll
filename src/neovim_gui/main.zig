@@ -832,7 +832,6 @@ pub const NeovimGui = struct {
                 self.default_foreground = data.fg;
                 self.default_background = data.bg;
                 self.default_special = data.sp;
-                self.has_default_colors = true;
                 self.dirty = true;
             },
             .mode_info_set => |data| {

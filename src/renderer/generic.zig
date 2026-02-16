@@ -2415,13 +2415,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         split_bot_px - pad_top - win_pad * 2.0,
                     };
                 } else {
-                    // Floats/messages: exact rect, clean rounding without gap
-                    // color. Negative height signals "no gap blend" to shader.
+                    // Floats/messages: rect with a small outward padding so
+                    // the SDF rounding doesn't clip the border characters at
+                    // the edges. Negative height signals "no gap blend" to shader.
+                    const float_pad: f32 = 2.0; // pixels of extra space around float
                     self.uniforms.window_rects[next_wid - 1] = .{
-                        px_x,
-                        px_y,
-                        rw * cell_w,
-                        -(rh * cell_h),
+                        px_x - float_pad,
+                        px_y - float_pad,
+                        rw * cell_w + float_pad * 2.0,
+                        -(rh * cell_h + float_pad * 2.0),
                     };
                 }
                 next_wid += 1;

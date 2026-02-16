@@ -41,25 +41,22 @@ vec4 cell_bg() {
         in_padding = (unshifted_grid_pos.y < 0 || unshifted_grid_pos.y >= visible_rows);
     }
 
-    // Apply TUI scroll offset: shift pixels within the scroll region.
-    // Status bars/headers outside the region stay fixed.
+    // Apply TUI scroll offset: shift pixels within the scroll region
+    bool in_tui_scroll_region = false;
     uvec2 tui_region = unpack2u16(tui_scroll_region_packed);
     if (tui_scroll_offset_y != 0.0) {
         ivec2 pre_grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
         if (pre_grid_pos.y >= int(tui_region.x) && pre_grid_pos.y <= int(tui_region.y)) {
             adjusted_coord.y += tui_scroll_offset_y;
+            in_tui_scroll_region = true;
         }
     }
     
     ivec2 grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
 
-    // Clamp shifted fragments to the scroll region so they don't
-    // sample from statusline/winbar rows outside the region.
-    if (tui_scroll_offset_y != 0.0) {
-        if (grid_pos.y < int(tui_region.x))
-            grid_pos.y = int(tui_region.x);
-        else if (grid_pos.y > int(tui_region.y))
-            grid_pos.y = int(tui_region.y);
+    // Clamp grid_pos.y to scroll region for shifted pixels
+    if (in_tui_scroll_region) {
+        grid_pos.y = clamp(grid_pos.y, int(tui_region.x), int(tui_region.y));
     }
     
     // Apply per-cell offset for per-window smooth scrolling

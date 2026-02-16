@@ -521,25 +521,23 @@ fragment float4 cell_bg_fragment(
     in_padding = (unshifted_grid_pos.y < 0 || unshifted_grid_pos.y >= visible_rows);
   }
 
-  // Apply TUI scroll offset: shift pixels within the scroll region.
-  // Status bars/headers outside the region stay fixed.
+  // Apply TUI scroll offset: shift pixels within the scroll region
+  bool in_tui_scroll_region = false;
   if (uniforms.tui_scroll_offset_y != 0.0) {
     int2 pre_grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
     if (pre_grid_pos.y >= int(uniforms.tui_scroll_region_top) &&
         pre_grid_pos.y <= int(uniforms.tui_scroll_region_bottom)) {
       adjusted_pos.y += uniforms.tui_scroll_offset_y;
+      in_tui_scroll_region = true;
     }
   }
 
   int2 grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
 
-  // Clamp shifted fragments to the scroll region so they don't
-  // sample from statusline/winbar rows outside the region.
-  if (uniforms.tui_scroll_offset_y != 0.0) {
-    if (grid_pos.y < int(uniforms.tui_scroll_region_top))
-      grid_pos.y = int(uniforms.tui_scroll_region_top);
-    else if (grid_pos.y > int(uniforms.tui_scroll_region_bottom))
-      grid_pos.y = int(uniforms.tui_scroll_region_bottom);
+  // Clamp grid_pos.y to scroll region for shifted pixels so they
+  // don't sample from header/status bar rows
+  if (in_tui_scroll_region) {
+    grid_pos.y = clamp(grid_pos.y, int(uniforms.tui_scroll_region_top), int(uniforms.tui_scroll_region_bottom));
   }
   
   // Apply per-cell offset for per-window smooth scrolling (Neovim GUI mode)

@@ -2339,6 +2339,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             const win_pad = state.config.window_padding;
 
+            // Pre-compute split vertical boundaries for island rects.
+            // split_top_row_f = first row where a split starts (tabline is above)
+            // split_bot_px = pixel Y where splits end (statusline is below)
+            var split_top_row_f: f32 = @floatFromInt(rows);
+            var split_bot_px: f32 = pad_top + @as(f32, @floatFromInt(rows)) * cell_h;
+            for (windows) |sw| {
+                if (sw.window_type != .split) continue;
+                if (sw.grid_row < split_top_row_f) split_top_row_f = sw.grid_row;
+                const sb_px = pad_top + (sw.grid_row + @as(f32, @floatFromInt(sw.render_height))) * cell_h;
+                if (sb_px < split_bot_px) split_bot_px = sb_px;
+            }
+
             for (windows) |w| {
                 if (next_wid > 16) break;
                 // The root window spans the entire grid. We still need to
@@ -2366,26 +2378,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 window_id_map.put(w.id, next_wid) catch {};
 
                 if (w.window_type == .split) {
-                    // Full-height rect: tabline + content together.
-                    // Padding at top for island header gap.
-                    // Bottom stops ABOVE the root's bottom margin (statusline)
-                    // so the statusline is separate.
-                    const screen_h: f32 = @floatFromInt(rows);
-                    var rect_bottom = screen_h * cell_h;
-
-                    // Find root's bottom margin to stop above statusline
-                    for (windows) |rcheck| {
-                        if (rcheck.window_type == .root and rcheck.margin_bottom > 0) {
-                            rect_bottom -= @as(f32, @floatFromInt(rcheck.margin_bottom)) * cell_h;
-                            break;
-                        }
-                    }
-
+                    // Each split gets its own island rect starting at its own
+                    // grid_row with win_pad inset on all sides. The tabline row
+                    // (above splits) and statusline (below splits) stay OUTSIDE
+                    // the islands as flat bars — no rounding, no shadow.
                     self.uniforms.window_rects[next_wid - 1] = .{
                         px_x + win_pad,
-                        pad_top + win_pad,
+                        px_y + win_pad,
                         rw * cell_w - win_pad * 2.0,
-                        rect_bottom - pad_top - win_pad * 2.0,
+                        split_bot_px - px_y - win_pad * 2.0,
                     };
                 } else {
                     // Floats/messages: exact rect, clean rounding without gap
@@ -2621,62 +2622,50 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
 
-            // Post-pass: assign root tabline cells (NOT statusline) to the
-            // nearest split so they're inside the rounded rect.
-            // BG colors come from Neovim's highlight groups (e.g. BufferLineFill,
-            // NvimTreeNormal via bufferline offsets) — we only touch window_id.
+            // Post-pass: tabline and statusline are flat bars outside the
+            // split islands. Give them a sentinel window_id so the shader
+            // skips both SDF rounding AND gap shadow. They render with their
+            // true Neovim highlight colors, no darkening.
+            //
+            // Detect rows by split positions (root margin_top/bottom are
+            // unreliable — Neovim often doesn't send win_viewport_margins
+            // for grid 1).
             if (state.config.corner_radius > 0) {
-                for (windows) |rcheck| {
-                    if (rcheck.window_type != .root) continue;
-                    if (rcheck.margin_top == 0) break;
-                    const root_row: u32 = @intFromFloat(rcheck.grid_row);
-                    // Only assign tabline rows (top margin), not statusline
-                    for (0..rcheck.margin_top) |mr| {
-                        const sy = root_row + @as(u32, @intCast(mr));
-                        if (sy >= rows) continue;
+                var split_top_row: u32 = rows;
+                var split_bot_row: u32 = 0;
+                for (windows) |sw| {
+                    if (sw.window_type != .split) continue;
+                    const sr: u32 = @intFromFloat(sw.grid_row);
+                    const sb = sr + sw.render_height;
+                    if (sr < split_top_row) split_top_row = sr;
+                    if (sb > split_bot_row) split_bot_row = sb;
+                }
+
+                const bar_sentinel: u8 = @intCast(@min(self.uniforms.window_rect_count + 1, 255));
+
+                // Tabline rows (0..split_top_row): flat bar above islands
+                if (split_top_row > 0 and split_top_row < rows) {
+                    for (0..split_top_row) |r| {
                         for (0..cols) |x| {
-                            const bg_cell = self.cells.bgCell(sy, x);
-                            if (bg_cell.window_id != 0) continue;
-                            for (windows) |sw| {
-                                if (sw.window_type != .split) continue;
-                                const sw_col: u32 = @intFromFloat(sw.grid_col);
-                                const sw_end = sw_col + sw.render_width;
-                                if (x >= sw_col and x < sw_end) {
-                                    bg_cell.window_id = window_id_map.get(sw.id) orelse 0;
-                                    break;
-                                }
+                            const bg_cell = self.cells.bgCell(r, x);
+                            if (bg_cell.window_id == 0) {
+                                bg_cell.window_id = bar_sentinel;
                             }
                         }
                     }
-                    break;
                 }
-            }
 
-            // Post-pass 2: give root statusline cells a sentinel window_id
-            // so the shader's gap shadow pass skips them. Without this,
-            // all window_id==0 cells (including the statusline) get darkened
-            // by the drop shadow, making the statusline text/bg look wrong.
-            // Sentinel = window_rect_count + 1: high enough that SDF rounding
-            // is skipped (> rect_count) but non-zero so gap shadow is skipped too.
-            if (state.config.corner_radius > 0) {
-                const statusline_sentinel: u8 = @intCast(@min(self.uniforms.window_rect_count + 1, 255));
-                for (windows) |rcheck| {
-                    if (rcheck.window_type != .root) continue;
-                    if (rcheck.margin_bottom == 0) break;
-                    const root_row: u32 = @intFromFloat(rcheck.grid_row);
-                    const root_height = rcheck.render_height;
-                    const status_start = root_row + root_height -| rcheck.margin_bottom;
-                    var srow: u32 = status_start;
-                    while (srow < root_row + root_height) : (srow += 1) {
-                        if (srow >= rows) continue;
+                // Statusline rows (split_bot_row..rows): flat bar below islands
+                if (split_bot_row > 0 and split_bot_row < rows) {
+                    var srow: u32 = split_bot_row;
+                    while (srow < rows) : (srow += 1) {
                         for (0..cols) |x| {
                             const bg_cell = self.cells.bgCell(srow, x);
                             if (bg_cell.window_id == 0) {
-                                bg_cell.window_id = statusline_sentinel;
+                                bg_cell.window_id = bar_sentinel;
                             }
                         }
                     }
-                    break;
                 }
             }
 

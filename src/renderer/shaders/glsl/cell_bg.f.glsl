@@ -182,11 +182,44 @@ vec4 cell_bg() {
         // Anti-aliased edge
         float alpha = 1.0 - smoothstep(-1.0, 0.5, dist);
 
-        // Outside the rounded rect: show gap color
+        // Outside the rounded rect: show gap color with subtle shadow
         if (alpha < 1.0) {
             vec4 gap_bg = load_color(unpack4u8(gap_color_packed), use_linear_blending);
+
+            // Soft drop shadow: offset SDF slightly (light from top-left)
+            vec2 shadow_offset = vec2(2.0, 3.0);
+            vec2 sd = abs(frag_pos - shadow_offset - center) - half_size + vec2(r);
+            float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
+            float shadow = smoothstep(0.0, corner_radius * 1.5, shadow_dist);
+            shadow = shadow * 0.35; // shadow intensity
+            gap_bg.rgb *= (1.0 - shadow);
+
             result = mix(gap_bg, result, alpha);
         }
+    }
+
+    // Gap shadow pass: for cells NOT inside any window (window_id == 0),
+    // check distance to all nearby window rects and apply shadow darkening.
+    if (corner_radius > 0.0 && cell_window_id == 0u && window_rect_count > 0u) {
+        float min_shadow = 1.0;
+        for (uint wi = 0u; wi < window_rect_count; wi++) {
+            vec4 wrect = window_rects[wi];
+            vec2 win_pos = wrect.xy;
+            vec2 win_size = wrect.zw;
+            if (win_size.x <= 0.0 || win_size.y <= 0.0) continue;
+
+            vec2 center = win_pos + win_size * 0.5;
+            vec2 half_size = win_size * 0.5;
+            float r = corner_radius;
+
+            // Shadow SDF with offset (light from top-left)
+            vec2 shadow_offset = vec2(2.0, 3.0);
+            vec2 sd = abs(gl_FragCoord.xy - shadow_offset - center) - half_size + vec2(r);
+            float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
+            float shadow = 1.0 - smoothstep(0.0, corner_radius * 1.5, shadow_dist) * 0.35;
+            min_shadow = min(min_shadow, shadow);
+        }
+        result.rgb *= min_shadow;
     }
 
     // Matte/ink color post-processing

@@ -2451,24 +2451,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            if (is_root and rounding_active) {
+                            {
                                 const mtxt = cell.getText();
-                                if (mtxt.len == 0 or (mtxt[0] == ' ') or (mtxt[0] == 0) or isBoxDrawing(mtxt)) {
+                                const msep = is_root and rounding_active and isBoxDrawing(mtxt);
+                                if (msep) {
                                     bg = (@as(u32, state.config.gap_color[0]) << 16) |
                                         (@as(u32, state.config.gap_color[1]) << 8) |
                                         @as(u32, state.config.gap_color[2]);
                                 }
-                            }
-                            self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
-                                .offset_y_fixed = 0,
-                                .window_id = cur_wid,
-                            };
-                            {
-                                const text = cell.getText();
-                                if (text.len > 0) {
-                                    const skip_sep = is_root and rounding_active and isBoxDrawing(text);
-                                    if (!skip_sep and !skip_text) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                self.cells.bgCell(sy, sx).* = .{
+                                    .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
+                                    .offset_y_fixed = 0,
+                                    .window_id = cur_wid,
+                                };
+                                if (!skip_text and !msep and mtxt.len > 0) {
+                                    self.addGuiGlyph(sx, sy, mtxt, fg, cell.style, 0) catch {};
                                 }
                             }
                         } else {
@@ -2517,16 +2514,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg = t;
                             }
 
-                            // Root separator cells become gap-colored when rounding
-                            // is active. Only override cells that are empty or contain
-                            // box-drawing chars — keep statusline/tabline bg intact.
-                            if (is_root and rounding_active) {
-                                const txt = c.getText();
-                                if (txt.len == 0 or (txt[0] == ' ') or (txt[0] == 0) or isBoxDrawing(txt)) {
-                                    bg = (@as(u32, state.config.gap_color[0]) << 16) |
-                                        (@as(u32, state.config.gap_color[1]) << 8) |
-                                        @as(u32, state.config.gap_color[2]);
-                                }
+                            // When rounding is active on root grid, only skip
+                            // box-drawing separator chars. Everything else (tabline,
+                            // statusline, etc.) renders with its Neovim-set colors.
+                            const cell_text = c.getText();
+                            const is_separator = is_root and rounding_active and isBoxDrawing(cell_text);
+
+                            // For separator cells, replace bg with gap color
+                            if (is_separator) {
+                                bg = (@as(u32, state.config.gap_color[0]) << 16) |
+                                    (@as(u32, state.config.gap_color[1]) << 8) |
+                                    @as(u32, state.config.gap_color[2]);
                             }
 
                             // Background — skip the extra animation row (would corrupt statusline).
@@ -2560,17 +2558,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 }
                             }
 
-                            // Text — occlusion-gated, extra row gets text (clipped by shader).
-                            if (!skip_text and (owns_cell or is_extra)) {
-                                const text = c.getText();
-                                if (text.len > 0) {
-                                    // When rounding is active, skip box-drawing separator
-                                    // chars on root grid (they're replaced by the SDF gap).
-                                    const skip_separator = is_root and rounding_active and isBoxDrawing(text);
-                                    if (!skip_separator) {
-                                        const eff_offset: f32 = if (is_float) 0 else scroll_offset;
-                                        self.addGuiGlyph(sx, sy, text, fg, c.style, eff_offset) catch {};
-                                    }
+                            // Text — skip separator box-drawing chars (SDF gap replaces them).
+                            if (!skip_text and !is_separator and (owns_cell or is_extra)) {
+                                if (cell_text.len > 0) {
+                                    const eff_offset: f32 = if (is_float) 0 else scroll_offset;
+                                    self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};
                                 }
                             }
                         } else if (!is_extra) {
@@ -2608,24 +2600,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            if (is_root and rounding_active) {
+                            {
                                 const btxt = cell.getText();
-                                if (btxt.len == 0 or (btxt[0] == ' ') or (btxt[0] == 0) or isBoxDrawing(btxt)) {
+                                const bsep = is_root and rounding_active and isBoxDrawing(btxt);
+                                if (bsep) {
                                     bg = (@as(u32, state.config.gap_color[0]) << 16) |
                                         (@as(u32, state.config.gap_color[1]) << 8) |
                                         @as(u32, state.config.gap_color[2]);
                                 }
-                            }
-                            self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
-                                .offset_y_fixed = 0,
-                                .window_id = cur_wid,
-                            };
-                            if (owns_cell) {
-                                const text = cell.getText();
-                                if (text.len > 0) {
-                                    const skip_sep = is_root and rounding_active and isBoxDrawing(text);
-                                    if (!skip_sep and !skip_text) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                self.cells.bgCell(sy, sx).* = .{
+                                    .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
+                                    .offset_y_fixed = 0,
+                                    .window_id = cur_wid,
+                                };
+                                if (owns_cell and !skip_text and !bsep and btxt.len > 0) {
+                                    self.addGuiGlyph(sx, sy, btxt, fg, cell.style, 0) catch {};
                                 }
                             }
                         } else {

@@ -1083,6 +1083,14 @@ pub fn joinCollabSession(self: *Surface, host: []const u8, port: u16) !void {
     // Wire buffer edit callback
     collab.CollabState.buffer_edit_callback = &collabBufferEditApply;
 
+    // Wire presence callback and io thread on Neovim GUI if active,
+    // so remote buffer edits can be applied to our local Neovim
+    // and our cursor position is forwarded to peers.
+    if (self.nvim_gui) |nvim| {
+        nvim.collab_presence_callback = &collabPresenceForward;
+        collab_io_thread = nvim.io;
+    }
+
     log.info("joined collab session at {s}:{d}", .{ host, port });
 }
 

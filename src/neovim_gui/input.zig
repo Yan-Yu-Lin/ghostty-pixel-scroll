@@ -14,9 +14,16 @@ pub fn toNeovimKey(event: input.KeyEvent) ?[]const u8 {
     // Only handle press and repeat events
     if (event.action == .release) return null;
 
-    // If we have UTF-8 text and no significant modifiers, send it directly
+    // If we have UTF-8 text and no significant modifiers, send it directly.
+    // But don't send raw control characters (< 0x20 or 0x7F/DEL) — these
+    // must go through physical key mapping to get proper Neovim notation
+    // like <BS>, <CR>, <Tab>, <Esc>. On macOS, backspace sends 0x7F as
+    // text which Neovim would display as a literal ^? / up-arrow-question.
     if (event.utf8.len > 0 and !hasSignificantMods(event.mods)) {
-        return event.utf8;
+        const first_byte = event.utf8[0];
+        if (first_byte >= 0x20 and first_byte != 0x7f) {
+            return event.utf8;
+        }
     }
 
     // Map the physical key to Neovim notation

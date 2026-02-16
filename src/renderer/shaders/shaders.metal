@@ -1065,9 +1065,14 @@ fragment float4 cell_text_fragment(
     }
   }
 
-  // Legacy clip for terminal scrollback
+  // Clip text that falls outside the grid area.
+  // In terminal mode with pixel scroll, grid_size.y includes 2 extra rows;
+  // in Neovim GUI mode there are no extra rows.
+  // Use pixel_scroll_offset_y to detect which mode we are in.
+  bool text_has_extra_rows = (uniforms.pixel_scroll_offset_y > 0.0);
+  int text_visible_rows = text_has_extra_rows ? int(uniforms.grid_size.y) - 2 : int(uniforms.grid_size.y);
   float grid_top = uniforms.grid_padding.x;
-  float grid_bottom = grid_top + float(uniforms.grid_size.y - 2) * uniforms.cell_size.y;
+  float grid_bottom = grid_top + float(text_visible_rows) * uniforms.cell_size.y;
   if (in.screen_pos.y < grid_top || in.screen_pos.y > grid_bottom) {
     discard_fragment();
   }

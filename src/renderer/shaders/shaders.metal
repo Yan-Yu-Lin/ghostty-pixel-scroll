@@ -521,29 +521,26 @@ fragment float4 cell_bg_fragment(
     in_padding = (unshifted_grid_pos.y < 0 || unshifted_grid_pos.y >= visible_rows);
   }
 
-  // Apply TUI scroll offset: shift pixels within the scroll region
-  // This makes content in the scroll region slide smoothly while
-  // status bars, headers, etc. outside the region stay fixed.
-  // If the shift would move the fragment outside the scroll region,
-  // revert to the unshifted position so the content "freezes" rather
-  // than stretching the boundary row's color or showing black.
+  // Apply TUI scroll offset: shift pixels within the scroll region.
+  // Status bars/headers outside the region stay fixed.
   if (uniforms.tui_scroll_offset_y != 0.0) {
     int2 pre_grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
     if (pre_grid_pos.y >= int(uniforms.tui_scroll_region_top) &&
         pre_grid_pos.y <= int(uniforms.tui_scroll_region_bottom)) {
-      float2 shifted_pos = adjusted_pos;
-      shifted_pos.y += uniforms.tui_scroll_offset_y;
-      int2 shifted_grid = int2(floor((shifted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
-      // Only apply the shift if the result stays within the scroll region
-      if (shifted_grid.y >= int(uniforms.tui_scroll_region_top) &&
-          shifted_grid.y <= int(uniforms.tui_scroll_region_bottom)) {
-        adjusted_pos = shifted_pos;
-      }
-      // Otherwise adjusted_pos stays unshifted — content freezes in place
+      adjusted_pos.y += uniforms.tui_scroll_offset_y;
     }
   }
 
   int2 grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
+
+  // Clamp shifted fragments to the scroll region so they don't
+  // sample from statusline/winbar rows outside the region.
+  if (uniforms.tui_scroll_offset_y != 0.0) {
+    if (grid_pos.y < int(uniforms.tui_scroll_region_top))
+      grid_pos.y = int(uniforms.tui_scroll_region_top);
+    else if (grid_pos.y > int(uniforms.tui_scroll_region_bottom))
+      grid_pos.y = int(uniforms.tui_scroll_region_bottom);
+  }
   
   // Apply per-cell offset for per-window smooth scrolling (Neovim GUI mode)
   bool allow_fixed_overlap = (uniforms.window_rect_count == 0);

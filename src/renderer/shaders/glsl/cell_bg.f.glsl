@@ -42,25 +42,25 @@ vec4 cell_bg() {
     }
 
     // Apply TUI scroll offset: shift pixels within the scroll region.
-    // If the shift would move the fragment outside the scroll region,
-    // revert to the unshifted position so the content "freezes" rather
-    // than stretching the boundary row's color or showing black.
+    // Status bars/headers outside the region stay fixed.
     uvec2 tui_region = unpack2u16(tui_scroll_region_packed);
     if (tui_scroll_offset_y != 0.0) {
         ivec2 pre_grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
         if (pre_grid_pos.y >= int(tui_region.x) && pre_grid_pos.y <= int(tui_region.y)) {
-            vec2 shifted_coord = adjusted_coord;
-            shifted_coord.y += tui_scroll_offset_y;
-            ivec2 shifted_grid = ivec2(floor((shifted_coord - grid_padding.wx) / cell_size));
-            // Only apply the shift if the result stays within the scroll region
-            if (shifted_grid.y >= int(tui_region.x) && shifted_grid.y <= int(tui_region.y)) {
-                adjusted_coord = shifted_coord;
-            }
-            // Otherwise adjusted_coord stays unshifted — content freezes in place
+            adjusted_coord.y += tui_scroll_offset_y;
         }
     }
     
     ivec2 grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
+
+    // Clamp shifted fragments to the scroll region so they don't
+    // sample from statusline/winbar rows outside the region.
+    if (tui_scroll_offset_y != 0.0) {
+        if (grid_pos.y < int(tui_region.x))
+            grid_pos.y = int(tui_region.x);
+        else if (grid_pos.y > int(tui_region.y))
+            grid_pos.y = int(tui_region.y);
+    }
     
     // Apply per-cell offset for per-window smooth scrolling
     bool allow_fixed_overlap = (window_rect_count == 0u);

@@ -362,7 +362,10 @@ ghostty-join() {
 
         # Get the shared directory from host
         local share_dir
-        share_dir=$(ssh -o StrictHostKeyChecking=accept-new "${user}@${host}" \
+        share_dir=$(ssh -o ConnectTimeout=5 -o ConnectionAttempts=2 \
+            -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey,keyboard-interactive,password \
+            "${user}@${host}" \
             "cat /tmp/ghostty-collab-share-dir 2>/dev/null" 2>/dev/null)
 
         if [[ -z "$share_dir" ]]; then
@@ -378,6 +381,8 @@ ghostty-join() {
 
         sshfs "${user}@${host}:${share_dir}" "$mount_dir" \
             -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=5 \
+            -o PreferredAuthentications=publickey,keyboard-interactive,password \
             -o reconnect \
             -o ServerAliveInterval=15 \
             -o cache=yes \
@@ -398,12 +403,15 @@ ghostty-join() {
         builtin echo "Mounted! Files available at: $mount_dir"
         builtin echo ""
         builtin echo "Your Neovim, your config, their files."
-        builtin echo "cd $mount_dir to start editing."
+        builtin echo "Live edits synced in real-time over collab TCP."
         builtin echo ""
         builtin echo "To disconnect: ghostty-leave"
 
         # Store mount info for cleanup
         builtin echo "$mount_dir" > /tmp/ghostty-collab-mount
+
+        # Store the share dir so Ghostty can compute relative paths
+        builtin echo "$share_dir" > /tmp/ghostty-collab-remote-share-dir
 
         # cd into the mounted directory
         cd "$mount_dir" || true

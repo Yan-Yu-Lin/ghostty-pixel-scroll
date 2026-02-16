@@ -313,7 +313,10 @@ function ghostty-join
             return 1
         end
 
-        set -l share_dir (ssh -o StrictHostKeyChecking=accept-new "$user@$host" \
+        set -l share_dir (ssh -o ConnectTimeout=5 -o ConnectionAttempts=2 \
+            -o StrictHostKeyChecking=accept-new \
+            -o PreferredAuthentications=publickey,keyboard-interactive,password \
+            "$user@$host" \
             "cat /tmp/ghostty-collab-share-dir 2>/dev/null" 2>/dev/null)
         test -z "$share_dir"; and set share_dir "/home/$user"
 
@@ -322,7 +325,10 @@ function ghostty-join
 
         echo "Mounting $user@$host:$share_dir ..."
         sshfs "$user@$host:$share_dir" "$mount_dir" \
-            -o StrictHostKeyChecking=accept-new -o reconnect \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=5 \
+            -o PreferredAuthentications=publickey,keyboard-interactive,password \
+            -o reconnect \
             -o ServerAliveInterval=15 -o cache=yes -o kernel_cache \
             -o auto_cache -o compression=no 2>/dev/null
 
@@ -333,7 +339,9 @@ function ghostty-join
         end
 
         echo "$mount_dir" > /tmp/ghostty-collab-mount
+        echo "$share_dir" > /tmp/ghostty-collab-remote-share-dir
         echo "Mounted! cd $mount_dir to start editing."
+        echo "Live edits synced in real-time over collab TCP."
         echo "To disconnect: ghostty-leave"
         cd "$mount_dir"
     else

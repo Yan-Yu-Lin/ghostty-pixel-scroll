@@ -1265,9 +1265,10 @@ pub fn initNeovimGui(self: *Surface) !void {
         }.notify,
     );
 
-    // Wire collab presence callback if a session is active
+    // Wire collab presence + buffer edit callbacks if a session is active
     if (self.collab_state != null) {
         nvim.collab_presence_callback = &collabPresenceForward;
+        collab_io_thread = nvim.io;
     }
 
     log.info("Neovim GUI mode initialized successfully", .{});
@@ -1330,9 +1331,10 @@ pub fn initNeovimGuiWithCwd(self: *Surface, cwd: ?[]const u8) !void {
         }.notify,
     );
 
-    // Wire collab presence callback if a session is active
+    // Wire collab presence + buffer edit callbacks if a session is active
     if (self.collab_state != null) {
         nvim.collab_presence_callback = &collabPresenceForward;
+        collab_io_thread = nvim.io;
     }
 
     log.info("Neovim GUI mode initialized with cwd: {?s}", .{effective_cwd});
@@ -3260,6 +3262,12 @@ pub fn setFontSize(self: *Surface, size: font.face.DesiredSize) !void {
     self.font_grid_key = font_grid_key;
     self.font_metrics = font_grid.metrics;
 
+    // Recalculate grid size with new cell dimensions. This is needed
+    // so nvim-gui gets nvim_ui_try_resize with the correct rows/cols
+    // for the new font size. Without this, font zoom changes the cell
+    // size but leaves the grid dimensions stale.
+    try self.resize(self.size.screen);
+
     // Schedule render which also drains our mailbox
     self.queueRender() catch unreachable;
 }
@@ -3718,6 +3726,29 @@ pub fn keyCallback(
                                     }
                                 }
                             }
+                        },
+                        .collab_start_share => {
+                            log.info("panel: starting collab share session", .{});
+                            menu.pending_action = null;
+                            self.startCollabHost() catch |err| {
+                                log.err("panel: failed to start collab: {}", .{err});
+                            };
+                            // Rebuild collab section to show updated state
+                            menu.buildCollabSection();
+                        },
+                        .collab_disconnect => {
+                            log.info("panel: disconnecting collab session", .{});
+                            menu.pending_action = null;
+                            if (self.collab_state) |cs| {
+                                cs.stopSession();
+                                collab.CollabState.global_instance = null;
+                                self.alloc.destroy(cs);
+                                self.collab_state = null;
+                                self.renderer_state.collab_state = null;
+                                collab_io_thread = null;
+                            }
+                            // Rebuild collab section to show updated state
+                            menu.buildCollabSection();
                         },
                         else => {},
                     }
@@ -6720,6 +6751,16 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
         },
 
         .copy_to_clipboard => |format| {
+            // In nvim-gui mode, send "+y to Neovim to yank the visual
+            // selection to the system clipboard register.
+            if (self.nvim_gui) |nvim| {
+                if (nvim.io) |io| {
+                    // "+y yanks to system clipboard, then Esc to exit visual mode
+                    io.sendInputDirect("\"+y") catch {};
+                    return true;
+                }
+            }
+
             self.renderer_state.mutex.lock();
             defer self.renderer_state.mutex.unlock();
 
@@ -7570,6 +7611,17 @@ fn completeClipboardPaste(
     allow_unsafe: bool,
 ) !void {
     if (data.len == 0) return;
+
+    // In nvim-gui mode, paste via nvim_paste RPC instead of terminal PTY.
+    // The terminal PTY is not connected to Neovim in this mode.
+    if (self.nvim_gui) |nvim| {
+        if (nvim.io) |io| {
+            io.sendPaste(data) catch |err| {
+                log.err("nvim paste failed: {}", .{err});
+            };
+            return;
+        }
+    }
 
     const encode_opts: input.paste.Options = encode_opts: {
         self.renderer_state.mutex.lock();

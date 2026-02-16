@@ -508,14 +508,36 @@ pub const NeovimGui = struct {
             "end " ++
             "if #lines > 0 and lines[#lines] == '' then table.remove(lines) end " ++
             "end " ++
-            // Find the buffer with this file
+            // Find the buffer with this file (match relative path)
+            "local found = false " ++
             "for _, b in ipairs(vim.api.nvim_list_bufs()) do " ++
             "if vim.api.nvim_buf_is_loaded(b) then " ++
             "local bname = vim.api.nvim_buf_get_name(b) " ++
             "if bname ~= '' then bname = vim.fn.fnamemodify(bname, ':~:.') end " ++
             "if bname == file then " ++
             "pcall(vim.api.nvim_buf_set_lines, b, firstline, lastline, false, lines) " ++
+            "found = true " ++
             "break end end end " ++
+            // If buffer wasn't open, load it hidden and apply the edit.
+            // This ensures edits to files the guest hasn't opened yet aren't lost.
+            "if not found and vim.fn.filereadable(file) == 1 then " ++
+            "local b = vim.fn.bufadd(file) " ++
+            "vim.fn.bufload(b) " ++
+            "attach_buf(b) " ++
+            "pcall(vim.api.nvim_buf_set_lines, b, firstline, lastline, false, lines) " ++
+            "found = true " ++
+            "end " ++
+            // Write the buffer to disk after applying remote edit so SSHFS
+            // guests see changes on the host filesystem and vice versa.
+            "if found then " ++
+            "for _, b in ipairs(vim.api.nvim_list_bufs()) do " ++
+            "if vim.api.nvim_buf_is_loaded(b) and vim.bo[b].modified " ++
+            "and vim.bo[b].buftype == '' then " ++
+            "local bname = vim.api.nvim_buf_get_name(b) " ++
+            "if bname ~= '' then bname = vim.fn.fnamemodify(bname, ':~:.') end " ++
+            "if bname == file then " ++
+            "pcall(vim.api.nvim_buf_call, b, function() vim.cmd('silent! noautocmd write') end) " ++
+            "break end end end end " ++
             "_ghostty_applying = false " ++
             "end " ++
             // -- Live file sync: auto-save on edit, auto-reload on change --

@@ -982,6 +982,29 @@ pub const IoThread = struct {
         try self.writeData(encoded);
     }
 
+    /// Send nvim_paste RPC to Neovim. This is the correct way to paste
+    /// clipboard data — it handles insert mode, cmdline, bracketed paste, etc.
+    pub fn sendPaste(self: *Self, data: []const u8) !void {
+        const str_val = try msgpack.string(self.alloc, data);
+        // nvim_paste(data, crlf, phase) — crlf=false, phase=-1 (one-shot)
+        const params = try msgpack.array(self.alloc, .{
+            str_val,
+            false,
+            @as(i64, -1),
+        });
+
+        const notification = protocol.message.Notification{
+            .method = "nvim_paste",
+            .params = params,
+        };
+
+        const encoded = try encoder.encodeNotification(self.alloc, notification);
+        defer self.alloc.free(encoded);
+        params.free(self.alloc);
+
+        try self.writeData(encoded);
+    }
+
     fn encodeInputNotification(self: *Self, keys: []const u8) ![]const u8 {
         const str_val = try msgpack.string(self.alloc, keys);
         // Don't free str_val - it's owned by params now

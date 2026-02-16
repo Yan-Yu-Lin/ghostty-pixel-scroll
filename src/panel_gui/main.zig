@@ -384,6 +384,14 @@ pub const PanelGui = struct {
                                 // Surface layer reads this and handles it.
                                 clear_action = false;
                             },
+                            .collab_start_share => {
+                                // Surface layer reads this and handles it.
+                                clear_action = false;
+                            },
+                            .collab_disconnect => {
+                                // Surface layer reads this and handles it.
+                                clear_action = false;
+                            },
                         }
                         if (clear_action) {
                             menu.pending_action = null;

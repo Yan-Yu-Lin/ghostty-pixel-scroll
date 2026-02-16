@@ -29,6 +29,7 @@ pub const icons = struct {
     pub const favorites = "\u{f005}"; // nf-fa-star
     pub const recent = "\u{f017}"; // nf-fa-clock_o
     pub const files = "\u{f07c}"; // nf-fa-folder_open
+    pub const collab = "\u{f0c0}"; // nf-fa-users
 
     // Action icons
     pub const star_filled = "\u{f005}"; // nf-fa-star (filled)
@@ -147,6 +148,8 @@ pub const ItemKind = enum {
     recent_command,
     /// A file or directory entry in the tree explorer
     file_entry,
+    /// A collab section entry (status, peer, action)
+    collab_entry,
 };
 
 /// Git status for a file in the working tree
@@ -196,10 +199,11 @@ pub const MenuItem = struct {
 
 // ── Section IDs ──────────────────────────────────────────────────────────
 
-pub const Section = enum(u2) {
+pub const Section = enum(u3) {
     favorites = 0,
     recent = 1,
     files = 2,
+    collab = 3,
 };
 
 /// Purpose of the inline text input box
@@ -289,10 +293,11 @@ pub const Menu = struct {
     theme: Theme = Theme.default(),
 
     /// Per-section state
-    sections: [3]SectionState = .{
+    sections: [4]SectionState = .{
         .{ .empty_hint = "  Press 'f' on a command to favorite it" },
         .{ .empty_hint = "  No recent commands yet" },
         .{ .empty_hint = "  No working directory" },
+        .{ .empty_hint = "  Press 's' to start sharing" },
     },
 
     /// Which section currently has focus
@@ -369,6 +374,10 @@ pub const Menu = struct {
         toggle_dir: []const u8,
         /// Open a file in nvim-gui (includes parent dir for cwd)
         open_file: OpenFileInfo,
+        /// Start a collab share session
+        collab_start_share,
+        /// Stop/disconnect the collab session
+        collab_disconnect,
     };
 
     pub fn init(alloc: Allocator) !*Self {
@@ -620,6 +629,7 @@ pub const Menu = struct {
         try self.buildFavoritesSection();
         try self.buildRecentSection();
         try self.buildFilesSection();
+        self.buildCollabSection();
         self.dirty = true;
     }
 
@@ -662,6 +672,115 @@ pub const Menu = struct {
                 .command = cmd,
                 .favorited = false,
             });
+        }
+
+        sec.selected = @min(sec.selected, if (sec.items.items.len > 0) sec.items.items.len - 1 else 0);
+        sec.dirty = true;
+        self.dirty = true;
+    }
+
+    /// Build the Collab section: shows session status, share code, connected peers.
+    /// Reads from CollabState.global_instance to get live data.
+    pub fn buildCollabSection(self: *Self) void {
+        var sec = &self.sections[@intFromEnum(Section.collab)];
+        sec.items.clearRetainingCapacity();
+
+        const collab_mod = @import("../collab/main.zig");
+        const cs = collab_mod.CollabState.global_instance;
+
+        if (cs) |state| {
+            // Session is active — show status and peers
+            const role_label: []const u8 = switch (state.role) {
+                .host => "Hosting",
+                .guest => "Connected",
+                .none => "Inactive",
+            };
+            sec.items.append(self.alloc, .{
+                .kind = .collab_entry,
+                .label = role_label,
+                .icon = "\u{f058}", // nf-fa-check_circle
+                .icon_color = self.theme.green,
+            }) catch {};
+
+            // Show share code for host
+            if (state.role == .host) {
+                if (state.server) |server| {
+                    var port_buf: [32]u8 = undefined;
+                    const port_str = std.fmt.bufPrint(&port_buf, "Port: {d}", .{server.port}) catch "Port: ?";
+                    sec.items.append(self.alloc, .{
+                        .kind = .collab_entry,
+                        .label = port_str,
+                        .icon = "\u{f0ac}", // nf-fa-globe
+                        .icon_color = self.theme.accent,
+                    }) catch {};
+                }
+            }
+
+            // Show connected peers
+            var peers: [collab_mod.MAX_PEERS]?collab_mod.CollabState.PeerCursor = undefined;
+            const count = state.getPeers(&peers);
+            if (count > 0) {
+                sec.items.append(self.alloc, .{
+                    .kind = .collab_entry,
+                    .label = "Peers:",
+                    .icon = "\u{f007}", // nf-fa-user
+                    .icon_color = self.theme.fg_dim,
+                }) catch {};
+
+                for (peers[0..collab_mod.MAX_PEERS]) |maybe_peer| {
+                    if (maybe_peer) |peer| {
+                        const peer_name = peer.getName();
+                        const peer_file = peer.getFileName();
+                        // Show "name - file" or just "name"
+                        if (peer_file.len > 0) {
+                            var label_buf: [128]u8 = undefined;
+                            const label = std.fmt.bufPrint(&label_buf, "  {s} \u{2192} {s}", .{ peer_name, peer_file }) catch peer_name;
+                            sec.items.append(self.alloc, .{
+                                .kind = .collab_entry,
+                                .label = label,
+                                .icon = "\u{f007}", // nf-fa-user
+                                .icon_color = peer.color,
+                            }) catch {};
+                        } else {
+                            sec.items.append(self.alloc, .{
+                                .kind = .collab_entry,
+                                .label = peer_name,
+                                .icon = "\u{f007}",
+                                .icon_color = peer.color,
+                            }) catch {};
+                        }
+                    }
+                }
+            } else {
+                sec.items.append(self.alloc, .{
+                    .kind = .collab_entry,
+                    .label = "No peers connected",
+                    .icon = "\u{f235}", // nf-fa-user_times
+                    .icon_color = self.theme.fg_muted,
+                }) catch {};
+            }
+
+            // Disconnect action
+            sec.items.append(self.alloc, .{
+                .kind = .collab_entry,
+                .label = "[d] Disconnect",
+                .icon = "\u{f05e}", // nf-fa-ban
+                .icon_color = self.theme.red,
+            }) catch {};
+        } else {
+            // No session active
+            sec.items.append(self.alloc, .{
+                .kind = .collab_entry,
+                .label = "No active session",
+                .icon = "\u{f056}", // nf-fa-minus_circle
+                .icon_color = self.theme.fg_muted,
+            }) catch {};
+            sec.items.append(self.alloc, .{
+                .kind = .collab_entry,
+                .label = "[s] Start sharing",
+                .icon = "\u{f064}", // nf-fa-share
+                .icon_color = self.theme.green,
+            }) catch {};
         }
 
         sec.selected = @min(sec.selected, if (sec.items.items.len > 0) sec.items.items.len - 1 else 0);
@@ -1544,8 +1663,13 @@ pub const Menu = struct {
             return true;
         }
 
-        // ── d/x = delete selected favorite ───────────────────────────
+        // ── d/x = delete selected favorite / disconnect collab ─────────
         if (key.len == 1 and (key[0] == 'd' or key[0] == 'x')) {
+            if (self.active_section == .collab) {
+                self.pending_action = .collab_disconnect;
+                self.buildCollabSection();
+                return true;
+            }
             if (self.active_section == .favorites and !self.focused_on_header) {
                 self.deleteSelectedFavorite() catch {};
             }
@@ -1578,14 +1702,24 @@ pub const Menu = struct {
             return true;
         }
 
-        // ── 1/2/3 = jump to section ─────────────────────────────────
-        if (key.len == 1 and key[0] >= '1' and key[0] <= '3') {
+        // ── 1/2/3/4 = jump to section ────────────────────────────────
+        if (key.len == 1 and key[0] >= '1' and key[0] <= '4') {
             if (self.expanded_section != null) return true;
             const idx = key[0] - '1';
-            self.active_section = @enumFromInt(@as(u2, @intCast(idx)));
+            self.active_section = @enumFromInt(@as(u3, @intCast(idx)));
             self.focused_on_header = true;
             self.dirty = true;
             return true;
+        }
+
+        // ── s = start collab share (in collab section) ─────────────────
+        if (key.len == 1 and key[0] == 's') {
+            if (self.active_section == .collab) {
+                self.pending_action = .collab_start_share;
+                // Rebuild collab section to reflect new state
+                self.buildCollabSection();
+                return true;
+            }
         }
 
         // ── / = search/filter ─────────────────────────────────────────
@@ -1756,16 +1890,16 @@ pub const Menu = struct {
 
     fn nextSectionHeader(self: *Self) void {
         const current: u8 = @intFromEnum(self.active_section);
-        const next_idx: u8 = (current + 1) % 3;
-        self.active_section = @enumFromInt(@as(u2, @intCast(next_idx)));
+        const next_idx: u8 = (current + 1) % 4;
+        self.active_section = @enumFromInt(@as(u3, @intCast(next_idx)));
         self.focused_on_header = true;
         self.dirty = true;
     }
 
     fn prevSectionHeader(self: *Self) void {
         const current: u8 = @intFromEnum(self.active_section);
-        const prev_idx: u8 = (current + 2) % 3; // +2 mod 3 == -1 mod 3
-        self.active_section = @enumFromInt(@as(u2, @intCast(prev_idx)));
+        const prev_idx: u8 = (current + 3) % 4; // +3 mod 4 == -1 mod 4
+        self.active_section = @enumFromInt(@as(u3, @intCast(prev_idx)));
         self.focused_on_header = true;
         self.dirty = true;
     }
@@ -1797,6 +1931,9 @@ pub const Menu = struct {
                         } };
                     }
                 }
+            },
+            .collab_entry => {
+                // Collab entries are informational; actions are via 's' and 'd' keys
             },
         }
     }
@@ -1865,6 +2002,8 @@ pub const Menu = struct {
                 self.dirty = true;
             }
         }
+        // Refresh collab section to show live peer updates
+        self.buildCollabSection();
         return animating;
     }
 
@@ -1878,30 +2017,29 @@ pub const Menu = struct {
         end_row: u32, // One past the last row
     };
 
-    /// Compute the row layout for all 3 sections.
-    /// Returns [3]SectionLayout.
+    /// Compute the row layout for all 4 sections.
+    /// Returns [4]SectionLayout.
     /// Row 0 is the title bar. Sections start at row 1.
     /// When a section is expanded, it gets all usable rows; others get 0.
-    fn computeLayout(self: *const Self, total_rows: u32) [3]SectionLayout {
+    fn computeLayout(self: *const Self, total_rows: u32) [4]SectionLayout {
         // Row 0 = title bar (or search bar)
-        // Last row = hint bar
-        // Remaining rows divided among sections
-        const reserved = @as(u32, 2); // title + hints
+        // Remaining rows divided among sections (no hint bar)
+        const reserved = @as(u32, 1); // title only
         const usable = if (total_rows > reserved) total_rows - reserved else 0;
 
         if (self.expanded_section) |expanded| {
             // Expanded mode: the expanded section gets all rows,
             // collapsed sections get header-only (1 row each)
             const collapsed_header_rows: u32 = 1;
-            const collapsed_total: u32 = collapsed_header_rows * 2; // 2 collapsed sections
+            const collapsed_total: u32 = collapsed_header_rows * 3; // 3 collapsed sections
             const expanded_rows: u32 = if (usable > collapsed_total) usable - collapsed_total else 1;
 
-            var section_rows = [3]u32{ collapsed_header_rows, collapsed_header_rows, collapsed_header_rows };
+            var section_rows = [4]u32{ collapsed_header_rows, collapsed_header_rows, collapsed_header_rows, collapsed_header_rows };
             section_rows[@intFromEnum(expanded)] = expanded_rows;
 
             var start: u32 = 1; // after title bar
-            var result: [3]SectionLayout = undefined;
-            for (0..3) |si| {
+            var result: [4]SectionLayout = undefined;
+            for (0..4) |si| {
                 const rows_for = section_rows[si];
                 result[si] = .{
                     .start_row = start,
@@ -1915,35 +2053,39 @@ pub const Menu = struct {
             return result;
         }
 
-        // Normal mode: Favorites ~25%, Recent ~25%, Files ~50%
-        // Each section needs at least 3 rows (header + separator line + 1 content row)
-        const min_section_rows: u32 = 3;
+        // Normal mode: Favorites ~20%, Recent ~20%, Files ~40%, Collab ~20%
+        // Each section needs at least 2 rows (header + 1 content row)
+        const min_section_rows: u32 = 2;
 
-        var fav_rows: u32 = @max(min_section_rows, usable * 25 / 100);
-        var recent_rows: u32 = @max(min_section_rows, usable * 25 / 100);
-        var files_rows: u32 = if (usable > fav_rows + recent_rows) usable - fav_rows - recent_rows else min_section_rows;
+        var fav_rows: u32 = @max(min_section_rows, usable * 20 / 100);
+        var recent_rows: u32 = @max(min_section_rows, usable * 20 / 100);
+        var collab_rows: u32 = @max(min_section_rows, usable * 20 / 100);
+        const used = fav_rows + recent_rows + collab_rows;
+        var files_rows: u32 = if (usable > used) usable - used else min_section_rows;
 
         // Ensure total doesn't exceed usable
-        const total_section = fav_rows + recent_rows + files_rows;
-        if (total_section > usable and usable >= min_section_rows * 3) {
-            files_rows = usable - fav_rows - recent_rows;
-        } else if (usable < min_section_rows * 3) {
+        const total_section = fav_rows + recent_rows + files_rows + collab_rows;
+        if (total_section > usable and usable >= min_section_rows * 4) {
+            files_rows = usable - fav_rows - recent_rows - collab_rows;
+        } else if (usable < min_section_rows * 4) {
             // Very small panel, give equal share
-            const per = usable / 3;
+            const per = usable / 4;
             fav_rows = per;
             recent_rows = per;
-            files_rows = usable - per * 2;
+            collab_rows = per;
+            files_rows = usable - per * 3;
         }
 
         const fav_start: u32 = 1; // after title
         const recent_start: u32 = fav_start + fav_rows;
         const files_start: u32 = recent_start + recent_rows;
+        const collab_start: u32 = files_start + files_rows;
 
         return .{
             .{
                 .start_row = fav_start,
                 .header_row = fav_start,
-                .content_start = fav_start + 1, // 1 row for header
+                .content_start = fav_start + 1,
                 .content_rows = if (fav_rows > 1) fav_rows - 1 else 0,
                 .end_row = recent_start,
             },
@@ -1959,7 +2101,14 @@ pub const Menu = struct {
                 .header_row = files_start,
                 .content_start = files_start + 1,
                 .content_rows = if (files_rows > 1) files_rows - 1 else 0,
-                .end_row = files_start + files_rows,
+                .end_row = collab_start,
+            },
+            .{
+                .start_row = collab_start,
+                .header_row = collab_start,
+                .content_start = collab_start + 1,
+                .content_rows = if (collab_rows > 1) collab_rows - 1 else 0,
+                .end_row = collab_start + collab_rows,
             },
         };
     }
@@ -1992,9 +2141,10 @@ pub const Menu = struct {
         self.sections[0].visible_rows = layout[0].content_rows;
         self.sections[1].visible_rows = layout[1].content_rows;
         self.sections[2].visible_rows = layout[2].content_rows;
+        self.sections[3].visible_rows = layout[3].content_rows;
 
         // Render each section
-        const section_info = [3]struct {
+        const section_info = [4]struct {
             section: Section,
             title: []const u8,
             icon: []const u8,
@@ -2003,6 +2153,7 @@ pub const Menu = struct {
             .{ .section = .favorites, .title = "Favorites", .icon = icons.favorites, .icon_color = t.yellow },
             .{ .section = .recent, .title = "Recent Commands", .icon = icons.recent, .icon_color = t.mauve },
             .{ .section = .files, .title = "Files", .icon = icons.files, .icon_color = t.accent },
+            .{ .section = .collab, .title = "Collab", .icon = icons.collab, .icon_color = t.green },
         };
 
         for (section_info, 0..) |info, si| {
@@ -2035,14 +2186,9 @@ pub const Menu = struct {
             }
 
             // Draw a subtle bottom border for this section (except the last)
-            if (si < 2 and lay.content_rows > 0) {
+            if (si < 3 and lay.content_rows > 0) {
                 self.renderSectionBorder(panel, lay.end_row -| 1, cols);
             }
-        }
-
-        // Hint bar at bottom row
-        if (rows > 2) {
-            self.renderHintBar(panel, rows - 1, cols);
         }
 
         panel.dirty = true;
@@ -2353,6 +2499,7 @@ pub const Menu = struct {
                 switch (item.kind) {
                     .favorite_command, .recent_command => renderCommandItem(panel, panel_row, cols, item, is_selected, t),
                     .file_entry => renderFileEntry(panel, panel_row, cols, item, is_selected, t),
+                    .collab_entry => renderCommandItem(panel, panel_row, cols, item, is_selected, t),
                 }
                 draw_row += 1;
             }
@@ -2388,6 +2535,9 @@ pub const Menu = struct {
                 },
                 .file_entry => {
                     renderFileEntry(panel, panel_row, cols, item, is_selected, t);
+                },
+                .collab_entry => {
+                    renderCommandItem(panel, panel_row, cols, item, is_selected, t);
                 },
             }
 

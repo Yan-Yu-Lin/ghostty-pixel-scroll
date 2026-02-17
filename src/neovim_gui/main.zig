@@ -778,7 +778,7 @@ pub const NeovimGui = struct {
         const timestamp = std.time.timestamp();
         var prng = std.Random.DefaultPrng.init(@bitCast(timestamp));
         const random = prng.random().int(u32);
-        return std.fmt.allocPrintZ(self.alloc, "{s}/ghostty-nvim-{d}-{d}.sock", .{ dir, timestamp, random });
+        return std.fmt.allocPrintSentinel(self.alloc, 0, "{s}/ghostty-nvim-{d}-{d}.sock", .{ dir, timestamp, random });
     }
 
     /// Process pending Neovim events. Called from render thread, non-blocking.

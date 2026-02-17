@@ -190,10 +190,18 @@ pub const NeovimGui = struct {
         if (self.io) |io| io.deinit();
 
         // Kill the spawned nvim process (socket mode) to prevent orphans.
+        // Use SIGKILL directly because nvim may trap/ignore SIGTERM.
         if (self.spawned_child) |*child| {
-            _ = child.kill() catch {};
-            _ = child.wait() catch {};
+            log.info("killing spawned nvim child (pid={})", .{child.id});
+            // Send SIGKILL — nvim traps SIGTERM and may not exit promptly.
+            std.posix.kill(child.id, std.posix.SIG.KILL) catch |err| {
+                log.warn("failed to SIGKILL nvim child: {}", .{err});
+            };
+            _ = child.wait() catch |err| {
+                log.warn("failed to wait on nvim child: {}", .{err});
+            };
             self.spawned_child = null;
+            log.info("nvim child cleaned up", .{});
         }
 
         for (self.local_events.items) |*event| event.deinit(self.alloc);

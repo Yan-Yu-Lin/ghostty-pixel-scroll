@@ -760,6 +760,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     @as(f32, 0.3) // Match Neovide's default scroll_animation_length (0.3s)
                 else
                     config.@"scroll-animation-duration";
+                const text_contrast = if (nvim_active and config.@"text-contrast" == 0)
+                    @as(f32, 0.5) // Match Neovide default renderer text_contrast
+                else
+                    config.@"text-contrast";
                 const corner_radius = config.@"neovim-corner-radius";
 
                 return .{
@@ -768,7 +772,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .font_thicken = config.@"font-thicken",
                     .pixel_scroll = config.@"pixel-scroll",
                     .text_gamma = config.@"text-gamma",
-                    .text_contrast = @max(0, @min(1, config.@"text-contrast")),
+                    .text_contrast = @max(0, @min(1, text_contrast)),
                     .cursor_animation_duration = cursor_dur,
                     .cursor_animation_bounciness = config.@"cursor-animation-bounciness",
                     .scroll_animation_duration = scroll_dur,

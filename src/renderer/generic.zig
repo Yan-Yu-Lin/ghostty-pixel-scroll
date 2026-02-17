@@ -2534,7 +2534,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const win_opacity: u8 = @intFromFloat(std.math.clamp(window.opacity * 255.0, 0.0, 255.0));
                 const scroll_offset = window.scroll_pixel_offset;
                 const bg_offset_fixed: i16 = @intFromFloat(std.math.clamp(scroll_offset * 256.0, -32768.0, 32767.0));
-                const is_scrolling = (window.has_scroll_animation and window.scroll_raw_offset != 0);
+                // Neovide always keeps one extra scroll row available for scrollable windows.
+                // If we only enable it when sub-pixel offset is non-zero, held key-scroll
+                // can show tiny step boundaries at integer crossings.
+                const is_scrolling = (window.has_scroll_animation and !is_float);
                 const inner_size = render_height -| window.margin_top -| window.margin_bottom;
 
                 // --- Top margin (winbar etc) — no scroll, no occlusion ---

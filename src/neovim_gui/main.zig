@@ -319,7 +319,7 @@ pub const NeovimGui = struct {
                 argv_buf[i] = @ptrCast(arg.ptr);
             }
             const envp: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
-            _ = std.posix.execvpeZ(@ptrCast(args[0].ptr), &argv_buf, envp);
+            std.posix.execvpeZ(@ptrCast(args[0].ptr), &argv_buf, envp) catch {};
             std.posix.exit(1);
         }
         // === PARENT PROCESS ===

@@ -1883,16 +1883,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             var step: u32 = 0;
             while (step < num_steps) : (step += 1) {
-                var any_animating = false;
-                {
-                    var window_iter = nvim.windows.valueIterator();
-                    while (window_iter.next()) |window_ptr| {
-                        if (window_ptr.*.animate(dt, nvim_scroll_dur)) {
-                            any_animating = true;
-                        }
-                    }
-                }
-                self.scroll_animating = any_animating;
+                self.scroll_animating = nvim.animate(dt, nvim_scroll_dur);
 
                 // Update cursor animations (Neovide-style)
                 // MUST be in same timing as scroll to stay in sync

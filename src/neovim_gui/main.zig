@@ -1352,12 +1352,13 @@ pub const NeovimGui = struct {
         self.dirty = true;
     }
 
-    /// Animate all windows, returns true if any window is still animating
-    pub fn animate(self: *Self, dt: f32) bool {
+    /// Animate all windows, returns true if any window is still animating.
+    /// scroll_duration: config's scroll-animation-duration. 0 = use window default (0.3s).
+    pub fn animate(self: *Self, dt: f32, scroll_duration: f32) bool {
         var animating = false;
         var it = self.windows.valueIterator();
         while (it.next()) |window_ptr| {
-            if (window_ptr.*.animate(dt)) {
+            if (window_ptr.*.animate(dt, scroll_duration)) {
                 animating = true;
             }
         }

@@ -234,6 +234,9 @@ pub const ViewportMargins = struct {
 
 /// Scroll animation settings
 pub const ScrollSettings = struct {
+    /// Default spring length for smooth scrolling (matches Neovide default).
+    scroll_animation_length: f32 = 0.3,
+
     /// For "far" scrolls (> viewport), animate this many lines of content
     /// sliding in. Matches Neovide's scroll_animation_far_lines (default 1).
     /// Small values (1-3) give a tight, perceptible whoosh on big jumps
@@ -999,7 +1002,10 @@ pub const RenderedWindow = struct {
         // naturally accelerates at the start and decelerates at the end, which
         // produces the smooth visible scroll animation for both small and large
         // jumps (:1, gg, G, 100j, etc.).
-        const anim_length = if (scroll_duration > 0) scroll_duration else 0.0;
+        const anim_length = if (scroll_duration > 0)
+            scroll_duration
+        else
+            self.scroll_settings.scroll_animation_length;
 
         if (self.scroll_animation.update(dt, anim_length, 0)) {
             animating = true;

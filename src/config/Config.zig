@@ -961,9 +961,9 @@ palette: Palette = .{},
 /// The duration of the scroll animation in seconds. 0 = no animation (instant).
 /// When enabled, content arrival (new output) and scroll events animate
 /// smoothly using a critically damped spring (matching Neovide's formula).
-/// Recommended: 0.15-0.3 for a smooth feel.
+/// Default: 0.3 (matches Neovide).
 /// When neovim-gui is active and this is 0, defaults to 0.3 automatically.
-@"scroll-animation-duration": f32 = 0.15,
+@"scroll-animation-duration": f32 = 0.3,
 
 /// The bounciness of the scroll animation (0.0 to 1.0).
 /// 0 = critically damped (no overshoot, fastest settling).

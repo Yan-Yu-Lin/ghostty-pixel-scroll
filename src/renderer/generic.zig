@@ -2651,8 +2651,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 }
                             }
 
-                            // Text
-                            if (!skip_text and (owns_cell or is_extra)) {
+                            // Text — for the extra animation row, only emit when
+                            // scroll_offset != 0. At offset 0 the shader clipping
+                            // gate (pixel_offset_y != 0) won't fire, so the glyph
+                            // would render on top of the statusline.
+                            if (!skip_text and (owns_cell or (is_extra and scroll_offset != 0))) {
                                 if (cell_text.len > 0) {
                                     const eff_offset: f32 = if (is_float) 0 else scroll_offset;
                                     self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};

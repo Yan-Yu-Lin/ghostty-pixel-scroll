@@ -3779,6 +3779,21 @@ pub fn keyCallback(
                             // Rebuild collab section to show updated state
                             menu.buildCollabSection();
                         },
+                        .copy_to_clipboard => |text| {
+                            menu.pending_action = null;
+                            const duped = self.alloc.dupeZ(u8, text) catch {
+                                log.err("panel: clipboard alloc failed", .{});
+                                return .consumed;
+                            };
+                            defer self.alloc.free(duped);
+                            log.info("panel: copied to clipboard: {s}", .{duped});
+                            self.rt_surface.setClipboard(.standard, &.{.{
+                                .mime = "text/plain",
+                                .data = duped,
+                            }}, false) catch |err| {
+                                log.err("panel: clipboard copy failed: {}", .{err});
+                            };
+                        },
                         else => {},
                     }
                 }

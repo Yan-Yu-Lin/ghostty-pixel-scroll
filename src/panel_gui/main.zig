@@ -392,6 +392,10 @@ pub const PanelGui = struct {
                                 // Surface layer reads this and handles it.
                                 clear_action = false;
                             },
+                            .copy_to_clipboard => {
+                                // Surface layer reads this and handles it.
+                                clear_action = false;
+                            },
                         }
                         if (clear_action) {
                             menu.pending_action = null;

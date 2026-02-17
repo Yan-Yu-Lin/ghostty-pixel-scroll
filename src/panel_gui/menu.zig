@@ -336,6 +336,10 @@ pub const Menu = struct {
     /// Action requested by the menu (checked by PanelGui after key handling)
     pending_action: ?Action = null,
 
+    /// Cached collab join code for clipboard copy
+    collab_join_code_buf: [64]u8 = undefined,
+    collab_join_code_len: u8 = 0,
+
     /// File explorer state
     file_tree_root: []const u8 = "",
     /// Expanded directory paths (tracks which dirs are open in the tree)
@@ -378,6 +382,8 @@ pub const Menu = struct {
         collab_start_share,
         /// Stop/disconnect the collab session
         collab_disconnect,
+        /// Copy text to system clipboard
+        copy_to_clipboard: []const u8,
     };
 
     pub fn init(alloc: Allocator) !*Self {
@@ -702,9 +708,23 @@ pub const Menu = struct {
                 .icon_color = self.theme.green,
             }) catch {};
 
-            // Show share code for host
+            // Show share code for host (copyable)
             if (state.role == .host) {
-                if (state.server) |server| {
+                var join_buf: [64]u8 = undefined;
+                const join_len = state.getJoinCode(&join_buf);
+                if (join_len > 0) {
+                    var code_label: [80]u8 = undefined;
+                    const code_str = std.fmt.bufPrint(&code_label, "Join: {s}", .{join_buf[0..join_len]}) catch "Join: ?";
+                    sec.items.append(self.alloc, .{
+                        .kind = .collab_entry,
+                        .label = code_str,
+                        .icon = "\u{f0c5}", // nf-fa-copy
+                        .icon_color = self.theme.accent,
+                    }) catch {};
+                    // Store the join code for clipboard copy
+                    @memcpy(self.collab_join_code_buf[0..join_len], join_buf[0..join_len]);
+                    self.collab_join_code_len = join_len;
+                } else if (state.server) |server| {
                     var port_buf: [32]u8 = undefined;
                     const port_str = std.fmt.bufPrint(&port_buf, "Port: {d}", .{server.port}) catch "Port: ?";
                     sec.items.append(self.alloc, .{
@@ -714,6 +734,13 @@ pub const Menu = struct {
                         .icon_color = self.theme.accent,
                     }) catch {};
                 }
+            } else if (state.role == .guest) {
+                sec.items.append(self.alloc, .{
+                    .kind = .collab_entry,
+                    .label = "Cursors synced live",
+                    .icon = "\u{f021}", // nf-fa-refresh
+                    .icon_color = self.theme.accent,
+                }) catch {};
             }
 
             // Show connected peers
@@ -1933,7 +1960,12 @@ pub const Menu = struct {
                 }
             },
             .collab_entry => {
-                // Collab entries are informational; actions are via 's' and 'd' keys
+                // Enter on the join code row copies it to clipboard
+                if (self.collab_join_code_len > 0 and
+                    std.mem.startsWith(u8, item.label, "Join:"))
+                {
+                    self.pending_action = .{ .copy_to_clipboard = self.collab_join_code_buf[0..self.collab_join_code_len] };
+                }
             },
         }
     }
@@ -2234,6 +2266,7 @@ pub const Menu = struct {
             .favorites => " j/k:nav  enter:run  f:unfav  h:back  /:search",
             .recent => " j/k:nav  enter:run  f:fav  h:back  /:search",
             .files => " j/k:nav  o:open  h:back/up  r:refresh  /:search",
+            .collab => " s:share  d:disconnect  enter:copy code",
         };
 
         var col: u32 = 0;

@@ -3302,10 +3302,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             switch (panel.position) {
                 .right => {
-                    // Thin vertical separator on the left edge of the panel
+                    // Thin vertical separator on the left edge of the panel.
+                    // Force the bg to panel default so selection highlights don't bleed.
                     if (grid_start_col < self.cells.size.columns) {
                         var r: u16 = grid_start_row;
                         while (r < grid_end_row) : (r += 1) {
+                            self.cells.bgCell(r, grid_start_col).* = .{
+                                .color = .{ panel_bg_r, panel_bg_g, panel_bg_b, 255 },
+                                .offset_y_fixed = 0,
+                            };
                             self.addPanelGlyph(grid_start_col, r, "\u{2502}", border_rgb, false, false, false) catch {};
                         }
                     }
@@ -3316,6 +3321,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     if (edge_col < self.cells.size.columns) {
                         var r: u16 = grid_start_row;
                         while (r < grid_end_row) : (r += 1) {
+                            self.cells.bgCell(r, edge_col).* = .{
+                                .color = .{ panel_bg_r, panel_bg_g, panel_bg_b, 255 },
+                                .offset_y_fixed = 0,
+                            };
                             self.addPanelGlyph(edge_col, r, "\u{2502}", border_rgb, false, false, false) catch {};
                         }
                     }
@@ -3325,6 +3334,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     if (grid_start_row < self.cells.size.rows) {
                         var c: u16 = grid_start_col;
                         while (c < grid_end_col) : (c += 1) {
+                            self.cells.bgCell(grid_start_row, c).* = .{
+                                .color = .{ panel_bg_r, panel_bg_g, panel_bg_b, 255 },
+                                .offset_y_fixed = 0,
+                            };
                             self.addPanelGlyph(c, grid_start_row, "\u{2500}", border_rgb, false, false, false) catch {};
                         }
                     }
@@ -3335,6 +3348,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     if (edge_row < self.cells.size.rows) {
                         var c: u16 = grid_start_col;
                         while (c < grid_end_col) : (c += 1) {
+                            self.cells.bgCell(edge_row, c).* = .{
+                                .color = .{ panel_bg_r, panel_bg_g, panel_bg_b, 255 },
+                                .offset_y_fixed = 0,
+                            };
                             self.addPanelGlyph(c, edge_row, "\u{2500}", border_rgb, false, false, false) catch {};
                         }
                     }

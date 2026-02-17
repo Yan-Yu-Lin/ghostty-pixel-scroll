@@ -291,7 +291,7 @@ pub const Event = union(enum) {
         curline: u64,
         curcol: u64,
         line_count: u64,
-        scroll_delta: i64,
+        scroll_delta: f64,
     };
 
     /// Message/cmdline area position
@@ -1584,7 +1584,7 @@ pub const IoThread = struct {
             }
         } else if (std.mem.eql(u8, name, "win_viewport")) {
             if (args.len >= 8) {
-                const scroll_delta = extractI64(args[7]) orelse 0;
+                const scroll_delta = extractF64(args[7]) orelse 0;
                 const grid = extractU64(args[0]) orelse return;
                 if (scroll_delta != 0) {
                     log.debug("win_viewport: grid={} scroll_delta={}", .{ grid, scroll_delta });
@@ -2416,6 +2416,15 @@ fn extractI64(val: Payload) ?i64 {
     return switch (val) {
         .int => |v| v,
         .uint => |v| @intCast(v),
+        else => null,
+    };
+}
+
+fn extractF64(val: Payload) ?f64 {
+    return switch (val) {
+        .float => |v| v,
+        .uint => |v| @floatFromInt(v),
+        .int => |v| @floatFromInt(v),
         else => null,
     };
 }

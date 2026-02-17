@@ -663,17 +663,17 @@ pub const RenderedWindow = struct {
         };
     }
 
-    /// Handle win_viewport event - sets scroll_delta for animation (like Neovide)
-    /// IMPORTANT: Only set scroll_delta when non-zero! Neovim sends multiple win_viewport
-    /// events per scroll - one with the actual delta, then one with delta=0 to "confirm".
-    /// If we blindly accept 0, it overwrites the real delta before flush() processes it.
-    /// This matches Neovide's behavior of using Option<i64> and only acting on Some values.
-    pub fn setViewport(self: *Self, topline: u64, botline: u64, scroll_delta: i64) void {
+    /// Handle win_viewport event - accumulates scroll_delta for animation (like Neovide).
+    /// IMPORTANT: Ignore zero/near-zero deltas. Neovim may emit a follow-up viewport
+    /// event with no effective movement; accepting it would wipe the pending delta.
+    pub fn setViewport(self: *Self, topline: u64, botline: u64, scroll_delta: f64) void {
         _ = botline;
         self.topline = topline;
-        // Only set scroll_delta when non-zero - ignore the "confirmation" events with delta=0
-        if (scroll_delta != 0) {
-            self.scroll_delta = @intCast(scroll_delta);
+        const rounded: isize = @intFromFloat(@round(scroll_delta));
+        if (rounded != 0) {
+            // Accumulate deltas until flush. This avoids losing repeated key-scroll
+            // steps when multiple win_viewport events arrive in one batch.
+            self.scroll_delta += rounded;
             self.has_scrolled = true; // Mark that this window can scroll
         }
     }

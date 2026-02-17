@@ -1,7 +1,7 @@
 # Agent Development Guide
 
 A file for [guiding coding agents](https://agents.md/).
- ffffff
+
 ## Commands
 
 - **Build:** `zig build`

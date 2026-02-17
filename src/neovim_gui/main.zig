@@ -36,9 +36,10 @@ pub const NeovimGui = struct {
     /// I/O thread for async Neovim communication
     io: ?*IoThread = null,
 
-    /// Spawned Neovim child process (socket mode only).
-    /// Stored so we can kill it on deinit — prevents orphaned headless nvim.
-    spawned_child: ?std.process.Child = null,
+    /// Spawned Neovim child PID (socket mode only).
+    /// Stored so we can kill it on deinit. The child also has PR_SET_PDEATHSIG
+    /// so it dies automatically if Ghostty is force-killed.
+    spawned_child_pid: ?std.posix.pid_t = null,
 
     /// Event queue (shared with I/O thread)
     event_queue: EventQueue,
@@ -190,18 +191,11 @@ pub const NeovimGui = struct {
         if (self.io) |io| io.deinit();
 
         // Kill the spawned nvim process (socket mode) to prevent orphans.
-        // Use SIGKILL directly because nvim may trap/ignore SIGTERM.
-        if (self.spawned_child) |*child| {
-            log.info("killing spawned nvim child (pid={})", .{child.id});
-            // Send SIGKILL — nvim traps SIGTERM and may not exit promptly.
-            std.posix.kill(child.id, std.posix.SIG.KILL) catch |err| {
-                log.warn("failed to SIGKILL nvim child: {}", .{err});
-            };
-            _ = child.wait() catch |err| {
-                log.warn("failed to wait on nvim child: {}", .{err});
-            };
-            self.spawned_child = null;
-            log.info("nvim child cleaned up", .{});
+        if (self.spawned_child_pid) |pid| {
+            log.info("killing spawned nvim child (pid={})", .{pid});
+            std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+            _ = std.posix.waitpid(pid, 0);
+            self.spawned_child_pid = null;
         }
 
         for (self.local_events.items) |*event| event.deinit(self.alloc);
@@ -296,13 +290,40 @@ pub const NeovimGui = struct {
             break :blk &.{ "nvim", "--headless", "--listen", socket_path };
         } else &.{ "nvim", "--headless", "--listen", socket_path };
 
-        var child = std.process.Child.init(args, self.alloc);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-        child.cwd = cwd;
-        try child.spawn();
-        self.spawned_child = child;
+        // Spawn nvim using manual fork/exec so we can call prctl(PR_SET_PDEATHSIG)
+        // in the child before exec. This ensures nvim gets SIGKILL when Ghostty
+        // dies (e.g. compositor force-kills the window with super+w).
+        const pid = try std.posix.fork();
+        if (pid == 0) {
+            // === CHILD PROCESS ===
+            // Set death signal: when parent (Ghostty) dies, kernel sends SIGKILL to us.
+            // PR_SET_PDEATHSIG = 1, SIG.KILL = 9
+            _ = std.os.linux.prctl(1, 9, 0, 0, 0);
+
+            // Redirect stdin/stdout/stderr to /dev/null
+            if (std.posix.open("/dev/null", .{ .ACCMODE = .RDWR }, 0)) |devnull| {
+                std.posix.dup2(devnull, 0) catch {};
+                std.posix.dup2(devnull, 1) catch {};
+                std.posix.dup2(devnull, 2) catch {};
+                if (devnull > 2) std.posix.close(devnull);
+            } else |_| {}
+
+            // Change working directory
+            if (cwd) |d| std.posix.chdir(d) catch {};
+
+            // exec nvim - use execvpeZ with null-terminated argv.
+            // All args are string literals so .ptr is already [*:0]const u8.
+            var argv_buf: [8:null]?[*:0]const u8 = .{null} ** 8;
+            for (args, 0..) |arg, i| {
+                if (i >= 8) break;
+                argv_buf[i] = @ptrCast(arg.ptr);
+            }
+            const envp: [*:null]const ?[*:0]const u8 = @ptrCast(std.c.environ);
+            _ = std.posix.execvpeZ(@ptrCast(args[0].ptr), &argv_buf, envp);
+            std.posix.exit(1);
+        }
+        // === PARENT PROCESS ===
+        self.spawned_child_pid = pid;
 
         // Poll until the socket appears (Neovim needs a moment to start)
         var attempts: u32 = 0;
@@ -312,11 +333,11 @@ pub const NeovimGui = struct {
         }
         if (attempts >= 100) {
             log.err("timed out waiting for Neovim socket", .{});
-            if (self.spawned_child) |*c| {
-                _ = c.kill() catch {};
-                _ = c.wait() catch {};
+            if (self.spawned_child_pid) |p| {
+                std.posix.kill(p, std.posix.SIG.KILL) catch {};
+                _ = std.posix.waitpid(p, 0);
             }
-            self.spawned_child = null;
+            self.spawned_child_pid = null;
             return error.SocketTimeout;
         }
 
@@ -750,14 +771,14 @@ pub const NeovimGui = struct {
     }
 
     /// Build a unique socket path under XDG_RUNTIME_DIR (or /tmp as fallback).
-    fn makeSocketPath(self: *Self) ![]u8 {
+    fn makeSocketPath(self: *Self) ![:0]u8 {
         const dir = std.posix.getenv("XDG_RUNTIME_DIR") orelse
             std.posix.getenv("TMPDIR") orelse
             "/tmp";
         const timestamp = std.time.timestamp();
         var prng = std.Random.DefaultPrng.init(@bitCast(timestamp));
         const random = prng.random().int(u32);
-        return std.fmt.allocPrint(self.alloc, "{s}/ghostty-nvim-{d}-{d}.sock", .{ dir, timestamp, random });
+        return std.fmt.allocPrintZ(self.alloc, "{s}/ghostty-nvim-{d}-{d}.sock", .{ dir, timestamp, random });
     }
 
     /// Process pending Neovim events. Called from render thread, non-blocking.

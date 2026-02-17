@@ -532,11 +532,13 @@ pub const PanelGui = struct {
             .left, .right => {
                 const panel_width_px = self.surface_width * self.size_fraction;
                 self.grid_cols = @intFromFloat(@max(1, @floor(panel_width_px / self.cell_width)));
-                self.grid_rows = @intFromFloat(@max(1, @floor(self.surface_height / self.cell_height)));
+                // Use @ceil so the panel's content grid covers the full height
+                // without leaving a gap at the bottom.
+                self.grid_rows = @intFromFloat(@max(1, @ceil(self.surface_height / self.cell_height)));
             },
             .top, .bottom => {
                 const panel_height_px = self.surface_height * self.size_fraction;
-                self.grid_cols = @intFromFloat(@max(1, @floor(self.surface_width / self.cell_width)));
+                self.grid_cols = @intFromFloat(@max(1, @ceil(self.surface_width / self.cell_width)));
                 self.grid_rows = @intFromFloat(@max(1, @floor(panel_height_px / self.cell_height)));
             },
         }

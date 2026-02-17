@@ -319,6 +319,12 @@ pub const RenderedWindow = struct {
     /// Fixed rows/cols at edges (winbar, borders, etc.)
     viewport_margins: ViewportMargins = .{},
 
+    /// Whether viewport_margins.top was set by the highlight-based fallback
+    /// detection (not by an explicit win_viewport_margins event from Neovim).
+    /// When true, flush() is allowed to reset margins.top back to 0 if the
+    /// winbar highlight disappears (e.g., switching to a buffer without breadcrumbs).
+    margins_top_from_fallback: bool = false,
+
     /// Whether this window is external (separate OS window)
     is_external: bool = false,
 
@@ -528,6 +534,12 @@ pub const RenderedWindow = struct {
         }
         self.scroll_delta = 0;
         self.scroll_animation.reset();
+        // Reset fallback-originated margins so stale winbar margin doesn't persist
+        // across buffer switches on a reused grid.
+        if (self.margins_top_from_fallback) {
+            self.viewport_margins.top = 0;
+            self.margins_top_from_fallback = false;
+        }
         self.dirty = true;
     }
 
@@ -783,10 +795,15 @@ pub const RenderedWindow = struct {
         if (!self.valid) return;
         if (self.actual_lines == null or self.scrollback_lines == null) return;
 
-        // Fallback: If margin_top is 0 but row 0 has WinBar highlight, force margin_top=1.
+        // Fallback winbar detection: inspect row 0's highlight to detect or clear winbar margin.
         // This handles cases where Neovim fails to send win_viewport_margins (e.g. reused grid race).
         // Without this, the winbar is treated as scrollable content and bounces/stretches during scroll.
-        if (self.viewport_margins.top == 0 and self.grid_height > 1 and (winbar_hl_id != null or winbar_nc_hl_id != null)) {
+        //
+        // Also handles the REVERSE case: when a buffer with a winbar is closed and the grid is
+        // reused for a buffer without a winbar, the stale margin_top=1 persists (clear() doesn't
+        // reset margins). We detect this by checking if row 0 no longer has the WinBar highlight
+        // and reset margin_top back to 0 (only for fallback-originated margins, not explicit ones).
+        if (self.grid_height > 1 and (winbar_hl_id != null or winbar_nc_hl_id != null)) {
             if (self.actual_lines.?.getConst(0)) |line| {
                 // Check first few cells for WinBar highlight
                 const check_limit = @min(line.cells.len, 5);
@@ -802,9 +819,16 @@ pub const RenderedWindow = struct {
                         if (has_winbar) break;
                     }
                 }
-                if (has_winbar) {
+                if (has_winbar and self.viewport_margins.top == 0) {
+                    // Winbar detected but margins say 0 — force margin_top=1
                     self.viewport_margins.top = 1;
-                    // Reset animation since margins changed (implicitly)
+                    self.margins_top_from_fallback = true;
+                    self.scroll_animation.reset();
+                    self.scroll_delta = 0;
+                } else if (!has_winbar and self.viewport_margins.top == 1 and self.margins_top_from_fallback) {
+                    // Winbar gone but stale fallback margin persists — reset to 0
+                    self.viewport_margins.top = 0;
+                    self.margins_top_from_fallback = false;
                     self.scroll_animation.reset();
                     self.scroll_delta = 0;
                 }

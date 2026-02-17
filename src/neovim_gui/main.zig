@@ -1229,6 +1229,10 @@ pub const NeovimGui = struct {
         };
         window.viewport_margins = new_margins;
 
+        // Explicit margins from Neovim override the highlight-based fallback.
+        // Clear the fallback flag so flush() won't interfere with explicit values.
+        window.margins_top_from_fallback = false;
+
         // If margins changed, reset scroll animation immediately.
         // This prevents the winbar/statusline from being treated as scrollable
         // content during the transition (e.g., buffer switch via telescope).

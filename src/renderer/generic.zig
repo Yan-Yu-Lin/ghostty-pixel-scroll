@@ -3177,13 +3177,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             const grid_end_col_f = (rect.x + rect.w - pad_left) / cell_w;
             const grid_end_row_f = (rect.y + rect.h - pad_top) / cell_h;
+            // Use @ceil so partial rows/cols at the panel edge are included,
+            // preventing a gap at the bottom/right. Clamped to grid bounds.
             const grid_end_col: u16 = @intFromFloat(@max(0, @min(
                 max_col,
-                @floor(grid_end_col_f),
+                @ceil(grid_end_col_f),
             )));
             const grid_end_row: u16 = @intFromFloat(@max(0, @min(
                 max_row,
-                @floor(grid_end_row_f),
+                @ceil(grid_end_row_f),
             )));
 
             if (grid_start_col >= grid_end_col or grid_start_row >= grid_end_row) return;
@@ -3247,6 +3249,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         panel_rows,
                         corner_r_cols,
                         corner_r_rows,
+                        panel.position,
                     );
 
                     if (in_corner) {
@@ -3292,61 +3295,47 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
             }
 
-            // Draw a 1-cell-wide border/separator along the panel's inner edge.
-            // Use the panel's dynamic border color (blended from user's bg/fg).
+            // Draw a thin Apple-style separator line along the panel's inner edge.
+            // We render a thin box-drawing character (│ or ─) as a foreground glyph
+            // on top of the panel background, giving a subtle 1-2px hairline separator.
             const border_rgb = panel.border_color;
-            const border_color_r: u8 = @intCast((border_rgb >> 16) & 0xFF);
-            const border_color_g: u8 = @intCast((border_rgb >> 8) & 0xFF);
-            const border_color_b: u8 = @intCast(border_rgb & 0xFF);
 
             switch (panel.position) {
                 .right => {
-                    // Vertical border on the left edge of the panel
-                    var r: u16 = grid_start_row;
-                    while (r < grid_end_row) : (r += 1) {
-                        if (grid_start_col < self.cells.size.columns) {
-                            self.cells.bgCell(r, grid_start_col).* = .{
-                                .color = .{ border_color_r, border_color_g, border_color_b, 255 },
-                                .offset_y_fixed = 0,
-                            };
+                    // Thin vertical separator on the left edge of the panel
+                    if (grid_start_col < self.cells.size.columns) {
+                        var r: u16 = grid_start_row;
+                        while (r < grid_end_row) : (r += 1) {
+                            self.addPanelGlyph(grid_start_col, r, "\u{2502}", border_rgb, false, false, false) catch {};
                         }
                     }
                 },
                 .left => {
-                    // Vertical border on the right edge of the panel
+                    // Thin vertical separator on the right edge of the panel
                     const edge_col = grid_end_col -| 1;
-                    var r: u16 = grid_start_row;
-                    while (r < grid_end_row) : (r += 1) {
-                        if (edge_col < self.cells.size.columns) {
-                            self.cells.bgCell(r, edge_col).* = .{
-                                .color = .{ border_color_r, border_color_g, border_color_b, 255 },
-                                .offset_y_fixed = 0,
-                            };
+                    if (edge_col < self.cells.size.columns) {
+                        var r: u16 = grid_start_row;
+                        while (r < grid_end_row) : (r += 1) {
+                            self.addPanelGlyph(edge_col, r, "\u{2502}", border_rgb, false, false, false) catch {};
                         }
                     }
                 },
                 .bottom => {
-                    // Horizontal border on the top edge
+                    // Thin horizontal separator on the top edge
                     if (grid_start_row < self.cells.size.rows) {
                         var c: u16 = grid_start_col;
                         while (c < grid_end_col) : (c += 1) {
-                            self.cells.bgCell(grid_start_row, c).* = .{
-                                .color = .{ border_color_r, border_color_g, border_color_b, 255 },
-                                .offset_y_fixed = 0,
-                            };
+                            self.addPanelGlyph(c, grid_start_row, "\u{2500}", border_rgb, false, false, false) catch {};
                         }
                     }
                 },
                 .top => {
-                    // Horizontal border on the bottom edge
+                    // Thin horizontal separator on the bottom edge
                     const edge_row = grid_end_row -| 1;
                     if (edge_row < self.cells.size.rows) {
                         var c: u16 = grid_start_col;
                         while (c < grid_end_col) : (c += 1) {
-                            self.cells.bgCell(edge_row, c).* = .{
-                                .color = .{ border_color_r, border_color_g, border_color_b, 255 },
-                                .offset_y_fixed = 0,
-                            };
+                            self.addPanelGlyph(c, edge_row, "\u{2500}", border_rgb, false, false, false) catch {};
                         }
                     }
                 },
@@ -3355,6 +3344,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Check if a cell position falls outside the rounded corner arc.
         /// Returns true if the cell should be clipped (corner region).
+        ///
+        /// Only rounds corners on the side facing the terminal content,
+        /// not the side flush against the window edge. For example, a
+        /// right-side panel rounds its top-left and bottom-left corners
+        /// but keeps top-right and bottom-right square (they touch the
+        /// window edge).
         fn isInRoundedCorner(
             self: *const Self,
             col: f32,
@@ -3363,31 +3358,38 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             panel_rows: f32,
             radius_cols: f32,
             radius_rows: f32,
+            position: panel_gui_mod.PanelPosition,
         ) bool {
             _ = self;
             if (radius_cols <= 0 or radius_rows <= 0) return false;
 
-            // Check each corner quadrant
+            // Determine which corners to round based on panel position.
+            // The side touching the window edge stays square.
+            const round_tl = (position == .right or position == .bottom);
+            const round_tr = (position == .left or position == .bottom);
+            const round_bl = (position == .right or position == .top);
+            const round_br = (position == .left or position == .top);
+
             // Top-left
-            if (col < radius_cols and row < radius_rows) {
+            if (round_tl and col < radius_cols and row < radius_rows) {
                 const dx = (radius_cols - col - 0.5) / radius_cols;
                 const dy = (radius_rows - row - 0.5) / radius_rows;
                 if (dx * dx + dy * dy > 1.0) return true;
             }
             // Top-right
-            if (col >= panel_cols - radius_cols and row < radius_rows) {
+            if (round_tr and col >= panel_cols - radius_cols and row < radius_rows) {
                 const dx = (col - (panel_cols - radius_cols) + 0.5) / radius_cols;
                 const dy = (radius_rows - row - 0.5) / radius_rows;
                 if (dx * dx + dy * dy > 1.0) return true;
             }
             // Bottom-left
-            if (col < radius_cols and row >= panel_rows - radius_rows) {
+            if (round_bl and col < radius_cols and row >= panel_rows - radius_rows) {
                 const dx = (radius_cols - col - 0.5) / radius_cols;
                 const dy = (row - (panel_rows - radius_rows) + 0.5) / radius_rows;
                 if (dx * dx + dy * dy > 1.0) return true;
             }
             // Bottom-right
-            if (col >= panel_cols - radius_cols and row >= panel_rows - radius_rows) {
+            if (round_br and col >= panel_cols - radius_cols and row >= panel_rows - radius_rows) {
                 const dx = (col - (panel_cols - radius_cols) + 0.5) / radius_cols;
                 const dy = (row - (panel_rows - radius_rows) + 0.5) / radius_rows;
                 if (dx * dx + dy * dy > 1.0) return true;

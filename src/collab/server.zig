@@ -103,24 +103,57 @@ pub const Server = struct {
         }
     }
 
-    /// Get the join code: token encoded as hex + port
+    /// Get the join code: ip:port for guests to connect.
+    /// Detects the LAN IP so the code works across machines.
     pub fn getJoinCode(self: *const Self, buf: *[64]u8) u8 {
-        // Format: hex(token[0..4]):port  e.g. "a3f9c2d1:7777"
-        const hex_chars = "0123456789abcdef";
-        var pos: u8 = 0;
-        for (self.session_token[0..4]) |b| {
-            buf[pos] = hex_chars[b >> 4];
-            buf[pos + 1] = hex_chars[b & 0x0f];
-            pos += 2;
-        }
-        buf[pos] = ':';
-        pos += 1;
-        // Write port as decimal
-        var port_buf: [5]u8 = undefined;
-        const port_str = std.fmt.bufPrint(&port_buf, "{d}", .{self.port}) catch return 0;
-        @memcpy(buf[pos .. pos + port_str.len], port_str);
-        pos += @intCast(port_str.len);
-        return pos;
+        // Detect LAN IP: create a UDP socket "connected" to 8.8.8.8:53,
+        // then read the local address the kernel chose. No traffic is sent.
+        var ip_str: [16]u8 = undefined;
+        var ip_len: usize = 0;
+
+        const udp_fd = posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0) catch {
+            // Fallback to 127.0.0.1
+            @memcpy(ip_str[0..9], "127.0.0.1");
+            ip_len = 9;
+            return self.formatJoinCode(buf, ip_str[0..ip_len]);
+        };
+        defer posix.close(udp_fd);
+
+        const dest = posix.sockaddr.in{
+            .port = std.mem.nativeToBig(u16, 53),
+            .addr = std.mem.nativeToBig(u32, (8 << 24) | (8 << 16) | (8 << 8) | 8), // 8.8.8.8
+        };
+        posix.connect(udp_fd, @ptrCast(&dest), @sizeOf(posix.sockaddr.in)) catch {
+            @memcpy(ip_str[0..9], "127.0.0.1");
+            ip_len = 9;
+            return self.formatJoinCode(buf, ip_str[0..ip_len]);
+        };
+
+        var local_addr: posix.sockaddr.in = undefined;
+        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
+        posix.getsockname(udp_fd, @ptrCast(&local_addr), &addr_len) catch {
+            @memcpy(ip_str[0..9], "127.0.0.1");
+            ip_len = 9;
+            return self.formatJoinCode(buf, ip_str[0..ip_len]);
+        };
+
+        // Convert the 4-byte address to dotted-decimal string
+        const addr_bytes: [4]u8 = @bitCast(local_addr.addr);
+        const result = std.fmt.bufPrint(&ip_str, "{d}.{d}.{d}.{d}", .{
+            addr_bytes[0], addr_bytes[1], addr_bytes[2], addr_bytes[3],
+        }) catch {
+            @memcpy(ip_str[0..9], "127.0.0.1");
+            ip_len = 9;
+            return self.formatJoinCode(buf, ip_str[0..ip_len]);
+        };
+        ip_len = result.len;
+
+        return self.formatJoinCode(buf, ip_str[0..ip_len]);
+    }
+
+    fn formatJoinCode(self: *const Self, buf: *[64]u8, ip: []const u8) u8 {
+        const result = std.fmt.bufPrint(buf, "{s}:{d}", .{ ip, self.port }) catch return 0;
+        return @intCast(result.len);
     }
 
     fn serverLoop(self: *Self) void {

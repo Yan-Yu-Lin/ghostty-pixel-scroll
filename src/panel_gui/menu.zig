@@ -708,22 +708,23 @@ pub const Menu = struct {
                 .icon_color = self.theme.green,
             }) catch {};
 
-            // Show share code for host (copyable)
+            // Show share code for host (copyable via Enter)
             if (state.role == .host) {
                 var join_buf: [64]u8 = undefined;
                 const join_len = state.getJoinCode(&join_buf);
                 if (join_len > 0) {
+                    // Display: show the address
                     var code_label: [80]u8 = undefined;
-                    const code_str = std.fmt.bufPrint(&code_label, "Join: {s}", .{join_buf[0..join_len]}) catch "Join: ?";
+                    const code_str = std.fmt.bufPrint(&code_label, "{s}", .{join_buf[0..join_len]}) catch "?";
                     sec.items.append(self.alloc, .{
                         .kind = .collab_entry,
                         .label = code_str,
                         .icon = "\u{f0c5}", // nf-fa-copy
                         .icon_color = self.theme.accent,
                     }) catch {};
-                    // Store the join code for clipboard copy
-                    @memcpy(self.collab_join_code_buf[0..join_len], join_buf[0..join_len]);
-                    self.collab_join_code_len = join_len;
+                    // Store the full ghostty-join command for clipboard copy
+                    const cmd = std.fmt.bufPrint(&self.collab_join_code_buf, "ghostty-join {s}", .{join_buf[0..join_len]}) catch "";
+                    self.collab_join_code_len = @intCast(cmd.len);
                 } else if (state.server) |server| {
                     var port_buf: [32]u8 = undefined;
                     const port_str = std.fmt.bufPrint(&port_buf, "Port: {d}", .{server.port}) catch "Port: ?";
@@ -1960,10 +1961,8 @@ pub const Menu = struct {
                 }
             },
             .collab_entry => {
-                // Enter on the join code row copies it to clipboard
-                if (self.collab_join_code_len > 0 and
-                    std.mem.startsWith(u8, item.label, "Join:"))
-                {
+                // Enter on any collab item with a join code copies it to clipboard
+                if (self.collab_join_code_len > 0) {
                     self.pending_action = .{ .copy_to_clipboard = self.collab_join_code_buf[0..self.collab_join_code_len] };
                 }
             },

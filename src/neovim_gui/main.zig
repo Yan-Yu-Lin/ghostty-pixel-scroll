@@ -36,6 +36,10 @@ pub const NeovimGui = struct {
     /// I/O thread for async Neovim communication
     io: ?*IoThread = null,
 
+    /// Spawned Neovim child process (socket mode only).
+    /// Stored so we can kill it on deinit — prevents orphaned headless nvim.
+    spawned_child: ?std.process.Child = null,
+
     /// Event queue (shared with I/O thread)
     event_queue: EventQueue,
 
@@ -185,6 +189,13 @@ pub const NeovimGui = struct {
     pub fn deinit(self: *Self) void {
         if (self.io) |io| io.deinit();
 
+        // Kill the spawned nvim process (socket mode) to prevent orphans.
+        if (self.spawned_child) |*child| {
+            _ = child.kill() catch {};
+            _ = child.wait() catch {};
+            self.spawned_child = null;
+        }
+
         for (self.local_events.items) |*event| event.deinit(self.alloc);
         self.local_events.deinit(self.alloc);
         self.event_queue.deinit();
@@ -283,6 +294,7 @@ pub const NeovimGui = struct {
         child.stderr_behavior = .Ignore;
         child.cwd = cwd;
         try child.spawn();
+        self.spawned_child = child;
 
         // Poll until the socket appears (Neovim needs a moment to start)
         var attempts: u32 = 0;
@@ -292,7 +304,11 @@ pub const NeovimGui = struct {
         }
         if (attempts >= 100) {
             log.err("timed out waiting for Neovim socket", .{});
-            _ = child.kill() catch {};
+            if (self.spawned_child) |*c| {
+                _ = c.kill() catch {};
+                _ = c.wait() catch {};
+            }
+            self.spawned_child = null;
             return error.SocketTimeout;
         }
 

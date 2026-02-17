@@ -904,6 +904,14 @@ pub fn deinit(self: *Surface) void {
         self.alloc.destroy(v);
     }
 
+    // Clean up collab session (server/client threads + sockets) before nvim
+    if (self.collab_state) |cs| {
+        cs.deinit();
+        self.alloc.destroy(cs);
+        self.collab_state = null;
+        self.renderer_state.collab_state = null;
+    }
+
     // Clean up Neovim GUI if active
     if (self.nvim_gui) |nvim| {
         nvim.deinit();

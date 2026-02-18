@@ -306,7 +306,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         _ ghostty: Ghostty.App,
         tree: SplitTree<Ghostty.SurfaceView>,
         position: NSPoint? = nil,
-        confirmUndo: Bool = true,
+        confirmUndo: Bool = true
     ) -> TerminalController {
         let c = TerminalController.init(ghostty, withSurfaceTree: tree)
 
@@ -1032,7 +1032,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         window.contentView = TerminalViewContainer(
             ghostty: self.ghostty,
             viewModel: self,
-            delegate: self,
+            delegate: self
         )
 
         // If we have a default size, we want to apply it.
@@ -1301,7 +1301,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // attached to the window that needs confirmation.
         confirmController.confirmClose(
             messageText: "Close Window?",
-            informativeText: "All terminal sessions in this window will be terminated.",
+            informativeText: "All terminal sessions in this window will be terminated."
         ) {
             self.closeWindowImmediately()
         }

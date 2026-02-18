@@ -1,5 +1,11 @@
 const c = @import("c.zig").c;
 
+const fallback_30RGB_r210: c_int =
+    (@as(c_int, 'r') << 24) |
+    (@as(c_int, '2') << 16) |
+    (@as(c_int, '1') << 8) |
+    @as(c_int, '0');
+
 pub const PixelFormat = enum(c_int) {
     /// 1 bit indexed
     @"1Monochrome" = c.kCVPixelFormatType_1Monochrome,
@@ -52,7 +58,10 @@ pub const PixelFormat = enum(c_int) {
     /// 30 bit RGB, 10-bit big-endian samples, 2 unused padding bits (at least significant end).
     @"30RGB" = c.kCVPixelFormatType_30RGB,
     /// 30 bit RGB, 10-bit big-endian samples, 2 unused padding bits (at most significant end), video-range (64-940).
-    @"30RGB_r210" = c.kCVPixelFormatType_30RGB_r210,
+    @"30RGB_r210" = if (@hasDecl(c, "kCVPixelFormatType_30RGB_r210"))
+        c.kCVPixelFormatType_30RGB_r210
+    else
+        fallback_30RGB_r210,
     /// Component Y'CbCr 8-bit 4:2:2, ordered Cb Y'0 Cr Y'1
     @"422YpCbCr8" = c.kCVPixelFormatType_422YpCbCr8,
     /// Component Y'CbCrA 8-bit 4:4:4:4, ordered Cb Y' Cr A

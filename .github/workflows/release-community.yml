@@ -85,32 +85,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            blueprint-compiler \
-            build-essential \
-            curl \
-            libadwaita-1-dev \
-            libbz2-dev \
-            libgtk-4-dev \
-            libonig-dev \
-            libxml2-utils \
-            pandoc
-
-      - name: Install Zig
-        run: |
-          ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
-          curl -L -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz"
-          sudo tar -xf /tmp/zig.tar.xz -C /opt
-          sudo ln -sf "/opt/zig-$(uname -m)-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
-          zig version
+      - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Build source tarball
         run: |
           rm -rf zig-out/dist
-          zig build distcheck -Dversion-string=${{ needs.setup.outputs.version }} -fno-sys=gtk4-layer-shell
+          nix develop -c zig build distcheck -Dversion-string=${{ needs.setup.outputs.version }}
           cp "zig-out/dist/ghostty-${{ needs.setup.outputs.version }}.tar.gz" ghostty-source.tar.gz
 
       - name: Upload source tarball
@@ -127,31 +109,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            blueprint-compiler \
-            build-essential \
-            curl \
-            libadwaita-1-dev \
-            libbz2-dev \
-            libgtk-4-dev \
-            libonig-dev \
-            libxml2-utils \
-            pandoc
-
-      - name: Install Zig
-        run: |
-          ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
-          curl -L -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz"
-          sudo tar -xf /tmp/zig.tar.xz -C /opt
-          sudo ln -sf "/opt/zig-$(uname -m)-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
-          zig version
+      - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Build Linux release archive
         run: |
-          zig build -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=${{ needs.setup.outputs.version }} -fno-sys=gtk4-layer-shell
+          nix develop -c zig build -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=${{ needs.setup.outputs.version }}
           tar --create --gzip --file ghostty-linux-x86_64.tar.gz --directory zig-out .
 
       - name: Upload Linux archive
@@ -171,12 +135,16 @@ jobs:
       - name: Install Zig
         run: |
           ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
+          if [[ -z "$ZIG_VERSION" ]]; then
+            echo "Unable to read minimum_zig_version from build.zig.zon"
+            exit 1
+          fi
           case "$(uname -m)" in
             arm64) ZIG_ARCH="aarch64" ;;
             x86_64) ZIG_ARCH="x86_64" ;;
             *) echo "Unsupported macOS architecture: $(uname -m)" && exit 1 ;;
           esac
-          curl -L -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-macos-${ZIG_VERSION}.tar.xz"
+          curl -fL -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-${ZIG_ARCH}-macos-${ZIG_VERSION}.tar.xz"
           sudo tar -xf /tmp/zig.tar.xz -C /opt
           sudo ln -sf "/opt/zig-${ZIG_ARCH}-macos-${ZIG_VERSION}/zig" /usr/local/bin/zig
           zig version
@@ -221,6 +189,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            elfutils \
             flatpak \
             flatpak-builder \
             ostree

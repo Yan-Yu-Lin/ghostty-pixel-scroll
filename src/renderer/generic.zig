@@ -2808,11 +2808,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const last_y = self.last_cursor_grid_pos[1];
             const pos_changed = cursor.screen_col != last_x or cursor.screen_row != last_y;
             const scroll_changed = cursor.scroll_pos != self.last_cursor_scroll_pos;
+            const scroll_only = scroll_changed and !pos_changed;
 
             if (pos_changed or scroll_changed) {
                 if (self.config.cursor_animation_duration > 0) {
                     self.cursor_animation.setTarget(target_px, target_py, cell_width);
-                    self.corner_cursor.setTarget(target_px, target_py, cell_width, cell_height);
+                    if (scroll_only) {
+                        self.corner_cursor.setTargetNoJump(target_px, target_py, cell_width, cell_height);
+                    } else {
+                        self.corner_cursor.setTarget(target_px, target_py, cell_width, cell_height);
+                    }
                     self.cursor_animating = true;
                 } else {
                     self.cursor_animation.target_x = target_px;
@@ -2825,9 +2830,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.last_cursor_grid_pos = .{ cursor.screen_col, cursor.screen_row };
                 self.last_cursor_scroll_pos = cursor.scroll_pos;
 
-                self.cursor_blink_opacity = 1.0;
-                self.cursor_blink_target = 1.0;
-                self.cursor_blink_animating = false;
+                if (pos_changed) {
+                    self.cursor_blink_opacity = 1.0;
+                    self.cursor_blink_target = 1.0;
+                    self.cursor_blink_animating = false;
+                }
             }
 
             // Store Neovim GUI cursor blink state for the smooth blink system

@@ -418,6 +418,20 @@ pub const CornerCursorAnimation = struct {
         self.jumped = true;
     }
 
+    /// Update destination without triggering jump-rank recalculation.
+    /// Used for scroll-only cursor motion so corners stay phase-continuous.
+    pub fn setTargetNoJump(self: *CornerCursorAnimation, x: f32, y: f32, cell_width: f32, cell_height: f32) void {
+        const center_x = x + cell_width * 0.5;
+        const center_y = y + cell_height * 0.5;
+
+        if (self.previous_destination[0] < -500) {
+            self.snap(x, y, cell_width, cell_height);
+            return;
+        }
+
+        self.destination = .{ center_x, center_y };
+    }
+
     /// Update animation - call this every frame.
     /// config_duration: cursor-animation-duration from config. 0 = snap instantly.
     /// Returns true if still animating.

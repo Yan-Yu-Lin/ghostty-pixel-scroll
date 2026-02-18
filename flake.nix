@@ -94,8 +94,9 @@
         ghostty-releasesafe = pkgs.callPackage ./nix/package.nix (mkArgs "ReleaseSafe");
         ghostty-releasefast = pkgs.callPackage ./nix/package.nix (mkArgs "ReleaseFast");
 
+        "ghostty-pixel-scroll" = ghostty-releasefast;
         ghostty = ghostty-releasefast;
-        default = ghostty;
+        default = ghostty-releasefast;
       });
 
     formatter = forAllPlatforms (pkgs: pkgs.alejandra);
@@ -136,16 +137,24 @@
     overlays = {
       default = self.overlays.releasefast;
       releasefast = final: prev: {
+        "ghostty-pixel-scroll" = self.packages.${prev.stdenv.hostPlatform.system}."ghostty-pixel-scroll";
         ghostty = self.packages.${prev.stdenv.hostPlatform.system}.ghostty-releasefast;
       };
       debug = final: prev: {
+        "ghostty-pixel-scroll" = self.packages.${prev.stdenv.hostPlatform.system}."ghostty-pixel-scroll";
         ghostty = self.packages.${prev.stdenv.hostPlatform.system}.ghostty-debug;
       };
     };
   };
 
   nixConfig = {
-    extra-substituters = ["https://ghostty.cachix.org"];
-    extra-trusted-public-keys = ["ghostty.cachix.org-1:QB389yTa6gTyneehvqG58y0WnHjQOqgnA+wBnpWWxns="];
+    extra-substituters = [
+      "https://ghostty-pixel-scroll.cachix.org"
+      "https://ghostty.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "ghostty-pixel-scroll.cachix.org-1:vkWtQpi2OeQk5pzrpOAEF+FHm6b6PjKoypJBbYiZMuU="
+      "ghostty.cachix.org-1:QB389yTa6gTyneehvqG58y0WnHjQOqgnA+wBnpWWxns="
+    ];
   };
 }

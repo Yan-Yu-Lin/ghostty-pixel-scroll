@@ -16,6 +16,8 @@
   &middot;
   <a href="#quick-start">Quick Start</a>
   &middot;
+  <a href="#install">Install</a>
+  &middot;
   <a href="#building">Building</a>
   &middot;
   <a href="#configuration">Configuration</a>
@@ -88,6 +90,70 @@ For Neovim GUI mode, just type `nvim-gui` in the terminal. No config needed.
 
 ---
 
+## Install
+
+### Nix / NixOS (recommended)
+
+Install directly from the flake:
+
+```bash
+nix profile install github:parkers0405/ghostty-pixel-scroll#ghostty-pixel-scroll
+```
+
+For NixOS binary downloads (no local build), configure Cachix:
+
+```nix
+nix.settings = {
+  substituters = [
+    "https://cache.nixos.org"
+    "https://ghostty-pixel-scroll.cachix.org"
+  ];
+  trusted-public-keys = [
+    "ghostty-pixel-scroll.cachix.org-1:vkWtQpi2OeQk5pzrpOAEF+FHm6b6PjKoypJBbYiZMuU="
+  ];
+};
+```
+
+### Flatpak (Linux)
+
+```bash
+flatpak remote-add --if-not-exists --no-gpg-verify ghostty-pixel-scroll \
+  https://parkers0405.github.io/ghostty-pixel-scroll/flatpak-repo/ghostty-pixel-scroll.flatpakrepo
+
+flatpak install ghostty-pixel-scroll com.mitchellh.ghostty//stable
+```
+
+Nightly channel:
+
+```bash
+flatpak install ghostty-pixel-scroll com.mitchellh.ghostty//tip
+```
+
+Update:
+
+```bash
+flatpak update
+```
+
+### Linux Tarball
+
+Download `ghostty-linux-x86_64.tar.gz` from Releases, extract it, and run:
+
+```bash
+tar -xzf ghostty-linux-x86_64.tar.gz
+./bin/ghostty
+```
+
+### macOS
+
+Download `ghostty-macos-arm64-unsigned.zip` from Releases, unzip it, and open `Ghostty.app`.
+
+### Source Build
+
+If you want to build locally, use the Building section below.
+
+---
+
 ## Building
 
 **With Nix (recommended):**
@@ -109,6 +175,21 @@ Binary: `zig-out/bin/ghostty`
 ```bash
 ./zig-out/bin/ghostty
 ```
+
+---
+
+## Releases (No Build)
+
+Prebuilt release artifacts are published on the GitHub Releases page for tagged versions.
+
+- `ghostty-linux-x86_64.tar.gz` for Linux.
+- `ghostty-macos-arm64-unsigned.zip` for macOS (Apple Silicon).
+- `ghostty-source.tar.gz` for downstream packaging.
+
+NixOS users can avoid local builds if a Cachix binary cache is configured for this repo's release workflow.
+Linux users can also install/update via Flatpak channels configured by the release workflow.
+
+Every push to `main` can publish a nightly prerelease build via GitHub Actions.
 
 ---
 

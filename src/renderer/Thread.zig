@@ -301,6 +301,16 @@ fn setQosClass(self: *const Thread) void {
 }
 
 fn syncDrawTimer(self: *Thread) void {
+    // In Neovim/Panel GUI mode with renderer-managed vsync (DisplayLink),
+    // drawNowCallback drives frame pacing. Keep the software draw timer off
+    // to avoid out-of-phase updateFrame ticks that cause visible jitter.
+    if (self.renderer.hasVsync() and
+        (self.renderer.nvim_gui != null or self.renderer.panel != null))
+    {
+        self.draw_active = false;
+        return;
+    }
+
     skip: {
         // If we have an inspector, we always run the draw timer.
         if (self.flags.has_inspector) break :skip;
@@ -591,9 +601,23 @@ fn drawNowCallback(
         return .rearm;
     };
 
-    // Draw immediately
+    // In Neovim/Panel GUI mode, advance simulation on the same vsync tick
+    // that presents the frame. This keeps key-repeat scroll animation
+    // phase-locked to display refresh (closer to Neovide behavior).
     const t = self_.?;
+    if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
+        if (t.renderer.needsFullUpdate()) {
+            t.renderer.updateFrame(
+                t.state,
+                t.flags.cursor_blink_visible,
+            ) catch |err|
+                log.warn("error rendering err={}", .{err});
+        }
+    }
     t.drawFrame(true);
+
+    // Re-evaluate timer state (no-op for vsync+nvim due syncDrawTimer guard).
+    t.syncDrawTimer();
 
     return .rearm;
 }
@@ -610,6 +634,12 @@ fn drawCallback(
         log.warn("render callback fired without data set", .{});
         return .disarm;
     };
+
+    // For Neovim/Panel GUI with renderer-managed vsync, drawNowCallback is the
+    // authoritative frame driver (update + draw). Ignore software timer ticks.
+    if (t.renderer.hasVsync() and (t.renderer.nvim_gui != null or t.renderer.panel != null)) {
+        return .disarm;
+    }
 
     if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
         // For Neovim GUI mode, we need a full updateFrame + draw when

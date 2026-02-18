@@ -1583,8 +1583,8 @@ pub const IoThread = struct {
                 }
             }
         } else if (std.mem.eql(u8, name, "win_viewport")) {
-            if (args.len >= 8) {
-                const scroll_delta = extractF64(args[7]) orelse 0;
+            if (args.len >= 6) {
+                const scroll_delta = if (args.len >= 8) (extractF64(args[7]) orelse 0) else 0;
                 const grid = extractU64(args[0]) orelse return;
                 if (scroll_delta != 0) {
                     log.debug("win_viewport: grid={} scroll_delta={}", .{ grid, scroll_delta });
@@ -1599,7 +1599,7 @@ pub const IoThread = struct {
                         .botline = extractU64(args[3]) orelse 0,
                         .curline = extractU64(args[4]) orelse 0,
                         .curcol = extractU64(args[5]) orelse 0,
-                        .line_count = extractU64(args[6]) orelse 0,
+                        .line_count = if (args.len >= 7) (extractU64(args[6]) orelse 0) else 0,
                         .scroll_delta = scroll_delta,
                     },
                 });

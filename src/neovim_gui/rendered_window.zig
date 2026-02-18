@@ -97,8 +97,13 @@ pub const GridLine = struct {
 
     pub fn copyFromSlice(self: *GridLine, cells: []const GridCell) void {
         const len = @min(self.cells.len, cells.len);
-        for (0..len) |i| {
-            self.cells[i].copyFrom(&cells[i]);
+        if (len > 0) {
+            @memcpy(self.cells[0..len], cells[0..len]);
+        }
+        if (self.cells.len > len) {
+            for (self.cells[len..]) |*cell| {
+                cell.clear();
+            }
         }
     }
 
@@ -305,6 +310,11 @@ pub const RenderedWindow = struct {
     /// This is what Neovim sees - rotated by grid_scroll
     actual_lines: ?RingBuffer(?*GridLine) = null,
 
+    /// Per-row dirty flags in logical row space.
+    /// Rows marked true were updated by grid_line/scroll and need to be copied
+    /// from actual_lines into scrollback on the next flush.
+    dirty_rows: []bool = &.{},
+
     /// Scrollback buffer - 2x viewport height for smooth scroll animation
     /// Used during rendering to show content during scroll animation
     scrollback_lines: ?RingBuffer(?*GridLine) = null,
@@ -376,6 +386,11 @@ pub const RenderedWindow = struct {
             al.deinit();
         }
 
+        if (self.dirty_rows.len > 0) {
+            self.alloc.free(self.dirty_rows);
+            self.dirty_rows = &.{};
+        }
+
         // Free scrollback buffer
         if (self.scrollback_lines) |*sb| {
             sb.deinit();
@@ -429,6 +444,13 @@ pub const RenderedWindow = struct {
             self.grid_width = width;
             self.display_width = width;
             self.display_height = height;
+            if (self.dirty_rows.len != @as(usize, @intCast(height))) {
+                if (self.dirty_rows.len > 0) {
+                    self.alloc.free(self.dirty_rows);
+                }
+                self.dirty_rows = try self.alloc.alloc(bool, height);
+            }
+            @memset(self.dirty_rows, true);
             self.dirty = true;
             return;
         }
@@ -488,6 +510,11 @@ pub const RenderedWindow = struct {
             new_scrollback.set(@intCast(i), line);
         }
 
+        // Mark all rows dirty so the next flush can reconcile scrollback
+        // after any pending post-resize grid updates.
+        const new_dirty_rows = try self.alloc.alloc(bool, height);
+        @memset(new_dirty_rows, true);
+
         // Now free old buffers AFTER new ones are ready
         // Note: old_actual may be null if we didn't preserve (grid 1), but self.actual_lines has the real old value
         if (self.actual_lines) |*al| {
@@ -502,6 +529,10 @@ pub const RenderedWindow = struct {
         // Install new buffers
         self.actual_lines = new_actual;
         self.scrollback_lines = new_scrollback;
+        if (self.dirty_rows.len > 0) {
+            self.alloc.free(self.dirty_rows);
+        }
+        self.dirty_rows = new_dirty_rows;
         self.grid_width = width;
         self.grid_height = height;
         self.display_width = width;
@@ -537,6 +568,9 @@ pub const RenderedWindow = struct {
         }
         self.scroll_delta = 0;
         self.scroll_animation.reset();
+        if (self.dirty_rows.len > 0) {
+            @memset(self.dirty_rows, true);
+        }
         // Reset fallback-originated margins so stale winbar margin doesn't persist
         // across buffer switches on a reused grid.
         if (self.margins_top_from_fallback) {
@@ -556,6 +590,10 @@ pub const RenderedWindow = struct {
 
         line.cells[col].setText(text);
         line.cells[col].hl_id = hl_id;
+        const row_idx: usize = @intCast(row);
+        if (row_idx < self.dirty_rows.len) {
+            self.dirty_rows[row_idx] = true;
+        }
         self.dirty = true;
         // Content received - safe to render this window now
         self.needs_content = false;
@@ -762,6 +800,16 @@ pub const RenderedWindow = struct {
                 }
             }
         }
+
+        // Conservative correctness: partial scroll can move many rows/cells.
+        // Mark the whole affected row range dirty for scrollback copy on flush.
+        var y_dirty: u32 = top;
+        while (y_dirty < bot) : (y_dirty += 1) {
+            const yi: usize = @intCast(y_dirty);
+            if (yi < self.dirty_rows.len) {
+                self.dirty_rows[yi] = true;
+            }
+        }
     }
 
     /// Get the width to use for rendering
@@ -890,6 +938,9 @@ pub const RenderedWindow = struct {
 
             self.scroll_delta = 0;
             self.scroll_animation.reset();
+            if (self.dirty_rows.len > 0) {
+                @memset(self.dirty_rows, false);
+            }
             return;
         }
 
@@ -901,12 +952,17 @@ pub const RenderedWindow = struct {
             scrollback.rotate(scroll_delta);
         }
 
-        // ALWAYS copy inner view from actual_lines into scrollback
-        // This is required because we don't have GPU buffer caching - scrollback
-        // must always reflect current content for rendering
+        // Copy only rows changed since the previous flush. This keeps held-key
+        // scrolling smooth by avoiding a full-row deep copy on every line step.
+        // Safety fallback: if dirty_rows is unavailable, copy all rows.
+        const copy_all_rows = self.dirty_rows.len == 0;
         var i: isize = 0;
         while (i < inner_size) : (i += 1) {
             const src_row = inner_top + i;
+            const src_row_usize: usize = @intCast(src_row);
+            if (!copy_all_rows and (src_row_usize < self.dirty_rows.len) and !self.dirty_rows[src_row_usize]) {
+                continue;
+            }
             const src_line = actual.getConst(src_row) orelse continue;
 
             // Get or create scrollback line at position i
@@ -917,6 +973,10 @@ pub const RenderedWindow = struct {
             if (sb_ptr.*) |sb_line| {
                 sb_line.copyFromSlice(src_line.cells);
             }
+        }
+
+        if (self.dirty_rows.len > 0) {
+            @memset(self.dirty_rows, false);
         }
 
         // Update scroll animation (Neovide-style with far-scroll capping)

@@ -3567,13 +3567,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Neovim GUI mode: cursor-style-blink config overrides Neovim's mode_info.
             //   null → use Neovim's blinkon setting; true → force blink; false → force no blink.
             {
-                const should_blink = if (self.nvim_gui != null)
+                const base_should_blink = if (self.nvim_gui != null)
                     (self.config.cursor_style_blink orelse self.nvim_cursor_blink)
                 else
                     self.terminal_state.cursor.blinking;
 
+                // Keep cursor solid while Neovim cursor/scroll motion is active.
+                const hold_visible = self.nvim_gui != null and
+                    (self.cursor_animating or self.scroll_animating);
+                const should_blink = base_should_blink and !hold_visible;
+
                 if (!should_blink) {
                     self.cursor_blink_target = 1.0;
+                    if (hold_visible) self.cursor_blink_visible_raw = true;
                 } else {
                     self.cursor_blink_target = if (self.cursor_blink_visible_raw) 1.0 else 0.0;
                 }

@@ -32,7 +32,6 @@ jobs:
       version: ${{ steps.vars.outputs.version }}
       prerelease: ${{ steps.vars.outputs.prerelease }}
       channel: ${{ steps.vars.outputs.channel }}
-      mac_only: ${{ steps.vars.outputs.mac_only }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -78,15 +77,8 @@ jobs:
           echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
 
-          MAC_ONLY="false"
-          if [[ "${{ github.event_name }}" == "push" && "${{ github.event.head_commit.message }}" == *"[mac-only]"* ]]; then
-            MAC_ONLY="true"
-          fi
-          echo "mac_only=$MAC_ONLY" >> "$GITHUB_OUTPUT"
-
   source-tarball:
     needs: [setup]
-    if: ${{ needs.setup.outputs.mac_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -111,7 +103,6 @@ jobs:
 
   linux-archive:
     needs: [setup]
-    if: ${{ needs.setup.outputs.mac_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -198,7 +189,6 @@ jobs:
 
   flatpak-build:
     needs: [setup]
-    if: ${{ needs.setup.outputs.mac_only != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       flatpak_branch: ${{ steps.branch.outputs.flatpak_branch }}
@@ -270,7 +260,6 @@ jobs:
 
   flatpak-publish:
     needs: [flatpak-build]
-    if: ${{ needs['flatpak-build'].result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download Flatpak artifacts
@@ -288,7 +277,6 @@ jobs:
 
   nix-cache:
     needs: [setup]
-    if: ${{ needs.setup.outputs.mac_only != 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -328,7 +316,6 @@ jobs:
 
   release:
     needs: [setup, source-tarball, linux-archive, macos-archive, flatpak-build]
-    if: ${{ needs.setup.outputs.mac_only != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download source tarball

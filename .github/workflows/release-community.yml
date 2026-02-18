@@ -286,22 +286,39 @@ jobs:
 
   nix-cache:
     needs: [setup]
-    if: ${{ secrets.CACHIX_AUTH_TOKEN != '' && secrets.CACHIX_CACHE_NAME != '' }}
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Detect Cachix configuration
+        id: cachix-guard
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          CACHIX_CACHE_NAME: ${{ secrets.CACHIX_CACHE_NAME }}
+        shell: bash
+        run: |
+          if [[ -n "$CACHIX_AUTH_TOKEN" && -n "$CACHIX_CACHE_NAME" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Cachix secrets missing; skipping cache push on ${{ matrix.runner }}."
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: ${{ steps.cachix-guard.outputs.enabled == 'true' }}
       - uses: cachix/install-nix-action@4e002c8ec80594ecd40e759629461e26c8abed15 # v31.9.0
+        if: ${{ steps.cachix-guard.outputs.enabled == 'true' }}
         with:
           nix_path: nixpkgs=channel:nixos-unstable
       - uses: cachix/cachix-action@3ba601ff5bbb07c7220846facfa2cd81eeee15a1 # v16
+        if: ${{ steps.cachix-guard.outputs.enabled == 'true' }}
         with:
           name: ${{ secrets.CACHIX_CACHE_NAME }}
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build and push Nix package
+        if: ${{ steps.cachix-guard.outputs.enabled == 'true' }}
         run: |
           nix build .#ghostty-releasefast
           nix path-info -r ./result | cachix push "${{ secrets.CACHIX_CACHE_NAME }}"

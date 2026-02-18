@@ -880,7 +880,10 @@ vertex CellTextVertexOut cell_text_vertex(
   // Apply global pixel scroll offset for smooth scrolling
   cell_pos.y -= uniforms.pixel_scroll_offset_y;
 
-  // Snap text glyph Y position to nearest integer pixel to prevent shimmer/blur.
+  // Snap text glyph position to nearest integer pixel.
+  // X snap avoids subtle horizontal blur when grid padding/metrics land on
+  // fractional coordinates; Y snap keeps scroll animation crisp.
+  cell_pos.x = round(cell_pos.x);
   cell_pos.y = round(cell_pos.y);
   
   // Apply cursor animation for cursor glyph

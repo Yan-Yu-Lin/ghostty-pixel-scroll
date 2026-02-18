@@ -102,7 +102,10 @@ void main() {
     // In terminal mode: shifts content up to hide an extra row for smooth scrollback.
     cell_pos.y -= pixel_scroll_offset_y;
 
-    // Snap text glyph Y position to nearest integer pixel.
+    // Snap text glyph position to nearest integer pixel.
+    // X snap avoids subtle horizontal blur when grid padding/metrics land on
+    // fractional coordinates; Y snap keeps scroll animation crisp.
+    cell_pos.x = round(cell_pos.x);
     cell_pos.y = round(cell_pos.y);
     
     // Apply cursor animation offset if this is the cursor glyph

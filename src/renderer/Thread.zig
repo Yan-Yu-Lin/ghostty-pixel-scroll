@@ -578,10 +578,11 @@ fn wakeupCallback(
     t.drainMailbox() catch |err|
         log.err("error draining mailbox err={}", .{err});
 
-    // For Neovim/Panel GUI with renderer-managed vsync, keep simulation and
-    // presentation coupled in drawNowCallback. Waking here only needs mailbox
-    // processing; frame update/draw will run on the next vsync tick.
-    if (t.renderer.hasVsync() and (t.renderer.nvim_gui != null or t.renderer.panel != null)) {
+    // For Neovim/Panel GUI, avoid immediate wakeup-driven renders.
+    // Rendering from irregular input wakeups causes per-step cadence jitter
+    // during held-key scroll. Instead, just mark/sync timers and let the
+    // regular frame driver (draw timer or drawNow/vsync) present frames.
+    if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
         t.syncDrawTimer();
         return .rearm;
     }

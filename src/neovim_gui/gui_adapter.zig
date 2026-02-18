@@ -116,9 +116,15 @@ pub fn buildGuiState(
 fn windowToGui(w: *RenderedWindow, is_float: bool, cell_h: f32) gui.GuiWindow {
     const has_valid_scroll = if (!is_float) w.hasValidScrollbackData() else false;
 
-    // Sub-pixel offset from the spring, rounded to whole pixels for crisp text.
+    // Sub-pixel offset from the spring, quantized to whole pixels for crisp text.
+    // Keep a minimum magnitude of 1px while animation is active so we don't get
+    // "active-but-zero" frames at line boundaries (perceived as micro-stutter).
     const raw = if (has_valid_scroll) w.getSubLineOffset(cell_h) else @as(f32, 0);
-    const rounded = @round(raw);
+    const rounded = if (raw == 0) @as(f32, 0) else blk: {
+        const mag = @abs(raw);
+        const px = @max(@round(mag), 1.0);
+        break :blk std.math.copysign(px, raw);
+    };
 
     return .{
         .id = w.id,

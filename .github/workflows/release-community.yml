@@ -172,11 +172,37 @@ jobs:
         run: |
           test "$(uname -m)" = "arm64"
 
-      - name: Build macOS app
+      - name: Build GhosttyKit
         run: |
-          zig build -Doptimize=ReleaseFast -Dversion-string=${{ needs.setup.outputs.version }}
-          test -d zig-out/Ghostty.app
-          ditto -c -k --sequesterRsrc --keepParent zig-out/Ghostty.app ghostty-macos-arm64-unsigned.zip
+          zig build -Doptimize=ReleaseFast -Demit-macos-app=false -Dversion-string=${{ needs.setup.outputs.version }}
+
+      - name: Build Ghostty.app
+        shell: bash
+        run: |
+          rm -rf macos/build
+          mkdir -p macos/build
+          cd macos
+          set -o pipefail
+          xcodebuild \
+            -target Ghostty \
+            -configuration ReleaseLocal \
+            -resultBundlePath build/Ghostty.xcresult \
+            | tee build/xcodebuild.log
+
+      - name: Package macOS app
+        run: |
+          test -d macos/build/ReleaseLocal/Ghostty.app
+          ditto -c -k --sequesterRsrc --keepParent macos/build/ReleaseLocal/Ghostty.app ghostty-macos-arm64-unsigned.zip
+
+      - name: Upload macOS diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: macos-diagnostics
+          if-no-files-found: ignore
+          path: |-
+            macos/build/xcodebuild.log
+            macos/build/Ghostty.xcresult
 
       - name: Upload macOS archive
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0

@@ -136,12 +136,9 @@ jobs:
         shell: bash
         run: |
           DEVELOPER_DIR_PATH=""
-          PREFERRED_XCODE_APP="/Applications/Xcode_15.4.app"
           NEWEST_XCODE_APP="$(ls -1d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -n1 || true)"
 
-          if [[ -d "$PREFERRED_XCODE_APP" ]]; then
-            DEVELOPER_DIR_PATH="${PREFERRED_XCODE_APP}/Contents/Developer"
-          elif [[ -n "$NEWEST_XCODE_APP" ]]; then
+          if [[ -n "$NEWEST_XCODE_APP" ]]; then
             DEVELOPER_DIR_PATH="${NEWEST_XCODE_APP}/Contents/Developer"
           elif [[ -d /Applications/Xcode.app ]]; then
             DEVELOPER_DIR_PATH="/Applications/Xcode.app/Contents/Developer"

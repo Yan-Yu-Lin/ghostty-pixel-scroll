@@ -1,0 +1,7 @@
+[Flatpak Repo]
+Title=Ghostty Pixel Scroll
+Comment=Ghostty Pixel Scroll Flatpak repository
+Homepage=https://github.com/parkers0405/ghostty-pixel-scroll
+Url=https://parkers0405.github.io/ghostty-pixel-scroll/flatpak-repo/repo
+Icon=https://raw.githubusercontent.com/parkers0405/ghostty-pixel-scroll/main/images/icons/icon_512.png
+DefaultBranch=stable

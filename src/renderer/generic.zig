@@ -2812,7 +2812,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             if (pos_changed or scroll_changed) {
                 if (self.config.cursor_animation_duration > 0) {
-                    self.cursor_animation.setTarget(target_px, target_py, cell_width);
+                    // Neovide keeps cursor destination phase-locked to scroll and
+                    // uses corner animation for perceived smoothness. Avoid an
+                    // extra base spring here, which adds lag/blur on held repeat.
+                    self.cursor_animation.target_x = target_px;
+                    self.cursor_animation.target_y = target_py;
+                    self.cursor_animation.current_x = target_px;
+                    self.cursor_animation.current_y = target_py;
+                    self.cursor_animation.spring.reset();
                     if (scroll_only) {
                         self.corner_cursor.setTargetNoJump(target_px, target_py, cell_width, cell_height);
                     } else {

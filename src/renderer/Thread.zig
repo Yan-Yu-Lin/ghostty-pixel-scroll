@@ -70,6 +70,11 @@ draw_active: bool = false,
 /// updated whenever the renderer can provide actual monitor info.
 draw_interval: u64 = DEFAULT_DRAW_INTERVAL,
 
+/// Set on wakeup when GUI backends may have new events waiting.
+/// The draw timer consumes this to force one full updateFrame pass
+/// (instead of a draw-only tick) so input is never starved.
+pending_wakeup_update: bool = false,
+
 /// This async is used to force a draw immediately. This does not
 /// coalesce like the wakeup does.
 draw_now: xev.Async,
@@ -578,13 +583,13 @@ fn wakeupCallback(
     t.drainMailbox() catch |err|
         log.err("error draining mailbox err={}", .{err});
 
-    // For Neovim/Panel GUI with renderer-managed vsync, avoid immediate
-    // wakeup-driven renders and keep simulation+present on drawNowCallback.
-    // On non-vsync paths we still need immediate renderCallback here so
-    // input/events are processed promptly.
+    // For Neovim/Panel GUI, mark that we have pending wakeup work.
+    // If a regular frame driver is already active (vsync or draw timer),
+    // let that driver run updateFrame to keep cadence stable.
     if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
+        t.pending_wakeup_update = true;
         t.syncDrawTimer();
-        if (t.renderer.hasVsync()) {
+        if (t.renderer.hasVsync() or t.draw_c.state() == .active) {
             return .rearm;
         }
     }
@@ -658,7 +663,7 @@ fn drawCallback(
         // uniform in drawFrame.  Calling updateFrame for blink would
         // clobber last_frame_time, causing drawFrame's raw_dt to be ~0
         // which freezes the blink lerp and burns CPU without progress.
-        if (t.renderer.needsFullUpdate()) {
+        if (t.pending_wakeup_update or t.renderer.needsFullUpdate()) {
             _ = renderCallback(t, undefined, undefined, {});
         } else {
             t.drawFrame(false);
@@ -693,6 +698,8 @@ fn renderCallback(
     if (t.flags.has_inspector) {
         _ = t.app_mailbox.push(.{ .redraw_inspector = t.surface }, .{ .instant = {} });
     }
+
+    t.pending_wakeup_update = false;
 
     // Update our frame data
     t.renderer.updateFrame(

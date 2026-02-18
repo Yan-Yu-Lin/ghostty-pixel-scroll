@@ -578,6 +578,14 @@ fn wakeupCallback(
     t.drainMailbox() catch |err|
         log.err("error draining mailbox err={}", .{err});
 
+    // For Neovim/Panel GUI with renderer-managed vsync, keep simulation and
+    // presentation coupled in drawNowCallback. Waking here only needs mailbox
+    // processing; frame update/draw will run on the next vsync tick.
+    if (t.renderer.hasVsync() and (t.renderer.nvim_gui != null or t.renderer.panel != null)) {
+        t.syncDrawTimer();
+        return .rearm;
+    }
+
     // Render immediately
     _ = renderCallback(t, undefined, undefined, {});
 
@@ -606,13 +614,11 @@ fn drawNowCallback(
     // phase-locked to display refresh (closer to Neovide behavior).
     const t = self_.?;
     if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
-        if (t.renderer.needsFullUpdate()) {
-            t.renderer.updateFrame(
-                t.state,
-                t.flags.cursor_blink_visible,
-            ) catch |err|
-                log.warn("error rendering err={}", .{err});
-        }
+        t.renderer.updateFrame(
+            t.state,
+            t.flags.cursor_blink_visible,
+        ) catch |err|
+            log.warn("error rendering err={}", .{err});
     }
     t.drawFrame(true);
 

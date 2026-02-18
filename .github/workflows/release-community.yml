@@ -52,7 +52,7 @@ jobs:
             TAG="nightly-${SHORT_SHA}"
             PRERELEASE="true"
             CHANNEL="nightly"
-            VERSION="$(sed -n -E 's/^\s*\.?version\s*=\s*\"([^\"]+)\".*/\1/p' build.zig.zon)"
+            VERSION="$(sed -n -E 's/^[[:space:]]*\.?version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)"
             if [[ -z "$VERSION" ]]; then
               echo "Unable to read version from build.zig.zon"
               exit 1
@@ -101,7 +101,7 @@ jobs:
 
       - name: Install Zig
         run: |
-          ZIG_VERSION=$(sed -n -E 's/^\s*\.?minimum_zig_version\s*=\s*"([^"]+)".*/\1/p' build.zig.zon)
+          ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
           curl -L -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz"
           sudo tar -xf /tmp/zig.tar.xz -C /opt
           sudo ln -sf "/opt/zig-$(uname -m)-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
@@ -110,7 +110,7 @@ jobs:
       - name: Build source tarball
         run: |
           rm -rf zig-out/dist
-          zig build distcheck -Dversion-string=${{ needs.setup.outputs.version }} -Dgtk4-layer-shell=false
+          zig build distcheck -Dversion-string=${{ needs.setup.outputs.version }} -fno-sys=gtk4-layer-shell
           cp "zig-out/dist/ghostty-${{ needs.setup.outputs.version }}.tar.gz" ghostty-source.tar.gz
 
       - name: Upload source tarball
@@ -143,7 +143,7 @@ jobs:
 
       - name: Install Zig
         run: |
-          ZIG_VERSION=$(sed -n -E 's/^\s*\.?minimum_zig_version\s*=\s*"([^"]+)".*/\1/p' build.zig.zon)
+          ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
           curl -L -o /tmp/zig.tar.xz "https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz"
           sudo tar -xf /tmp/zig.tar.xz -C /opt
           sudo ln -sf "/opt/zig-$(uname -m)-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig
@@ -151,7 +151,7 @@ jobs:
 
       - name: Build Linux release archive
         run: |
-          zig build -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=${{ needs.setup.outputs.version }} -Dgtk4-layer-shell=false
+          zig build -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=${{ needs.setup.outputs.version }} -fno-sys=gtk4-layer-shell
           tar --create --gzip --file ghostty-linux-x86_64.tar.gz --directory zig-out .
 
       - name: Upload Linux archive
@@ -170,7 +170,7 @@ jobs:
 
       - name: Install Zig
         run: |
-          ZIG_VERSION=$(sed -n -E 's/^\s*\.?minimum_zig_version\s*=\s*"([^"]+)".*/\1/p' build.zig.zon)
+          ZIG_VERSION=$(sed -n -E 's/^[[:space:]]*\.?minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.zig.zon)
           case "$(uname -m)" in
             arm64) ZIG_ARCH="aarch64" ;;
             x86_64) ZIG_ARCH="x86_64" ;;
@@ -239,7 +239,7 @@ jobs:
           cp com.mitchellh.ghostty.yml community-manifest.yml
           sed -i "s/^default-branch:.*/default-branch: \"$BRANCH\"/" community-manifest.yml
 
-          flatpak-builder --force-clean --repo=repo builddir community-manifest.yml
+          flatpak-builder --user --force-clean --install-deps-from=flathub --repo=repo builddir community-manifest.yml
           flatpak build-bundle repo "../com.mitchellh.ghostty-${BRANCH}-x86_64.flatpak" com.mitchellh.ghostty "$BRANCH"
           flatpak build-update-repo --generate-static-deltas repo
 

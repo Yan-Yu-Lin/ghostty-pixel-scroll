@@ -3242,7 +3242,7 @@ pub const Surface = extern struct {
         };
 
         var best_rate: u16 = rates[0];
-        var best_diff = std.math.maxInt(u64);
+        var best_diff: u64 = std.math.maxInt(u64);
         for (rates) |r| {
             const candidate_ns = std.time.ns_per_s / @as(u64, r);
             const diff = if (candidate_ns > period_ns) candidate_ns - period_ns else period_ns - candidate_ns;

@@ -36,6 +36,9 @@ const InspectorWindow = @import("inspector_window.zig").InspectorWindow;
 const i18n = @import("../../../os/i18n.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
+const common_refresh_rates_hz = [_]u16{
+    360, 300, 280, 240, 200, 180, 175, 170, 165, 160, 155, 150, 144, 120, 100, 96, 90, 85, 75, 72, 60, 59, 50, 48, 40, 30,
+};
 
 pub const Surface = extern struct {
     const Self = @This();
@@ -637,11 +640,11 @@ pub const Surface = extern struct {
         /// Used to infer monitor refresh period (for example 60/120/165Hz)
         /// and feed that back into the core renderer thread.
         frame_timing_last: ?std.time.Instant = null,
-        frame_timing_min_ns: u64 = std.math.maxInt(u64),
         frame_timing_last_sent_ns: u64 = 0,
         frame_timing_samples: u32 = 0,
         frame_timing_locked: bool = false,
         frame_timing_faster_hits: u8 = 0,
+        frame_timing_bucket_hits: [common_refresh_rates_hz.len]u8 = [_]u8{0} ** common_refresh_rates_hz.len,
 
         /// Various input method state. All related to key input.
         in_keyevent: IMKeyEvent = .false,
@@ -3227,37 +3230,73 @@ pub const Surface = extern struct {
     fn resetRefreshRateHint(self: *Self) void {
         const priv = self.private();
         priv.frame_timing_last = null;
-        priv.frame_timing_min_ns = std.math.maxInt(u64);
         priv.frame_timing_last_sent_ns = 0;
         priv.frame_timing_samples = 0;
         priv.frame_timing_locked = false;
         priv.frame_timing_faster_hits = 0;
+        @memset(priv.frame_timing_bucket_hits[0..], 0);
     }
 
-    fn quantizeRefreshPeriodNs(period_ns: u64) u64 {
-        // Common desktop panel rates. We quantize to avoid jittery
-        // non-standard values from runtime scheduling noise.
-        const rates = [_]u16{
-            360, 300, 280, 240, 200, 180, 175, 170, 165, 160, 155, 150, 144, 120, 100, 96, 90, 85, 75, 72, 60, 59, 50, 48, 40, 30,
-        };
-
-        var best_rate: u16 = rates[0];
+    fn nearestRefreshRateIndex(period_ns: u64) usize {
+        var best_idx: usize = 0;
         var best_diff: u64 = std.math.maxInt(u64);
-        for (rates) |r| {
+        for (common_refresh_rates_hz, 0..) |r, idx| {
             const candidate_ns = std.time.ns_per_s / @as(u64, r);
             const diff = if (candidate_ns > period_ns) candidate_ns - period_ns else period_ns - candidate_ns;
             if (diff < best_diff) {
                 best_diff = diff;
-                best_rate = r;
+                best_idx = idx;
             }
         }
 
-        return std.time.ns_per_s / @as(u64, best_rate);
+        return best_idx;
+    }
+
+    fn quantizeRefreshPeriodNs(period_ns: u64) u64 {
+        const idx = nearestRefreshRateIndex(period_ns);
+        return std.time.ns_per_s / @as(u64, common_refresh_rates_hz[idx]);
+    }
+
+    /// Use the backend-reported monitor refresh rate when available.
+    /// This is more stable than inferring from render callback jitter.
+    fn updateRefreshRateHintFromMonitor(self: *Self) bool {
+        const priv = self.private();
+        const widget = priv.gl_area.as(gtk.Widget);
+        const root = widget.getRoot() orelse return false;
+        const gtk_native = root.as(gtk.Native);
+        const gdk_surface = gtk_native.getSurface() orelse return false;
+        const display = gdk_surface.getDisplay();
+        const monitor = display.getMonitorAtSurface(gdk_surface) orelse return false;
+        const refresh_mhz = monitor.getRefreshRate();
+        if (refresh_mhz <= 0) return false;
+
+        const refresh_mhz_u64: u64 = @intCast(refresh_mhz);
+        const period_ns = (std.time.ns_per_s * 1_000) / refresh_mhz_u64;
+        const hint_ns = quantizeRefreshPeriodNs(period_ns);
+
+        // If GTK provides monitor refresh, treat it as authoritative and
+        // bypass callback-based inference to avoid startup false positives.
+        const unchanged = priv.frame_timing_locked and (priv.frame_timing_last_sent_ns == hint_ns);
+        priv.frame_timing_last_sent_ns = hint_ns;
+        priv.frame_timing_locked = true;
+        priv.frame_timing_samples = 0;
+        priv.frame_timing_faster_hits = 0;
+        @memset(priv.frame_timing_bucket_hits[0..], 0);
+
+        if (!unchanged) {
+            if (priv.core_surface) |surface| {
+                surface.refreshRateHintCallback(hint_ns);
+            }
+        }
+
+        return true;
     }
 
     /// Update a refresh-period estimate from successive GLArea render callbacks
     /// and forward stable hints to core surface.
     fn updateRefreshRateHint(self: *Self) void {
+        if (self.updateRefreshRateHintFromMonitor()) return;
+
         const priv = self.private();
         const now = std.time.Instant.now() catch return;
         defer priv.frame_timing_last = now;
@@ -3272,20 +3311,32 @@ pub const Surface = extern struct {
         const clamped_dt = std.math.clamp(dt_ns, std.time.ns_per_ms, 33 * std.time.ns_per_ms);
 
         // Calibration phase: collect a short burst and lock to the fastest
-        // stable interval observed. This avoids drifting downward due to
-        // occasional missed/idle frames.
+        // dominant interval bucket observed to reduce startup outlier bias.
         if (!priv.frame_timing_locked) {
             priv.frame_timing_samples += 1;
-            if (clamped_dt < priv.frame_timing_min_ns) {
-                priv.frame_timing_min_ns = clamped_dt;
+            const bucket_idx = nearestRefreshRateIndex(clamped_dt);
+            if (priv.frame_timing_bucket_hits[bucket_idx] < std.math.maxInt(u8)) {
+                priv.frame_timing_bucket_hits[bucket_idx] += 1;
             }
 
             if (priv.frame_timing_samples < 24) return;
 
-            const hint_ns = quantizeRefreshPeriodNs(priv.frame_timing_min_ns);
+            var best_bucket: usize = 0;
+            var best_hits: u8 = 0;
+            for (priv.frame_timing_bucket_hits, 0..) |hits, idx| {
+                if (hits > best_hits) {
+                    best_hits = hits;
+                    best_bucket = idx;
+                }
+            }
+
+            if (best_hits == 0) return;
+
+            const hint_ns = std.time.ns_per_s / @as(u64, common_refresh_rates_hz[best_bucket]);
             priv.frame_timing_last_sent_ns = hint_ns;
             priv.frame_timing_locked = true;
             priv.frame_timing_faster_hits = 0;
+            @memset(priv.frame_timing_bucket_hits[0..], 0);
 
             if (priv.core_surface) |surface| {
                 surface.refreshRateHintCallback(hint_ns);

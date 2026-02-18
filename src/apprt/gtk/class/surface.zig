@@ -637,9 +637,11 @@ pub const Surface = extern struct {
         /// Used to infer monitor refresh period (for example 60/120/165Hz)
         /// and feed that back into the core renderer thread.
         frame_timing_last: ?std.time.Instant = null,
-        frame_timing_ema_ns: f64 = 0,
+        frame_timing_min_ns: u64 = std.math.maxInt(u64),
         frame_timing_last_sent_ns: u64 = 0,
         frame_timing_samples: u32 = 0,
+        frame_timing_locked: bool = false,
+        frame_timing_faster_hits: u8 = 0,
 
         /// Various input method state. All related to key input.
         in_keyevent: IMKeyEvent = .false,
@@ -3134,6 +3136,7 @@ pub const Surface = extern struct {
         self: *Self,
     ) callconv(.c) void {
         log.debug("realize", .{});
+        self.resetRefreshRateHint();
 
         // Make the GL area current so we can detect any OpenGL errors. If
         // we have errors here we can't render and we switch to the error
@@ -3220,8 +3223,40 @@ pub const Surface = extern struct {
         return 1;
     }
 
-    /// Update a smoothed refresh-period estimate from successive GLArea render
-    /// callbacks and forward stable hints to core surface.
+    /// Reset refresh-rate inference state.
+    fn resetRefreshRateHint(self: *Self) void {
+        const priv = self.private();
+        priv.frame_timing_last = null;
+        priv.frame_timing_min_ns = std.math.maxInt(u64);
+        priv.frame_timing_last_sent_ns = 0;
+        priv.frame_timing_samples = 0;
+        priv.frame_timing_locked = false;
+        priv.frame_timing_faster_hits = 0;
+    }
+
+    fn quantizeRefreshPeriodNs(period_ns: u64) u64 {
+        // Common desktop panel rates. We quantize to avoid jittery
+        // non-standard values from runtime scheduling noise.
+        const rates = [_]u16{
+            360, 300, 280, 240, 200, 180, 175, 170, 165, 160, 155, 150, 144, 120, 100, 96, 90, 85, 75, 72, 60, 59, 50, 48, 40, 30,
+        };
+
+        var best_rate: u16 = rates[0];
+        var best_diff = std.math.maxInt(u64);
+        for (rates) |r| {
+            const candidate_ns = std.time.ns_per_s / @as(u64, r);
+            const diff = if (candidate_ns > period_ns) candidate_ns - period_ns else period_ns - candidate_ns;
+            if (diff < best_diff) {
+                best_diff = diff;
+                best_rate = r;
+            }
+        }
+
+        return std.time.ns_per_s / @as(u64, best_rate);
+    }
+
+    /// Update a refresh-period estimate from successive GLArea render callbacks
+    /// and forward stable hints to core surface.
     fn updateRefreshRateHint(self: *Self) void {
         const priv = self.private();
         const now = std.time.Instant.now() catch return;
@@ -3234,37 +3269,52 @@ pub const Surface = extern struct {
 
         // Ignore outliers (first frame after stalls/minimize, etc.).
         if (dt_ns < 3 * std.time.ns_per_ms or dt_ns > 50 * std.time.ns_per_ms) return;
+        const clamped_dt = std.math.clamp(dt_ns, std.time.ns_per_ms, 33 * std.time.ns_per_ms);
 
-        const dt_ns_f: f64 = @floatFromInt(dt_ns);
-        if (priv.frame_timing_samples == 0) {
-            priv.frame_timing_ema_ns = dt_ns_f;
-        } else {
-            priv.frame_timing_ema_ns = priv.frame_timing_ema_ns * 0.90 + dt_ns_f * 0.10;
+        // Calibration phase: collect a short burst and lock to the fastest
+        // stable interval observed. This avoids drifting downward due to
+        // occasional missed/idle frames.
+        if (!priv.frame_timing_locked) {
+            priv.frame_timing_samples += 1;
+            if (clamped_dt < priv.frame_timing_min_ns) {
+                priv.frame_timing_min_ns = clamped_dt;
+            }
+
+            if (priv.frame_timing_samples < 24) return;
+
+            const hint_ns = quantizeRefreshPeriodNs(priv.frame_timing_min_ns);
+            priv.frame_timing_last_sent_ns = hint_ns;
+            priv.frame_timing_locked = true;
+            priv.frame_timing_faster_hits = 0;
+
+            if (priv.core_surface) |surface| {
+                surface.refreshRateHintCallback(hint_ns);
+            }
+            return;
         }
-        priv.frame_timing_samples += 1;
 
-        // Let the EMA settle a little before sending hints.
-        if (priv.frame_timing_samples < 8) return;
-
-        const min_ns_f: f64 = @floatFromInt(std.time.ns_per_ms);
-        const max_ns_f: f64 = @floatFromInt(33 * std.time.ns_per_ms);
-        const hint_ns_f = std.math.clamp(priv.frame_timing_ema_ns, min_ns_f, max_ns_f);
-        const hint_ns: u64 = @intFromFloat(hint_ns_f);
-
-        // Avoid spamming tiny jitter updates.
+        // Locked phase: only accept sustained evidence of a FASTER display
+        // period (for example moving from 60Hz monitor to 165Hz monitor).
+        // Never walk downward from transient frame drops.
         const last_sent = priv.frame_timing_last_sent_ns;
-        if (last_sent != 0) {
-            const diff = if (hint_ns > last_sent)
-                hint_ns - last_sent
-            else
-                last_sent - hint_ns;
+        if (last_sent == 0) return;
 
-            // Require at least 1% or 0.15ms change before forwarding.
-            const threshold = @max(last_sent / 100, @as(u64, 150_000));
-            if (diff < threshold) return;
+        const faster_threshold = (last_sent * 98) / 100; // >=2% faster
+        if (clamped_dt < faster_threshold) {
+            if (priv.frame_timing_faster_hits < std.math.maxInt(u8)) {
+                priv.frame_timing_faster_hits += 1;
+            }
+        } else if (priv.frame_timing_faster_hits > 0) {
+            priv.frame_timing_faster_hits -= 1;
         }
+
+        if (priv.frame_timing_faster_hits < 12) return;
+
+        const hint_ns = quantizeRefreshPeriodNs(clamped_dt);
+        if (hint_ns >= last_sent) return;
 
         priv.frame_timing_last_sent_ns = hint_ns;
+        priv.frame_timing_faster_hits = 0;
         if (priv.core_surface) |surface| {
             surface.refreshRateHintCallback(hint_ns);
         }
@@ -3276,6 +3326,10 @@ pub const Surface = extern struct {
         height: c_int,
         self: *Self,
     ) callconv(.c) void {
+        // Recalibrate refresh hint on resize; this also helps when moving the
+        // window between monitors with different refresh rates.
+        self.resetRefreshRateHint();
+
         // Some debug output to help understand what GTK is telling us.
         {
             const widget = gl_area.as(gtk.Widget);

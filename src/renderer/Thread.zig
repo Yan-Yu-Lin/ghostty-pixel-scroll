@@ -16,10 +16,9 @@ const App = @import("../App.zig");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.renderer_thread);
 
-/// Default draw interval in ms when we can't determine the monitor refresh rate.
-/// 6ms ≈ 165Hz. This is overridden at runtime when the renderer reports
-/// actual refresh rate information.
-const DEFAULT_DRAW_INTERVAL: u64 = 6;
+/// Default draw interval in nanoseconds when we can't determine the monitor
+/// refresh rate. 6_060_606ns ≈ 165 Hz.
+const DEFAULT_DRAW_INTERVAL_NS: u64 = 6_060_606;
 const CURSOR_BLINK_INTERVAL = 600;
 
 /// Whether calls to `drawFrame` must be done from the app thread.
@@ -65,10 +64,15 @@ draw_h: xev.Timer,
 draw_c: xev.Completion = .{},
 draw_active: bool = false,
 
-/// Dynamic draw interval in milliseconds, derived from the renderer's
-/// reported refresh rate. Defaults to DEFAULT_DRAW_INTERVAL and is
-/// updated whenever the renderer can provide actual monitor info.
-draw_interval: u64 = DEFAULT_DRAW_INTERVAL,
+/// Dynamic draw interval in nanoseconds, derived from the renderer's
+/// reported refresh period. Defaults to ~165 Hz and is updated whenever
+/// the renderer can provide actual monitor info.
+draw_interval_ns: u64 = DEFAULT_DRAW_INTERVAL_NS,
+
+/// Fractional remainder used when converting nanosecond frame periods to an
+/// integer-millisecond timer API. This lets us approximate rates like 165 Hz
+/// (6.06ms) by alternating timer delays (6ms/7ms) instead of hard-clamping.
+draw_interval_remainder_ns: u64 = 0,
 
 /// Set on wakeup when GUI backends may have new events waiting.
 /// The draw timer consumes this to force one full updateFrame pass
@@ -353,11 +357,13 @@ fn syncDrawTimer(self: *Thread) void {
     // Update draw interval from renderer's refresh rate knowledge
     self.updateDrawInterval();
 
-    // Start the timer which loops
+    const draw_delay_ms = self.nextDrawDelayMs();
+
+    // Start the timer (single-shot; callback re-arms while needed).
     self.draw_h.run(
         &self.loop,
         &self.draw_c,
-        self.draw_interval,
+        draw_delay_ms,
         Thread,
         self,
         drawCallback,
@@ -525,6 +531,15 @@ fn drainMailbox(self: *Thread) !void {
                     try self.renderer.setMacOSDisplayID(v);
                 }
             },
+
+            .display_refresh_ns => |v| {
+                if (@hasDecl(rendererpkg.Renderer, "setDisplayRefreshPeriodNs")) {
+                    self.renderer.setDisplayRefreshPeriodNs(v);
+                }
+
+                // Keep timer cadence aligned with the newest refresh hint.
+                self.syncDrawTimer();
+            },
         }
     }
 }
@@ -539,9 +554,33 @@ fn changeConfig(self: *Thread, config: *const DerivedConfig) !void {
 /// paths and for Linux. We query the renderer for a refresh rate hint
 /// and compute the interval from that.
 fn updateDrawInterval(self: *Thread) void {
-    if (@hasDecl(rendererpkg.Renderer, "getRefreshRateMs")) {
-        self.draw_interval = self.renderer.getRefreshRateMs();
+    const min_ns: u64 = std.time.ns_per_ms;
+    const max_ns: u64 = 33 * std.time.ns_per_ms;
+
+    var next_ns = self.draw_interval_ns;
+    if (@hasDecl(rendererpkg.Renderer, "getRefreshPeriodNs")) {
+        next_ns = self.renderer.getRefreshPeriodNs();
+    } else if (@hasDecl(rendererpkg.Renderer, "getRefreshRateMs")) {
+        next_ns = self.renderer.getRefreshRateMs() * std.time.ns_per_ms;
     }
+
+    next_ns = std.math.clamp(next_ns, min_ns, max_ns);
+    if (next_ns != self.draw_interval_ns) {
+        self.draw_interval_ns = next_ns;
+        self.draw_interval_remainder_ns = 0;
+    }
+}
+
+/// Convert a nanosecond draw interval to a one-shot timer delay in whole
+/// milliseconds while preserving fractional precision over time.
+fn nextDrawDelayMs(self: *Thread) u64 {
+    const total_ns = self.draw_interval_ns + self.draw_interval_remainder_ns;
+    var delay_ms = total_ns / std.time.ns_per_ms;
+    self.draw_interval_remainder_ns = total_ns % std.time.ns_per_ms;
+
+    // xev timer delay is integer ms; never schedule zero.
+    if (delay_ms == 0) delay_ms = 1;
+    return @min(delay_ms, 33);
 }
 
 /// Trigger a draw. This will not update frame data or anything, it will

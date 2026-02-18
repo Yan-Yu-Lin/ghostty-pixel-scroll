@@ -67,6 +67,11 @@ pub const Message = union(enum) {
     /// The macOS display ID has changed for the window.
     macos_display_id: u32,
 
+    /// Display refresh period hint in nanoseconds (for example, 60 Hz =
+    /// 16_666_667 ns, 165 Hz = 6_060_606 ns). Used by non-macOS backends
+    /// to improve frame pacing and animation timing.
+    display_refresh_ns: u64,
+
     pub const SearchMatches = struct {
         arena: ArenaAllocator,
         matches: []const terminal.highlight.Flattened,

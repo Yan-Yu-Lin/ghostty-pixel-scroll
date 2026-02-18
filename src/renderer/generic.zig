@@ -1211,6 +1211,27 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
         }
 
+        /// Update the display refresh period from an external backend hint
+        /// (for example GTK frame timing on Linux). This is ignored when a
+        /// running DisplayLink is present because macOS already has a precise
+        /// native frame driver.
+        pub fn setDisplayRefreshPeriodNs(self: *Self, ns: u64) void {
+            if (comptime DisplayLink != void) {
+                if (self.display_link) |display_link| {
+                    if (display_link.isRunning()) return;
+                }
+            }
+
+            const clamped_ns = std.math.clamp(ns, std.time.ns_per_ms, 33 * std.time.ns_per_ms);
+            if (clamped_ns == self.display_refresh_ns) return;
+
+            self.display_refresh_ns = clamped_ns;
+            log.info("display refresh hint: {}ns ({d:.1} Hz)", .{
+                clamped_ns,
+                @as(f64, @floatFromInt(std.time.ns_per_s)) / @as(f64, @floatFromInt(clamped_ns)),
+            });
+        }
+
         /// True if our renderer has animations so that a higher frequency
         /// timer is used.
         pub fn hasAnimations(self: *const Self) bool {
@@ -1249,9 +1270,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 (self.panel != null and (self.panel.?.isDirty() or self.panel.?.isVisible()));
         }
 
-        /// Return the ideal draw timer interval in milliseconds based on the
-        /// display refresh rate.  On macOS the DisplayLink provides precise
-        /// timing; elsewhere we estimate from the configured/default rate.
+        /// Return the ideal draw period in nanoseconds based on the display
+        /// refresh rate.
+        pub fn getRefreshPeriodNs(self: *const Self) u64 {
+            return self.display_refresh_ns;
+        }
+
+        /// Legacy fallback for callers that still request millisecond cadence.
         pub fn getRefreshRateMs(self: *const Self) u64 {
             // Convert ns period to ms, clamped to [1, 33] (30-1000 Hz)
             const ms = self.display_refresh_ns / std.time.ns_per_ms;

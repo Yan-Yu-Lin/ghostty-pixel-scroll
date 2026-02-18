@@ -144,6 +144,9 @@ collab_state: ?*collab.CollabState = null,
 real_screen_width: u32 = 0,
 real_screen_height: u32 = 0,
 
+/// Last display refresh hint forwarded to the renderer thread (nanoseconds).
+display_refresh_hint_ns: u64 = 0,
+
 /// All our sizing information.
 size: rendererpkg.Size,
 
@@ -4932,6 +4935,21 @@ pub fn contentScaleCallback(self: *Surface, content_scale: apprt.ContentScale) !
     // Force a resize event because the change in padding will affect
     // pixel-level changes to the renderer and viewport.
     try self.resize(self.size.screen);
+}
+
+/// Called by apprt implementations to hint the display refresh period in
+/// nanoseconds (for example 16_666_667ns for 60 Hz, 6_060_606ns for 165 Hz).
+/// This is forwarded to the renderer thread to improve frame pacing.
+pub fn refreshRateHintCallback(self: *Surface, refresh_period_ns: u64) void {
+    const clamped_ns = std.math.clamp(refresh_period_ns, std.time.ns_per_ms, 33 * std.time.ns_per_ms);
+    if (clamped_ns == self.display_refresh_hint_ns) return;
+    self.display_refresh_hint_ns = clamped_ns;
+
+    _ = self.renderer_thread.mailbox.push(
+        .{ .display_refresh_ns = clamped_ns },
+        .{ .instant = {} },
+    );
+    self.renderer_thread.wakeup.notify() catch {};
 }
 
 /// The type of action to report for a mouse event.

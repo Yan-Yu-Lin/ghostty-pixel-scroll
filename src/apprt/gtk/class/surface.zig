@@ -633,6 +633,14 @@ pub const Surface = extern struct {
         size: apprt.SurfaceSize,
         cursor_pos: apprt.CursorPos,
 
+        /// Smoothed frame pacing measurements from GTK render callbacks.
+        /// Used to infer monitor refresh period (for example 60/120/165Hz)
+        /// and feed that back into the core renderer thread.
+        frame_timing_last: ?std.time.Instant = null,
+        frame_timing_ema_ns: f64 = 0,
+        frame_timing_last_sent_ns: u64 = 0,
+        frame_timing_samples: u32 = 0,
+
         /// Various input method state. All related to key input.
         in_keyevent: IMKeyEvent = .false,
         im_context: *gtk.IMMulticontext,
@@ -3202,12 +3210,64 @@ pub const Surface = extern struct {
         const priv = self.private();
         const surface = priv.core_surface orelse return 1;
 
+        self.updateRefreshRateHint();
+
         surface.renderer.drawFrame(true) catch |err| {
             log.warn("failed to draw frame err={}", .{err});
             return 0;
         };
 
         return 1;
+    }
+
+    /// Update a smoothed refresh-period estimate from successive GLArea render
+    /// callbacks and forward stable hints to core surface.
+    fn updateRefreshRateHint(self: *Self) void {
+        const priv = self.private();
+        const now = std.time.Instant.now() catch return;
+        defer priv.frame_timing_last = now;
+
+        const last = priv.frame_timing_last orelse return;
+        if (now.order(last) == .lt) return;
+
+        const dt_ns = now.since(last);
+
+        // Ignore outliers (first frame after stalls/minimize, etc.).
+        if (dt_ns < 3 * std.time.ns_per_ms or dt_ns > 50 * std.time.ns_per_ms) return;
+
+        const dt_ns_f: f64 = @floatFromInt(dt_ns);
+        if (priv.frame_timing_samples == 0) {
+            priv.frame_timing_ema_ns = dt_ns_f;
+        } else {
+            priv.frame_timing_ema_ns = priv.frame_timing_ema_ns * 0.90 + dt_ns_f * 0.10;
+        }
+        priv.frame_timing_samples += 1;
+
+        // Let the EMA settle a little before sending hints.
+        if (priv.frame_timing_samples < 8) return;
+
+        const min_ns_f: f64 = @floatFromInt(std.time.ns_per_ms);
+        const max_ns_f: f64 = @floatFromInt(33 * std.time.ns_per_ms);
+        const hint_ns_f = std.math.clamp(priv.frame_timing_ema_ns, min_ns_f, max_ns_f);
+        const hint_ns: u64 = @intFromFloat(hint_ns_f);
+
+        // Avoid spamming tiny jitter updates.
+        const last_sent = priv.frame_timing_last_sent_ns;
+        if (last_sent != 0) {
+            const diff = if (hint_ns > last_sent)
+                hint_ns - last_sent
+            else
+                last_sent - hint_ns;
+
+            // Require at least 1% or 0.15ms change before forwarding.
+            const threshold = @max(last_sent / 100, @as(u64, 150_000));
+            if (diff < threshold) return;
+        }
+
+        priv.frame_timing_last_sent_ns = hint_ns;
+        if (priv.core_surface) |surface| {
+            surface.refreshRateHintCallback(hint_ns);
+        }
     }
 
     fn glareaResize(

@@ -1,0 +1,152 @@
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const internal_os = @import("../os/main.zig");
+
+const log = std.log.scoped(.neovim_profile);
+
+/// Configuration profile mode for Neovim GUI sessions.
+pub const Mode = enum {
+    /// Prefer the user's own ~/.config/nvim if it exists, otherwise fall back
+    /// to a Ghostty-managed profile.
+    auto,
+    /// Always use the user's own Neovim profile (~/.config/nvim).
+    user,
+    /// Always use the Ghostty-managed profile (~/.config/ghostty/nvim).
+    managed,
+};
+
+/// Concrete launch mode after resolving `auto`.
+pub const ResolvedMode = enum {
+    user,
+    managed,
+};
+
+/// Resolve `auto` mode to either user or managed based on whether a user
+/// Neovim config exists.
+pub fn resolveMode(mode: Mode) ResolvedMode {
+    return switch (mode) {
+        .user => .user,
+        .managed => .managed,
+        .auto => if (userConfigExists()) .user else .managed,
+    };
+}
+
+/// Return true if ~/.config/nvim exists.
+pub fn userConfigExists() bool {
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = internal_os.home(&home_buf) catch return false orelse return false;
+
+    var home_dir = std.fs.openDirAbsolute(home, .{}) catch return false;
+    defer home_dir.close();
+
+    if (home_dir.access(".config/nvim", .{})) |_| {
+        return true;
+    } else |_| {
+        return false;
+    }
+}
+
+/// Apply environment overrides so Neovim uses Ghostty-managed paths:
+/// - config: ~/.config/ghostty/nvim
+/// - data:   ~/.local/share/ghostty/nvim
+/// - state:  ~/.local/state/ghostty/nvim
+/// - cache:  ~/.cache/ghostty/nvim
+pub fn applyManagedEnv(alloc: Allocator, env: *std.process.EnvMap) !void {
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = internal_os.home(&home_buf) catch |err| {
+        log.warn("failed to determine home directory for managed nvim env: {}", .{err});
+        return;
+    } orelse {
+        log.warn("home directory unavailable for managed nvim env", .{});
+        return;
+    };
+
+    const xdg_config_home = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty", .{home});
+    defer alloc.free(xdg_config_home);
+
+    const xdg_data_home = try std.fmt.allocPrint(alloc, "{s}/.local/share/ghostty", .{home});
+    defer alloc.free(xdg_data_home);
+
+    const xdg_state_home = try std.fmt.allocPrint(alloc, "{s}/.local/state/ghostty", .{home});
+    defer alloc.free(xdg_state_home);
+
+    const xdg_cache_home = try std.fmt.allocPrint(alloc, "{s}/.cache/ghostty", .{home});
+    defer alloc.free(xdg_cache_home);
+
+    try env.put("XDG_CONFIG_HOME", xdg_config_home);
+    try env.put("XDG_DATA_HOME", xdg_data_home);
+    try env.put("XDG_STATE_HOME", xdg_state_home);
+    try env.put("XDG_CACHE_HOME", xdg_cache_home);
+
+    // NVIM_APPNAME = nvim so stdpaths resolve under the XDG roots above.
+    // Example: config => ~/.config/ghostty/nvim
+    try env.put("NVIM_APPNAME", "nvim");
+}
+
+/// Ensure the managed profile exists at ~/.config/ghostty/nvim by seeding it
+/// from bundled resources (share/ghostty/nvim) on first launch.
+pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) !void {
+    const base = resources_dir orelse {
+        log.warn("resources dir unavailable; cannot seed managed nvim profile", .{});
+        return;
+    };
+
+    const source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
+    defer alloc.free(source_dir);
+
+    if (std.fs.accessAbsolute(source_dir, .{})) |_| {} else |_| {
+        log.warn("bundled nvim profile not found at: {s}", .{source_dir});
+        return;
+    }
+
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = internal_os.home(&home_buf) catch |err| {
+        log.warn("failed to determine home directory for managed nvim seed: {}", .{err});
+        return;
+    } orelse {
+        log.warn("home directory unavailable for managed nvim seed", .{});
+        return;
+    };
+
+    const target_dir = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim", .{home});
+    defer alloc.free(target_dir);
+
+    // If the managed profile already exists, keep user modifications untouched.
+    if (std.fs.accessAbsolute(target_dir, .{})) |_| {
+        return;
+    } else |_| {}
+
+    // Ensure parent path exists.
+    var home_dir = try std.fs.openDirAbsolute(home, .{});
+    defer home_dir.close();
+    try home_dir.makePath(".config/ghostty/nvim");
+
+    try copyDirRecursive(alloc, source_dir, target_dir);
+    log.info("seeded managed nvim profile at: {s}", .{target_dir});
+}
+
+fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {
+    var source = try std.fs.openDirAbsolute(source_path, .{ .iterate = true });
+    defer source.close();
+
+    var target = try std.fs.openDirAbsolute(target_path, .{});
+    defer target.close();
+
+    var walker = try source.walk(alloc);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        switch (entry.kind) {
+            .directory => {
+                try target.makePath(entry.path);
+            },
+            .file => {
+                if (std.fs.path.dirname(entry.path)) |parent| {
+                    try target.makePath(parent);
+                }
+                try source.copyFile(entry.path, target, entry.path, .{});
+            },
+            else => {},
+        }
+    }
+}

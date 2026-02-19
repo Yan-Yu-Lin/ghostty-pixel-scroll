@@ -373,6 +373,7 @@ const DerivedConfig = struct {
     notify_on_command_finish_after: Duration,
     key_remaps: input.KeyRemapSet,
     neovim_gui_socket: ?[]const u8,
+    neovim_gui_config_mode: configpkg.Config.NeovimGuiConfigMode,
     panel_gui_1: ?[]const u8,
     panel_gui_2: ?[]const u8,
     panel_gui_size: f32,
@@ -468,6 +469,7 @@ const DerivedConfig = struct {
                 try alloc.dupe(u8, config.@"neovim-gui")
             else
                 null,
+            .neovim_gui_config_mode = config.@"neovim-gui-config-mode",
             .panel_gui_1 = if (config.@"panel-gui-1".len > 0)
                 try alloc.dupe(u8, config.@"panel-gui-1")
             else
@@ -1204,6 +1206,28 @@ pub fn connectRemoteNeovim(self: *Surface, host: []const u8, nvim_port: u16) !vo
     }
 }
 
+fn resolveNeovimProfileMode(self: *const Surface) neovim_gui.profile.ResolvedMode {
+    return switch (self.config.neovim_gui_config_mode) {
+        .user => .user,
+        .managed => .managed,
+        .auto => neovim_gui.profile.resolveMode(.auto),
+    };
+}
+
+fn maybePrepareManagedNeovimProfile(
+    self: *Surface,
+    mode: neovim_gui.profile.ResolvedMode,
+) void {
+    if (mode != .managed) return;
+
+    neovim_gui.profile.ensureManagedProfileSeeded(
+        self.alloc,
+        global_state.resources_dir.host(),
+    ) catch |err| {
+        log.warn("failed to seed managed nvim profile, continuing with empty managed profile: {}", .{err});
+    };
+}
+
 /// Initialize Neovim GUI mode for this surface
 /// This should be called after Surface.init if neovim-gui config is set
 /// or when OSC 1338 is received
@@ -1269,15 +1293,17 @@ pub fn initNeovimGui(self: *Surface) !void {
 
     // Get the current working directory from the terminal
     const terminal_cwd = self.io.terminal.getPwd();
+    const profile_mode = self.resolveNeovimProfileMode();
+    self.maybePrepareManagedNeovimProfile(profile_mode);
 
     // Connect based on mode:
     // - "embed" - spawn nvim --embed (direct pipe communication, loads user config)
     // - "spawn" - spawn nvim --listen on temp socket then connect (best experience)
     // - any path - connect to existing Neovim socket
     if (std.mem.eql(u8, socket_path, "embed")) {
-        try nvim.spawn(terminal_cwd);
+        try nvim.spawn(terminal_cwd, profile_mode);
     } else if (std.mem.eql(u8, socket_path, "spawn")) {
-        try nvim.spawnWithSocket(terminal_cwd);
+        try nvim.spawnWithSocket(terminal_cwd, profile_mode);
     } else {
         try nvim.connect(socket_path);
     }
@@ -1348,11 +1374,13 @@ pub fn initNeovimGuiWithCwd(self: *Surface, cwd: ?[]const u8) !void {
 
     // Use provided cwd, falling back to terminal's pwd
     const effective_cwd = cwd orelse self.io.terminal.getPwd();
+    const profile_mode = self.resolveNeovimProfileMode();
+    self.maybePrepareManagedNeovimProfile(profile_mode);
 
     if (std.mem.eql(u8, socket_path, "embed")) {
-        try nvim.spawn(effective_cwd);
+        try nvim.spawn(effective_cwd, profile_mode);
     } else if (std.mem.eql(u8, socket_path, "spawn")) {
-        try nvim.spawnWithSocket(effective_cwd);
+        try nvim.spawnWithSocket(effective_cwd, profile_mode);
     } else {
         try nvim.connect(socket_path);
     }

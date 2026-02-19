@@ -17,6 +17,7 @@ const protocol = znvim.protocol;
 const encoder = protocol.encoder;
 const decoder = protocol.decoder;
 const Payload = msgpack.Value; // znvim uses Value, which is msgpack.Payload
+const profile = @import("profile.zig");
 
 const log = std.log.scoped(.neovim_io);
 
@@ -663,6 +664,8 @@ pub const IoThread = struct {
 
     // Working directory for spawning Neovim
     cwd: ?[]const u8 = null,
+    // Which config profile Neovim should use for this session.
+    profile_mode: profile.ResolvedMode = .user,
 
     // Read buffer for msgpack parsing
     read_buffer: std.ArrayListUnmanaged(u8) = .empty,
@@ -708,13 +711,19 @@ pub const IoThread = struct {
     }
 
     /// Initialize for embedded Neovim
-    pub fn initEmbedded(alloc: Allocator, event_queue: *EventQueue, cwd: ?[]const u8) !*Self {
+    pub fn initEmbedded(
+        alloc: Allocator,
+        event_queue: *EventQueue,
+        cwd: ?[]const u8,
+        profile_mode: profile.ResolvedMode,
+    ) !*Self {
         const self = try alloc.create(Self);
         self.* = .{
             .alloc = alloc,
             .mode = .embedded,
             .event_queue = event_queue,
             .cwd = if (cwd) |c| try alloc.dupe(u8, c) else null,
+            .profile_mode = profile_mode,
         };
         return self;
     }
@@ -824,7 +833,10 @@ pub const IoThread = struct {
                 log.info("Connected to remote Neovim (non-blocking)", .{});
             },
             .embedded => {
-                log.info("Spawning embedded Neovim with user config (cwd: {?s})", .{self.cwd});
+                log.info("Spawning embedded Neovim (cwd: {?s}, profile={s})", .{
+                    self.cwd,
+                    @tagName(self.profile_mode),
+                });
 
                 // Spawn nvim --headless --embed
                 // Note: --embed mode still loads user config (init.lua/init.vim)
@@ -834,6 +846,17 @@ pub const IoThread = struct {
                 child.stdout_behavior = .Pipe;
                 child.stderr_behavior = .Inherit;
                 child.cwd = self.cwd;
+
+                var child_env: ?std.process.EnvMap = null;
+                defer if (child_env) |*env| env.deinit();
+
+                if (self.profile_mode == .managed) {
+                    child_env = try std.process.getEnvMap(self.alloc);
+                    if (child_env) |*env| {
+                        try profile.applyManagedEnv(self.alloc, env);
+                        child.env_map = env;
+                    }
+                }
 
                 try child.spawn();
 

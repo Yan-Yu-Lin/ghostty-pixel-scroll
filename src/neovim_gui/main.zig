@@ -24,6 +24,7 @@ const ViewportMargins = rendered_window.ViewportMargins;
 pub const Animation = @import("animation.zig");
 pub const nvim_input = @import("input.zig");
 pub const CursorRenderer = @import("cursor_renderer.zig").CursorRenderer;
+pub const profile = @import("profile.zig");
 
 const log = std.log.scoped(.neovim_gui);
 
@@ -294,9 +295,9 @@ pub const NeovimGui = struct {
     }
 
     /// Spawn Neovim in embedded mode (direct pipe communication)
-    pub fn spawn(self: *Self, cwd: ?[]const u8) !void {
-        log.info("spawning embedded Neovim (cwd: {?s})", .{cwd});
-        self.io = try IoThread.initEmbedded(self.alloc, &self.event_queue, cwd);
+    pub fn spawn(self: *Self, cwd: ?[]const u8, profile_mode: profile.ResolvedMode) !void {
+        log.info("spawning embedded Neovim (cwd: {?s}, profile={s})", .{ cwd, @tagName(profile_mode) });
+        self.io = try IoThread.initEmbedded(self.alloc, &self.event_queue, cwd, profile_mode);
         errdefer {
             self.io.?.deinit();
             self.io = null;
@@ -307,8 +308,8 @@ pub const NeovimGui = struct {
 
     /// Spawn Neovim with --listen and connect via socket.
     /// This is the recommended mode: loads full user config, clean separation.
-    pub fn spawnWithSocket(self: *Self, cwd: ?[]const u8) !void {
-        log.info("spawning Neovim with socket (cwd: {?s})", .{cwd});
+    pub fn spawnWithSocket(self: *Self, cwd: ?[]const u8, profile_mode: profile.ResolvedMode) !void {
+        log.info("spawning Neovim with socket (cwd: {?s}, profile={s})", .{ cwd, @tagName(profile_mode) });
 
         const socket_path = try self.makeSocketPath();
         defer self.alloc.free(socket_path);
@@ -331,6 +332,18 @@ pub const NeovimGui = struct {
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Ignore;
         child.cwd = cwd;
+
+        var child_env: ?std.process.EnvMap = null;
+        defer if (child_env) |*env| env.deinit();
+
+        if (profile_mode == .managed) {
+            child_env = try std.process.getEnvMap(self.alloc);
+            if (child_env) |*env| {
+                try profile.applyManagedEnv(self.alloc, env);
+                child.env_map = env;
+            }
+        }
+
         // Put the child in its own process group so we can kill the whole group.
         child.pgid = 0;
         try child.spawn();

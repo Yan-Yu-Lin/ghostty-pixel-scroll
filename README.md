@@ -219,12 +219,15 @@ Every push to `main` can publish a nightly prerelease build via GitHub Actions.
 | Option                   | Default    | Description                                                                  |
 | ------------------------ | ---------- | ---------------------------------------------------------------------------- |
 | `neovim-gui`             | `""`       | Set to `spawn`, `embed`, or a socket path. Empty = normal terminal.          |
+| `neovim-gui-config-mode` | `managed`  | `auto`, `user`, or `managed` profile mode for `nvim-gui` sessions.          |
 | `neovim-gui-alias`       | `nvim-gui` | Shell function name for entering GUI mode via OSC 1338.                      |
 | `neovim-corner-radius`   | `25.0`     | SDF rounded corner radius in pixels for Neovim windows. 0 = sharp corners.  |
 | `neovim-gap-color`       | `#0a0a0a`  | Color between rounded windows (auto-syncs to Neovim bg color).              |
 | `neovim-window-padding`  | `4.0`      | Gap in pixels between Neovim split windows. Makes rounded corners visible.   |
 
 > **You don't need `neovim-gui` in your config.** Just type `nvim-gui` in the terminal. It sends an OSC escape sequence to switch modes on the fly. Only set `neovim-gui = spawn` if you want it to always launch as a Neovim GUI.
+
+`neovim-gui-config-mode = managed` is the default. Ghostty seeds a managed NvChad profile at `~/.config/ghostty/nvim` on first run and launches that profile. Set `neovim-gui-config-mode = user` to always use `~/.config/nvim`, or `auto` to prefer user config only when it exists.
 
 ### Collaboration
 

@@ -94,6 +94,17 @@ pub const compatibility = std.StaticStringMap(
     .{ "macos-dock-drop-behavior", compatMacOSDockDropBehavior },
 });
 
+/// Select which Neovim profile `nvim-gui` should use.
+pub const NeovimGuiConfigMode = enum {
+    /// Prefer user profile (`~/.config/nvim`) when present, otherwise use
+    /// Ghostty-managed profile (`~/.config/ghostty/nvim`).
+    auto,
+    /// Always use user profile (`~/.config/nvim`).
+    user,
+    /// Always use Ghostty-managed profile (`~/.config/ghostty/nvim`).
+    managed,
+};
+
 /// The font families to use.
 ///
 /// You can generate the list of valid values using the CLI:
@@ -982,6 +993,17 @@ palette: Palette = .{},
 ///
 /// Empty string (default) = normal terminal mode.
 @"neovim-gui": []const u8 = "",
+
+/// Choose which Neovim config profile is used when spawning Neovim from
+/// `nvim-gui` sessions.
+///
+/// Valid values:
+///   * `auto`: use `~/.config/nvim` if it exists, otherwise seed and
+///     use `~/.config/ghostty/nvim`.
+///   * `user`: always use `~/.config/nvim`.
+///   * `managed` (default): always use Ghostty-managed profile under
+///     `~/.config/ghostty`.
+@"neovim-gui-config-mode": NeovimGuiConfigMode = .managed,
 
 /// Shell alias name for entering Neovim GUI mode. The shell integration
 /// creates a function with this name that sends OSC 1338 to switch the

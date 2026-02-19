@@ -3,6 +3,7 @@ local M = {}
 local uv = vim.uv or vim.loop
 local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v2.done"
 local setup_done = vim.g.ghostty_bootstrap_setup_done
+local quiet_state = nil
 
 local treesitter_languages = {
 	"bash",
@@ -85,7 +86,106 @@ local function get_mason_packages()
 	return merged
 end
 
+local function is_install_noise(msg)
+	local text = type(msg) == "string" and msg or tostring(msg or "")
+	local patterns = {
+		"[Ii]nstall",
+		"[Dd]ownload",
+		"[Cc]lon",
+		"[Cc]ompil",
+		"[Uu]pdat",
+		"[Pp]arser",
+		"[Tt]reesitter",
+		"[Mm]ason",
+		"registry",
+		"already installed",
+	}
+	for _, pat in ipairs(patterns) do
+		if text:find(pat) then
+			return true
+		end
+	end
+	return false
+end
+
+local function disable_quiet_mode()
+	if not quiet_state or not quiet_state.active then
+		return
+	end
+
+	local original_notify = quiet_state.original_notify
+	local suppressed = quiet_state.suppressed
+	quiet_state.active = false
+
+	vim.notify = quiet_state.original_notify
+	vim.notify_once = quiet_state.original_notify_once
+	quiet_state = nil
+	vim.g.ghostty_bootstrap_quiet = nil
+
+	if suppressed > 0 and original_notify then
+		original_notify(
+			string.format("Ghostty bootstrap running quietly in background (%d install messages hidden).", suppressed),
+			vim.log.levels.INFO
+		)
+	end
+end
+
+local function schedule_quiet_disable(delay_ms)
+	if not quiet_state or not quiet_state.active then
+		return
+	end
+	quiet_state.generation = quiet_state.generation + 1
+	local generation = quiet_state.generation
+	vim.defer_fn(function()
+		if quiet_state and quiet_state.active and quiet_state.generation == generation then
+			disable_quiet_mode()
+		end
+	end, delay_ms)
+end
+
+local function enable_quiet_mode()
+	if quiet_state and quiet_state.active then
+		schedule_quiet_disable(90000)
+		return
+	end
+
+	local original_notify = vim.notify
+	local original_notify_once = vim.notify_once
+	quiet_state = {
+		active = true,
+		generation = 0,
+		suppressed = 0,
+		original_notify = original_notify,
+		original_notify_once = original_notify_once,
+	}
+	vim.g.ghostty_bootstrap_quiet = true
+
+	vim.notify = function(msg, level, opts)
+		level = level or vim.log.levels.INFO
+		if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
+			quiet_state.suppressed = quiet_state.suppressed + 1
+			schedule_quiet_disable(90000)
+			return
+		end
+		return original_notify(msg, level, opts)
+	end
+
+	vim.notify_once = function(msg, level, opts)
+		level = level or vim.log.levels.INFO
+		if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
+			quiet_state.suppressed = quiet_state.suppressed + 1
+			schedule_quiet_disable(90000)
+			return
+		end
+		return original_notify_once(msg, level, opts)
+	end
+
+	schedule_quiet_disable(180000)
+end
+
 local function run_bootstrap()
+	enable_quiet_mode()
+
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then
 		lazy.load({
@@ -120,7 +220,7 @@ local function run_bootstrap()
 	if ran_any and (ran_mason or ran_treesitter) then
 		write_done_marker()
 		vim.schedule(function()
-			vim.notify("Ghostty first-launch bootstrap started (Mason + Treesitter).", vim.log.levels.INFO)
+			vim.notify("Ghostty first-launch setup started. Running quietly in background.", vim.log.levels.INFO)
 		end)
 	end
 end

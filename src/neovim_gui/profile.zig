@@ -123,6 +123,9 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     var home_dir = try std.fs.openDirAbsolute(home, .{});
     defer home_dir.close();
     try home_dir.makePath(".config/ghostty/nvim");
+    // Suppress NvChad one-time Blink integration announcement popup in
+    // managed profiles by pre-creating its marker directory.
+    try home_dir.makePath(".local/share/ghostty/nvim/nvnotify1");
 
     // First launch: copy full bundled profile.
     if (std.fs.accessAbsolute(target_dir, .{})) |_| {
@@ -130,11 +133,13 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
+        try migrateManagedMappingsCleanup(alloc, target_dir);
         return;
     } else |_| {}
 
     try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
+    try migrateManagedMappingsCleanup(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
 }
 
@@ -270,6 +275,46 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     });
 
     log.info("migrated managed nvim options showbreak marker", .{});
+}
+
+fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {
+    const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
+    defer alloc.free(mappings_path);
+
+    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const block_start = std.mem.indexOf(u8, data, "local telescope_split_preview = {") orelse return;
+    const end_words = std.mem.indexOfPos(u8, data, block_start, "end, { desc = \"Find words (split preview)\" })");
+    const end_quickfix = std.mem.indexOfPos(u8, data, block_start, "end, { desc = \"Quickfix (split preview)\" })");
+
+    const end_marker = marker: {
+        if (end_words) |i| break :marker i;
+        if (end_quickfix) |i| break :marker i;
+        return;
+    };
+
+    const end_line = std.mem.indexOfScalarPos(u8, data, end_marker, '\n') orelse data.len;
+    var cut_end: usize = if (end_line < data.len) end_line + 1 else data.len;
+    if (cut_end < data.len and data[cut_end] == '\n') cut_end += 1;
+
+    const updated = try std.mem.concat(alloc, u8, &.{ data[0..block_start], data[cut_end..] });
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/mappings.lua",
+        .data = updated,
+    });
+
+    log.info("cleaned managed nvim telescope keymap overrides", .{});
 }
 
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {

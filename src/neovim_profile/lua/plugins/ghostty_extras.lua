@@ -67,6 +67,26 @@ return {
 					inc_rename = true,
 					lsp_doc_border = true,
 				},
+				routes = {
+					{
+						filter = {
+							cond = function()
+								return vim.g.ghostty_bootstrap_quiet == true
+							end,
+							any = {
+								{ event = "notify", find = "[Ii]nstall" },
+								{ event = "notify", find = "[Dd]ownload" },
+								{ event = "notify", find = "[Mm]ason" },
+								{ event = "notify", find = "[Pp]arser" },
+								{ event = "msg_show", find = "[Ii]nstall" },
+								{ event = "msg_show", find = "[Dd]ownload" },
+								{ event = "msg_show", find = "[Mm]ason" },
+								{ event = "msg_show", find = "[Pp]arser" },
+							},
+						},
+						opts = { skip = true },
+					},
+				},
 			})
 		end,
 	},
@@ -204,6 +224,39 @@ return {
 				timeout_ms = 5000,
 				lsp_fallback = true,
 			}
+			return opts
+		end,
+	},
+
+	{
+		"nvim-telescope/telescope.nvim",
+		opts = function(_, opts)
+			opts = opts or {}
+			opts.defaults = opts.defaults or {}
+			opts.defaults.layout_strategy = "horizontal"
+			opts.defaults.layout_config = vim.tbl_deep_extend("force", opts.defaults.layout_config or {}, {
+				horizontal = {
+					prompt_position = "top",
+					preview_width = 0.55,
+					results_width = 0.45,
+				},
+				width = 0.95,
+				height = 0.85,
+				preview_cutoff = 40,
+			})
+			opts.defaults.sorting_strategy = "ascending"
+
+			opts.pickers = vim.tbl_deep_extend("force", opts.pickers or {}, {
+				find_files = {
+					layout_strategy = "horizontal",
+					layout_config = { preview_width = 0.55 },
+				},
+				live_grep = {
+					layout_strategy = "horizontal",
+					layout_config = { preview_width = 0.55 },
+				},
+			})
+
 			return opts
 		end,
 	},

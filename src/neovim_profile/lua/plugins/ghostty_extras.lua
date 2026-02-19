@@ -171,6 +171,41 @@ return {
 	},
 
 	{
+		"stevearc/conform.nvim",
+		event = "BufWritePre",
+		opts = function(_, opts)
+			opts = opts or {}
+			opts.formatters_by_ft = vim.tbl_deep_extend("force", opts.formatters_by_ft or {}, {
+				lua = { "stylua" },
+				python = { "ruff_format", "isort", "black" },
+				javascript = { "prettierd", "prettier" },
+				typescript = { "prettierd", "prettier" },
+				javascriptreact = { "prettierd", "prettier" },
+				typescriptreact = { "prettierd", "prettier" },
+				json = { "prettierd", "prettier" },
+				yaml = { "prettierd", "prettier" },
+				html = { "prettierd", "prettier" },
+				css = { "prettierd", "prettier" },
+				scss = { "prettierd", "prettier" },
+				markdown = { "prettierd", "prettier" },
+				sh = { "shfmt" },
+				bash = { "shfmt" },
+				zsh = { "shfmt" },
+				c = { "clang_format" },
+				cpp = { "clang_format" },
+				go = { "goimports", "gofumpt", "gofmt" },
+				rust = { "rustfmt" },
+				nix = { "alejandra", "nixfmt" },
+			})
+			opts.format_on_save = {
+				timeout_ms = 5000,
+				lsp_fallback = true,
+			}
+			return opts
+		end,
+	},
+
+	{
 		"Bekaboo/dropbar.nvim",
 		event = "VeryLazy",
 		dependencies = {

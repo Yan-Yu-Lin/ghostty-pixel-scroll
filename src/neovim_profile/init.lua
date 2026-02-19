@@ -29,6 +29,7 @@ pcall(dofile, vim.g.base46_cache .. "statusline")
 
 require("options")
 require("nvchad.autocmds")
+require("bootstrap").setup()
 
 vim.schedule(function()
 	require("mappings")

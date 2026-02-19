@@ -1,7 +1,8 @@
 return {
 	{
 		"folke/noice.nvim",
-		event = "VeryLazy",
+		lazy = false,
+		priority = 1000,
 		dependencies = {
 			"MunifTanjim/nui.nvim",
 			"rcarriga/nvim-notify",
@@ -68,6 +69,8 @@ return {
 
 	{
 		"rcarriga/nvim-notify",
+		lazy = false,
+		priority = 950,
 		config = function()
 			local bg = require("base46").get_theme_tb("base_30").black
 			require("notify").setup({
@@ -165,5 +168,26 @@ return {
 			"CodeDiffClose",
 		},
 		opts = {},
+	},
+
+	{
+		"Bekaboo/dropbar.nvim",
+		event = "VeryLazy",
+		dependencies = {
+			"nvim-telescope/telescope-fzf-native.nvim",
+		},
+		config = function()
+			require("dropbar").setup({
+				bar = {
+					padding = { left = 1, right = 1 },
+					pick = { pivots = "abcdefghijklmnopqrstuvwxyz" },
+				},
+				menu = {
+					win_configs = {
+						border = "rounded",
+					},
+				},
+			})
+		end,
 	},
 }

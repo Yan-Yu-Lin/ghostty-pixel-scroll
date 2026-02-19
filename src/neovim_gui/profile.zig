@@ -193,12 +193,25 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 try target.makePath(entry.path);
             },
             .file => {
-                if (init_has_managed_extras and std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua")) {
+                const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
+                if (init_has_managed_extras and is_managed_extras) {
                     continue;
                 }
 
                 if (std.fs.path.dirname(entry.path)) |parent| {
                     try target.makePath(parent);
+                }
+
+                // Keep managed defaults current for all users:
+                // refresh ghostty_extras.lua every launch unless we're preserving
+                // legacy profiles that already inlined those extras in init.lua.
+                if (is_managed_extras) {
+                    target.deleteFile(entry.path) catch |err| switch (err) {
+                        error.FileNotFound => {},
+                        else => return err,
+                    };
+                    try source.copyFile(entry.path, target, entry.path, .{});
+                    continue;
                 }
 
                 if (target.access(entry.path, .{})) |_| {

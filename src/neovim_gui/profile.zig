@@ -174,7 +174,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
     // from older builds, skip backfilling ghostty_extras.lua to avoid duplicate specs.
     const target_plugins_init = try std.fmt.allocPrint(alloc, "{s}/lua/plugins/init.lua", .{target_path});
     defer alloc.free(target_plugins_init);
-    const init_has_managed_extras = fileContainsAny(
+    var init_has_managed_extras = fileContainsAny(
         alloc,
         target_plugins_init,
         &.{
@@ -183,6 +183,14 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
             "esmuellert/codediff.nvim",
         },
     ) catch false;
+
+    // Migrate legacy managed profiles that inlined Ghostty defaults directly
+    // inside lua/plugins/init.lua. Replace that file with the current minimal
+    // managed template so lua/plugins/ghostty_extras.lua can be synced normally.
+    if (init_has_managed_extras and (isLegacyManagedPluginsInit(alloc, target_plugins_init) catch false)) {
+        try source.copyFile("lua/plugins/init.lua", target, "lua/plugins/init.lua", .{});
+        init_has_managed_extras = false;
+    }
 
     var walker = try source.walk(alloc);
     defer walker.deinit();
@@ -194,6 +202,8 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
             },
             .file => {
                 const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
+                const is_managed_bootstrap = std.mem.eql(u8, entry.path, "lua/bootstrap.lua");
+                const is_managed_bootstrap_plugin = std.mem.eql(u8, entry.path, "plugin/ghostty_bootstrap.lua");
                 if (init_has_managed_extras and is_managed_extras) {
                     continue;
                 }
@@ -205,7 +215,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 // Keep managed defaults current for all users:
                 // refresh ghostty_extras.lua every launch unless we're preserving
                 // legacy profiles that already inlined those extras in init.lua.
-                if (is_managed_extras) {
+                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin) {
                     target.deleteFile(entry.path) catch |err| switch (err) {
                         error.FileNotFound => {},
                         else => return err,
@@ -239,4 +249,26 @@ fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []c
         if (std.mem.indexOf(u8, data, needle) != null) return true;
     }
     return false;
+}
+
+fn isLegacyManagedPluginsInit(alloc: Allocator, file_path: []const u8) !bool {
+    var file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    // New template marker means no migration needed.
+    if (std.mem.indexOf(u8, data, "Managed Ghostty defaults are shipped in") != null) {
+        return false;
+    }
+
+    const has_noice = std.mem.indexOf(u8, data, "folke/noice.nvim") != null;
+    const has_hlchunk = std.mem.indexOf(u8, data, "parkers0405/hlchunk.nvim") != null;
+    const has_codediff = std.mem.indexOf(u8, data, "esmuellert/codediff.nvim") != null;
+
+    return has_noice and has_hlchunk and has_codediff;
 }

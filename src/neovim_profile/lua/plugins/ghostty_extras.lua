@@ -1,3 +1,7 @@
+pcall(function()
+	require("bootstrap").setup()
+end)
+
 return {
 	{
 		"folke/noice.nvim",

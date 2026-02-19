@@ -2,6 +2,7 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v2.done"
+local setup_done = vim.g.ghostty_bootstrap_setup_done
 
 local treesitter_languages = {
 	"bash",
@@ -30,6 +31,33 @@ local treesitter_languages = {
 	"zig",
 }
 
+local default_mason_packages = {
+	"lua-language-server",
+	"bash-language-server",
+	"json-lsp",
+	"yaml-language-server",
+	"html-lsp",
+	"css-lsp",
+	"typescript-language-server",
+	"tailwindcss-language-server",
+	"clangd",
+	"gopls",
+	"rust-analyzer",
+	"nixd",
+	"stylua",
+	"shfmt",
+	"prettier",
+	"prettierd",
+	"ruff",
+	"pyright",
+	"black",
+	"isort",
+	"clang-format",
+	"goimports",
+	"gofumpt",
+	"alejandra",
+}
+
 local function marker_exists()
 	return uv.fs_stat(done_marker) ~= nil
 end
@@ -40,11 +68,24 @@ local function write_done_marker()
 end
 
 local function get_mason_packages()
+	local merged = {}
+	local seen = {}
+	local function add_many(pkgs)
+		for _, pkg in ipairs(pkgs) do
+			if type(pkg) == "string" and pkg ~= "" and not seen[pkg] then
+				seen[pkg] = true
+				table.insert(merged, pkg)
+			end
+		end
+	end
+
+	add_many(default_mason_packages)
+
 	local ok, chadrc = pcall(require, "chadrc")
 	if ok and type(chadrc) == "table" and chadrc.mason and type(chadrc.mason.pkgs) == "table" then
-		return chadrc.mason.pkgs
+		add_many(chadrc.mason.pkgs)
 	end
-	return {}
+	return merged
 end
 
 local function run_bootstrap()
@@ -80,6 +121,12 @@ local function run_bootstrap()
 end
 
 function M.setup()
+	if setup_done then
+		return
+	end
+	vim.g.ghostty_bootstrap_setup_done = true
+	setup_done = true
+
 	if marker_exists() then
 		return
 	end

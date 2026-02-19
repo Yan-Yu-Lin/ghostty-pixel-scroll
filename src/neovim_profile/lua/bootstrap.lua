@@ -41,7 +41,6 @@ local default_mason_packages = {
 	"typescript-language-server",
 	"tailwindcss-language-server",
 	"clangd",
-	"gopls",
 	"rust-analyzer",
 	"nixd",
 	"stylua",
@@ -53,8 +52,6 @@ local default_mason_packages = {
 	"black",
 	"isort",
 	"clang-format",
-	"goimports",
-	"gofumpt",
 	"alejandra",
 }
 

@@ -45,7 +45,6 @@ M.mason = {
 		"typescript-language-server",
 		"tailwindcss-language-server",
 		"clangd",
-		"gopls",
 		"rust-analyzer",
 		"nixd",
 		"stylua",
@@ -57,8 +56,6 @@ M.mason = {
 		"black",
 		"isort",
 		"clang-format",
-		"goimports",
-		"gofumpt",
 		"alejandra",
 	},
 }

@@ -687,10 +687,19 @@ pub fn init(
     };
 
     // The command we're going to execute
-    const command: ?configpkg.Command = if (app.first)
+    var command: ?configpkg.Command = if (app.first)
         config.@"initial-command" orelse config.command
     else
         config.command;
+    if (command == null and config.@"initial-command" != null) {
+        // If command is unexpectedly unset, avoid falling back to `/bin/sh`
+        // so new tabs/windows still start with the user's intended shell.
+        command = config.@"initial-command";
+        log.warn(
+            "surface command unset, falling back to initial-command",
+            .{},
+        );
+    }
 
     // Start our IO implementation
     // This separate block ({}) is important because our errdefers must

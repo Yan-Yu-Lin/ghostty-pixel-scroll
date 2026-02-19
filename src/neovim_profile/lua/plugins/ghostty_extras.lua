@@ -197,7 +197,6 @@ return {
 				zsh = { "shfmt" },
 				c = { "clang_format" },
 				cpp = { "clang_format" },
-				go = { "goimports", "gofumpt", "gofmt" },
 				rust = { "rustfmt" },
 				nix = { "alejandra", "nixfmt" },
 			})

@@ -100,24 +100,56 @@ local function run_bootstrap()
 	end
 
 	local ran_any = false
+	local ran_mason = false
+	local ran_treesitter = false
 
 	local mason_packages = get_mason_packages()
 	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
 		ran_any = true
-		vim.cmd("silent! MasonInstall " .. table.concat(mason_packages, " "))
+		local ok = pcall(vim.cmd, "silent! MasonInstall " .. table.concat(mason_packages, " "))
+		if ok then
+			ran_mason = true
+		end
 	end
 
 	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
 		ran_any = true
-		vim.cmd("silent! TSInstall " .. table.concat(treesitter_languages, " "))
+		local ok = pcall(vim.cmd, "silent! TSInstall " .. table.concat(treesitter_languages, " "))
+		if ok then
+			ran_treesitter = true
+		end
 	end
 
-	if ran_any then
+	if ran_any and (ran_mason or ran_treesitter) then
 		write_done_marker()
 		vim.schedule(function()
 			vim.notify("Ghostty first-launch bootstrap started (Mason + Treesitter).", vim.log.levels.INFO)
 		end)
 	end
+end
+
+local function bootstrap_when_ready(max_attempts, delay_ms)
+	local attempts = 0
+	local function tick()
+		if marker_exists() then
+			return
+		end
+
+		attempts = attempts + 1
+		local has_mason = vim.fn.exists(":MasonInstall") == 2
+		local has_treesitter = vim.fn.exists(":TSInstall") == 2
+
+		if has_mason or has_treesitter then
+			run_bootstrap()
+			return
+		end
+
+		if attempts < max_attempts then
+			vim.defer_fn(tick, delay_ms)
+		end
+	end
+
+	vim.defer_fn(tick, delay_ms)
 end
 
 function M.setup()
@@ -131,17 +163,12 @@ function M.setup()
 		return
 	end
 
-	vim.api.nvim_create_autocmd("User", {
-		pattern = "VeryLazy",
-		once = true,
-		callback = function()
-			run_bootstrap()
-		end,
-	})
-
 	vim.api.nvim_create_user_command("GhosttyBootstrap", function()
 		run_bootstrap()
 	end, { desc = "Re-run Ghostty managed Neovim bootstrap installs" })
+
+	-- Don't rely on VeryLazy timing; keep retrying briefly until commands exist.
+	bootstrap_when_ready(40, 250)
 end
 
 return M

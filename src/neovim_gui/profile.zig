@@ -119,15 +119,18 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     const target_dir = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim", .{home});
     defer alloc.free(target_dir);
 
-    // If the managed profile already exists, keep user modifications untouched.
-    if (std.fs.accessAbsolute(target_dir, .{})) |_| {
-        return;
-    } else |_| {}
-
     // Ensure parent path exists.
     var home_dir = try std.fs.openDirAbsolute(home, .{});
     defer home_dir.close();
     try home_dir.makePath(".config/ghostty/nvim");
+
+    // First launch: copy full bundled profile.
+    if (std.fs.accessAbsolute(target_dir, .{})) |_| {
+        // Existing managed profile: only backfill missing bundled files so users
+        // keep their edits while still getting newly added managed defaults.
+        try copyMissingFilesRecursive(alloc, source_dir, target_dir);
+        return;
+    } else |_| {}
 
     try copyDirRecursive(alloc, source_dir, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
@@ -157,4 +160,70 @@ fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []co
             else => {},
         }
     }
+}
+
+fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {
+    var source = try std.fs.openDirAbsolute(source_path, .{ .iterate = true });
+    defer source.close();
+
+    var target = try std.fs.openDirAbsolute(target_path, .{});
+    defer target.close();
+
+    // Migration guard:
+    // If users already have the managed extras inside lua/plugins/init.lua
+    // from older builds, skip backfilling ghostty_extras.lua to avoid duplicate specs.
+    const target_plugins_init = try std.fmt.allocPrint(alloc, "{s}/lua/plugins/init.lua", .{target_path});
+    defer alloc.free(target_plugins_init);
+    const init_has_managed_extras = fileContainsAny(
+        alloc,
+        target_plugins_init,
+        &.{
+            "folke/noice.nvim",
+            "parkers0405/hlchunk.nvim",
+            "esmuellert/codediff.nvim",
+        },
+    ) catch false;
+
+    var walker = try source.walk(alloc);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        switch (entry.kind) {
+            .directory => {
+                try target.makePath(entry.path);
+            },
+            .file => {
+                if (init_has_managed_extras and std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua")) {
+                    continue;
+                }
+
+                if (std.fs.path.dirname(entry.path)) |parent| {
+                    try target.makePath(parent);
+                }
+
+                if (target.access(entry.path, .{})) |_| {
+                    continue;
+                } else |_| {}
+
+                try source.copyFile(entry.path, target, entry.path, .{});
+            },
+            else => {},
+        }
+    }
+}
+
+fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {
+    var file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    for (needles) |needle| {
+        if (std.mem.indexOf(u8, data, needle) != null) return true;
+    }
+    return false;
 }

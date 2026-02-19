@@ -1980,6 +1980,22 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // If neither, we can skip the expensive rebuild entirely.
             const content_dirty = nvim.dirty;
             var scroll_dirty = self.scroll_animating or self.cursor_animating or self.sonicboom_active or self.peer_animating;
+            var panel_dirty = false;
+
+            if (self.panel) |panel| {
+                panel.processOutput() catch |err| {
+                    log.warn("error processing panel output in nvim mode err={}", .{err});
+                };
+
+                const panel_dt: f32 = 1.0 / 120.0;
+                const prev_progress = panel.slide.progress;
+                _ = panel.animate(panel_dt);
+
+                // Capture the final settle frame too: slide.update() can return
+                // false on the same tick progress snaps to 0/1.
+                const progress_changed = @abs(panel.slide.progress - prev_progress) > 0.0001;
+                panel_dirty = panel.isDirty() or progress_changed;
+            }
 
             // Also check individual window dirty flags
             if (!content_dirty and !scroll_dirty) {
@@ -1994,7 +2010,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Also check if collab peers have updated (triggers ghost cursor rendering)
             const collab_dirty = if (self.collab_state) |cs| cs.peer_count > 0 else false;
-            const needs_rebuild = content_dirty or scroll_dirty or preview_changed or collab_dirty;
+            const needs_rebuild = content_dirty or scroll_dirty or preview_changed or collab_dirty or panel_dirty;
 
             if (needs_rebuild) {
                 // Build generic GuiState via the adapter, then render.
@@ -2130,11 +2146,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Overlay panel content on top of Neovim cells (same as terminal path).
             if (self.panel) |panel| {
-                panel.processOutput() catch |err| {
-                    log.warn("error processing panel output in nvim mode err={}", .{err});
-                };
-                const panel_dt: f32 = 1.0 / 120.0;
-                _ = panel.animate(panel_dt);
                 if (panel.isVisible()) {
                     self.rebuildCellsFromPanel(panel) catch |err| {
                         log.warn("error rebuilding panel cells in nvim mode err={}", .{err});

@@ -73,6 +73,15 @@ return {
 							cond = function()
 								return vim.g.ghostty_bootstrap_quiet == true
 							end,
+							event = "msg_show",
+						},
+						opts = { skip = true },
+					},
+					{
+						filter = {
+							cond = function()
+								return vim.g.ghostty_bootstrap_quiet == true
+							end,
 							any = {
 								{ event = "notify", find = "[Ii]nstall" },
 								{ event = "notify", find = "[Dd]ownload" },
@@ -182,16 +191,22 @@ return {
 	},
 
 	{
-		"esmuellert/codediff.nvim",
+		"sindrets/diffview.nvim",
 		dependencies = {
 			"nvim-lua/plenary.nvim",
+			"nvim-tree/nvim-web-devicons",
 		},
 		cmd = {
-			"CodeDiff",
-			"CodeDiffSplit",
-			"CodeDiffClose",
+			"DiffviewOpen",
+			"DiffviewFileHistory",
+			"DiffviewClose",
+			"DiffviewToggleFiles",
+			"DiffviewFocusFiles",
+			"DiffviewRefresh",
 		},
-		opts = {},
+		opts = {
+			enhanced_diff_hl = true,
+		},
 	},
 
 	{
@@ -225,6 +240,36 @@ return {
 				lsp_fallback = true,
 			}
 			return opts
+		end,
+	},
+
+	{
+		"neovim/nvim-lspconfig",
+		event = "User FilePost",
+		config = function()
+			require("nvchad.configs.lspconfig").defaults()
+			require("configs.lsp_defaults").setup()
+		end,
+	},
+
+	{
+		"rachartier/tiny-inline-diagnostic.nvim",
+		event = "VeryLazy",
+		priority = 900,
+		config = function()
+			require("tiny-inline-diagnostic").setup({
+				preset = "modern",
+				transparent_bg = true,
+				transparent_cursorline = true,
+				options = {
+					show_source = { enabled = true, if_many = true },
+					show_code = true,
+					throttle = 20,
+					enable_on_insert = false,
+					multilines = { enabled = true, always_show = false },
+					overflow = { mode = "wrap" },
+				},
+			})
 		end,
 	},
 

@@ -1,7 +1,7 @@
 local M = {}
 
 local uv = vim.uv or vim.loop
-local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v2.done"
+local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v3.done"
 local setup_done = vim.g.ghostty_bootstrap_setup_done
 local quiet_state = nil
 
@@ -10,8 +10,6 @@ local treesitter_languages = {
 	"c",
 	"cpp",
 	"css",
-	"dockerfile",
-	"go",
 	"html",
 	"javascript",
 	"json",
@@ -22,7 +20,6 @@ local treesitter_languages = {
 	"python",
 	"query",
 	"rust",
-	"sql",
 	"toml",
 	"tsx",
 	"typescript",
@@ -40,7 +37,6 @@ local default_mason_packages = {
 	"html-lsp",
 	"css-lsp",
 	"typescript-language-server",
-	"tailwindcss-language-server",
 	"clangd",
 	"rust-analyzer",
 	"nixd",
@@ -91,12 +87,17 @@ local function is_install_noise(msg)
 	local patterns = {
 		"[Ii]nstall",
 		"[Dd]ownload",
+		"[Ee]xtract",
+		"[Rr]eceiv",
 		"[Cc]lon",
 		"[Cc]ompil",
 		"[Uu]pdat",
 		"[Pp]arser",
+		"[Pp]ackage",
 		"[Tt]reesitter",
 		"[Mm]ason",
+		"^%s*%d+/%d+",
+		"%[%d+/%d+%]",
 		"registry",
 		"already installed",
 	}
@@ -119,6 +120,8 @@ local function disable_quiet_mode()
 
 	vim.notify = quiet_state.original_notify
 	vim.notify_once = quiet_state.original_notify_once
+	vim.api.nvim_echo = quiet_state.original_echo
+	_G.print = quiet_state.original_print
 	quiet_state = nil
 	vim.g.ghostty_bootstrap_quiet = nil
 
@@ -151,12 +154,16 @@ local function enable_quiet_mode()
 
 	local original_notify = vim.notify
 	local original_notify_once = vim.notify_once
+	local original_echo = vim.api.nvim_echo
+	local original_print = _G.print
 	quiet_state = {
 		active = true,
 		generation = 0,
 		suppressed = 0,
 		original_notify = original_notify,
 		original_notify_once = original_notify_once,
+		original_echo = original_echo,
+		original_print = original_print,
 	}
 	vim.g.ghostty_bootstrap_quiet = true
 
@@ -178,6 +185,38 @@ local function enable_quiet_mode()
 			return
 		end
 		return original_notify_once(msg, level, opts)
+	end
+
+	vim.api.nvim_echo = function(chunks, history, opts)
+		local parts = {}
+		if type(chunks) == "table" then
+			for _, chunk in ipairs(chunks) do
+				if type(chunk) == "table" and type(chunk[1]) == "string" then
+					table.insert(parts, chunk[1])
+				end
+			end
+		end
+		local msg = table.concat(parts, "")
+		if quiet_state and quiet_state.active and is_install_noise(msg) then
+			quiet_state.suppressed = quiet_state.suppressed + 1
+			schedule_quiet_disable(90000)
+			return
+		end
+		return original_echo(chunks, history, opts)
+	end
+
+	_G.print = function(...)
+		local parts = {}
+		for i = 1, select("#", ...) do
+			parts[#parts + 1] = tostring(select(i, ...))
+		end
+		local msg = table.concat(parts, " ")
+		if quiet_state and quiet_state.active and is_install_noise(msg) then
+			quiet_state.suppressed = quiet_state.suppressed + 1
+			schedule_quiet_disable(90000)
+			return
+		end
+		return original_print(...)
 	end
 
 	schedule_quiet_disable(180000)
@@ -203,7 +242,7 @@ local function run_bootstrap()
 	local mason_packages = get_mason_packages()
 	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
 		ran_any = true
-		local ok = pcall(vim.cmd, "silent! MasonInstall " .. table.concat(mason_packages, " "))
+		local ok = pcall(vim.cmd, "silent! noautocmd MasonInstall " .. table.concat(mason_packages, " "))
 		if ok then
 			ran_mason = true
 		end
@@ -211,7 +250,7 @@ local function run_bootstrap()
 
 	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
 		ran_any = true
-		local ok = pcall(vim.cmd, "silent! TSInstall " .. table.concat(treesitter_languages, " "))
+		local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
 		if ok then
 			ran_treesitter = true
 		end

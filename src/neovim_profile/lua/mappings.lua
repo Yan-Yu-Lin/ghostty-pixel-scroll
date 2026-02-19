@@ -76,4 +76,4 @@ map("n", "<leader>v", function()
 	require("nvchad.term").toggle({ pos = "vsp", id = "vtoggleTerm", size = 0.3 })
 end, { desc = "Toggle vertical terminal" })
 
-map("n", "<leader>gd", "<cmd>CodeDiff<CR>", { desc = "Open CodeDiff" })
+map("n", "<leader>gd", "<cmd>DiffviewOpen<CR>", { desc = "Open Diffview" })

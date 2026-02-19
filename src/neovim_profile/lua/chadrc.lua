@@ -43,7 +43,6 @@ M.mason = {
 		"html-lsp",
 		"css-lsp",
 		"typescript-language-server",
-		"tailwindcss-language-server",
 		"clangd",
 		"rust-analyzer",
 		"nixd",

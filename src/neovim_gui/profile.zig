@@ -134,12 +134,14 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
+        try migrateManagedMappingsDiffview(alloc, target_dir);
         return;
     } else |_| {}
 
     try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
+    try migrateManagedMappingsDiffview(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
 }
 
@@ -187,6 +189,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
         &.{
             "folke/noice.nvim",
             "parkers0405/hlchunk.nvim",
+            "sindrets/diffview.nvim",
             "esmuellert/codediff.nvim",
         },
     ) catch false;
@@ -317,6 +320,49 @@ fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !voi
     log.info("cleaned managed nvim telescope keymap overrides", .{});
 }
 
+fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !void {
+    const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
+    defer alloc.free(mappings_path);
+
+    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    if (std.mem.indexOf(u8, data, "<cmd>CodeDiff<CR>") == null) return;
+
+    const updated_cmd = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        "<cmd>CodeDiff<CR>",
+        "<cmd>DiffviewOpen<CR>",
+    );
+    defer alloc.free(updated_cmd);
+
+    const updated_desc = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        updated_cmd,
+        "Open CodeDiff",
+        "Open Diffview",
+    );
+    defer alloc.free(updated_desc);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/mappings.lua",
+        .data = updated_desc,
+    });
+
+    log.info("migrated managed nvim mappings to Diffview", .{});
+}
+
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {
     var file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
@@ -350,7 +396,9 @@ fn isLegacyManagedPluginsInit(alloc: Allocator, file_path: []const u8) !bool {
 
     const has_noice = std.mem.indexOf(u8, data, "folke/noice.nvim") != null;
     const has_hlchunk = std.mem.indexOf(u8, data, "parkers0405/hlchunk.nvim") != null;
-    const has_codediff = std.mem.indexOf(u8, data, "esmuellert/codediff.nvim") != null;
+    const has_diff_plugin =
+        std.mem.indexOf(u8, data, "sindrets/diffview.nvim") != null or
+        std.mem.indexOf(u8, data, "esmuellert/codediff.nvim") != null;
 
-    return has_noice and has_hlchunk and has_codediff;
+    return has_noice and has_hlchunk and has_diff_plugin;
 }

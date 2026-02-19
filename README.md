@@ -229,6 +229,26 @@ Every push to `main` can publish a nightly prerelease build via GitHub Actions.
 
 `neovim-gui-config-mode = managed` is the default. Ghostty seeds a managed NvChad profile at `~/.config/ghostty/nvim` on first run and launches that profile. Set `neovim-gui-config-mode = user` to always use `~/.config/nvim`, or `auto` to prefer user config only when it exists.
 
+### Managed Default Profile (New)
+
+`nvim-gui` now defaults to a prebuilt managed profile (`neovim-gui-config-mode = managed`) so new users get a ready-to-use NvChad setup with Ghostty defaults immediately.
+
+- Managed default location: `~/.config/ghostty/nvim`
+- This is isolated from user Neovim config (`~/.config/nvim`)
+- First launch seeds the managed profile automatically
+
+If you want your own config instead:
+
+```ini
+neovim-gui-config-mode = user
+```
+
+Or automatically prefer user config only when it exists:
+
+```ini
+neovim-gui-config-mode = auto
+```
+
 ### Collaboration
 
 | Option         | Default   | Description                                                           |

@@ -32,7 +32,7 @@ local o = vim.opt
 o.wrap = true
 o.linebreak = true
 o.breakindent = true
-o.showbreak = "> "
+o.showbreak = "↪ "
 
 o.virtualedit = "all"
 

@@ -129,10 +129,12 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         // Existing managed profile: only backfill missing bundled files so users
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
+        try migrateManagedOptionsShowbreak(alloc, target_dir);
         return;
     } else |_| {}
 
     try copyDirRecursive(alloc, source_dir, target_dir);
+    try migrateManagedOptionsShowbreak(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
 }
 
@@ -233,6 +235,41 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
             else => {},
         }
     }
+}
+
+fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !void {
+    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
+    defer alloc.free(options_path);
+
+    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const old_showbreak = "o.showbreak = \"> \"";
+    if (std.mem.indexOf(u8, data, old_showbreak) == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        old_showbreak,
+        "o.showbreak = \"\xE2\x86\xAA \"",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/options.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim options showbreak marker", .{});
 }
 
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {

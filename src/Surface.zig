@@ -2015,11 +2015,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
 
         .enter_neovim_gui => {
             // OSC 1338 - Enter Neovim GUI mode dynamically
-            if (self.nvim_gui == null and self.config.neovim_gui_socket == null) {
+            if (self.nvim_gui == null) {
                 log.info("entering Neovim GUI mode via OSC 1338", .{});
+
+                // OSC-triggered entry should always be spawn mode. Restore the
+                // previous value if init fails so retries continue to work.
+                const prev_socket = self.config.neovim_gui_socket;
                 self.config.neovim_gui_socket = "spawn";
                 self.initNeovimGui() catch |err| {
-                    log.err("failed to init Neovim GUI: {}", .{err});
+                    self.config.neovim_gui_socket = prev_socket;
+                    log.err("failed to init Neovim GUI via OSC 1338: {}", .{err});
                 };
             }
         },

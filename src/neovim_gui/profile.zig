@@ -34,7 +34,7 @@ pub fn resolveMode(mode: Mode) ResolvedMode {
 /// Return true if ~/.config/nvim exists.
 pub fn userConfigExists() bool {
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = internal_os.home(&home_buf) catch return false orelse return false;
+    const home = (internal_os.home(&home_buf) catch return false) orelse return false;
 
     var home_dir = std.fs.openDirAbsolute(home, .{}) catch return false;
     defer home_dir.close();
@@ -81,6 +81,14 @@ pub fn applyManagedEnv(alloc: Allocator, env: *std.process.EnvMap) !void {
     // NVIM_APPNAME = nvim so stdpaths resolve under the XDG roots above.
     // Example: config => ~/.config/ghostty/nvim
     try env.put("NVIM_APPNAME", "nvim");
+}
+
+/// Get the absolute init.lua path for Ghostty-managed profile.
+/// Caller owns returned memory.
+pub fn managedInitPath(alloc: Allocator) !?[]const u8 {
+    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const home = (internal_os.home(&home_buf) catch return null) orelse return null;
+    return try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim/init.lua", .{home});
 }
 
 /// Ensure the managed profile exists at ~/.config/ghostty/nvim by seeding it

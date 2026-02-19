@@ -841,7 +841,24 @@ pub const IoThread = struct {
                 // Spawn nvim --headless --embed
                 // Note: --embed mode still loads user config (init.lua/init.vim)
                 // unlike --headless alone which skips some initialization
-                var child = std.process.Child.init(&.{ "nvim", "--embed" }, self.alloc);
+                var managed_init: ?[]const u8 = null;
+                defer if (managed_init) |p| self.alloc.free(p);
+                if (self.profile_mode == .managed) {
+                    managed_init = try profile.managedInitPath(self.alloc);
+                }
+
+                var argv: std.ArrayList([]const u8) = .empty;
+                defer argv.deinit(self.alloc);
+                try argv.append(self.alloc, "nvim");
+                if (managed_init) |init_path| {
+                    // Some distro wrappers force their own `-u ~/.config/nvim/init.lua`.
+                    // Append our managed `-u` so the last flag wins.
+                    try argv.append(self.alloc, "-u");
+                    try argv.append(self.alloc, init_path);
+                }
+                try argv.append(self.alloc, "--embed");
+
+                var child = std.process.Child.init(argv.items, self.alloc);
                 child.stdin_behavior = .Pipe;
                 child.stdout_behavior = .Pipe;
                 child.stderr_behavior = .Inherit;

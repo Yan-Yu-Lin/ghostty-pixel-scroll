@@ -317,17 +317,37 @@ pub const NeovimGui = struct {
 
         // Support --clean via GHOSTTY_NVIM_ARGS
         const extra_args_str = std.posix.getenv("GHOSTTY_NVIM_ARGS");
-        const args: []const []const u8 = if (extra_args_str) |extra| blk: {
-            if (std.mem.indexOf(u8, extra, "--clean")) |_| {
-                break :blk &.{ "nvim", "--clean", "--headless", "--listen", socket_path };
-            }
-            break :blk &.{ "nvim", "--headless", "--listen", socket_path };
-        } else &.{ "nvim", "--headless", "--listen", socket_path };
+        const use_clean = if (extra_args_str) |extra|
+            std.mem.indexOf(u8, extra, "--clean") != null
+        else
+            false;
+
+        var managed_init: ?[]const u8 = null;
+        defer if (managed_init) |p| self.alloc.free(p);
+        if (profile_mode == .managed) {
+            managed_init = try profile.managedInitPath(self.alloc);
+        }
+
+        var argv: std.ArrayList([]const u8) = .empty;
+        defer argv.deinit(self.alloc);
+        try argv.append(self.alloc, "nvim");
+        if (managed_init) |init_path| {
+            // Some distro wrappers force their own `-u ~/.config/nvim/init.lua`.
+            // Append our managed `-u` so the last flag wins.
+            try argv.append(self.alloc, "-u");
+            try argv.append(self.alloc, init_path);
+        }
+        if (use_clean) {
+            try argv.append(self.alloc, "--clean");
+        }
+        try argv.append(self.alloc, "--headless");
+        try argv.append(self.alloc, "--listen");
+        try argv.append(self.alloc, socket_path);
 
         // Spawn nvim using std.process.Child, but put it in its own process group.
         // On deinit we kill the entire process group, which catches wrapper scripts
         // and any children nvim may spawn.
-        var child = std.process.Child.init(args, self.alloc);
+        var child = std.process.Child.init(argv.items, self.alloc);
         child.stdin_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
         child.stderr_behavior = .Ignore;

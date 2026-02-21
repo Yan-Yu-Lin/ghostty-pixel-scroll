@@ -182,8 +182,19 @@ fn getScrollCellWrapper(ctx: *const anyopaque, inner_row: u32, col: u32) ?gui.Gu
 
 /// Convert a neovim GridCell + hl_id into a backend-agnostic GuiCell.
 fn gridCellToGui(gc: *const GridCell, w: *const RenderedWindow, nvim: *const NeovimGui) gui.GuiCell {
-    _ = w;
-    const attr = nvim.getHlAttr(gc.hl_id);
+    var attr = nvim.getHlAttr(gc.hl_id);
+
+    // Floating grids can emit hl_id=0 for many cells while expecting float-local
+    // defaults. Use NormalFloat fallback so popup/cmdline backgrounds don't depend
+    // on whichever regular window is focused.
+    if (gc.hl_id == 0 and (w.window_type == .floating or w.window_type == .message)) {
+        if (nvim.normal_float_hl_id) |id| {
+            if (nvim.hl_attrs.get(id)) |normal_float| {
+                attr.foreground = normal_float.foreground orelse attr.foreground;
+                attr.background = normal_float.background orelse attr.background;
+            }
+        }
+    }
     var cell: gui.GuiCell = .{
         .style = .{
             .fg = attr.foreground.?,

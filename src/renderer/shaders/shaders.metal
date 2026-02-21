@@ -561,15 +561,18 @@ fragment float4 cell_bg_fragment(
           new_grid_pos.y >= 0 && new_grid_pos.y < uniforms.grid_size.y) {
         int new_cell_index = new_grid_pos.y * uniforms.grid_size.x + new_grid_pos.x;
         short new_offset_fixed = cells[new_cell_index].offset_y_fixed;
+        uchar new_wid = cells[new_cell_index].window_id;
         
         // Only use the new position if it's also a scrolling cell (not fixed)
         if (new_offset_fixed != 0 || allow_fixed_overlap) {
           grid_pos = new_grid_pos;
         } else {
-          // If scrolling content would map into a fixed row, clip this fragment
-          // instead of reusing the original scrolling color. Reusing causes
-          // transient stretched color smears at scroll boundaries.
-          clip_fixed_overlap = true;
+          // Clip only when overlapping a fixed row that belongs to an actual
+          // window region. If destination is outside any window (wid==0),
+          // keep source color so edge rows don't flash/tint during scroll.
+          if (new_wid != 0) {
+            clip_fixed_overlap = true;
+          }
         }
       }
     }

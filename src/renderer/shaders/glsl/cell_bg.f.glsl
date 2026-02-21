@@ -83,15 +83,18 @@ vec4 cell_bg() {
                 int new_cell_index = new_grid_pos.y * int(grid_size.x) + new_grid_pos.x;
                 int new_offset_raw = cells[new_cell_index].offset_and_winid;
                 int new_offset_i16 = (new_offset_raw << 16) >> 16;
+                uint new_wid = uint(cells[new_cell_index].offset_and_winid >> 16) & 0xFFu;
                 
                 // Only use the new position if it's also a scrolling cell (not fixed)
                 if (new_offset_i16 != 0 || allow_fixed_overlap) {
                     grid_pos = new_grid_pos;
                 } else {
-                    // If scrolling content would map into a fixed row, clip this fragment
-                    // instead of reusing the original scrolling color. Reusing causes the
-                    // transient "stretched" color smear on scroll boundaries.
-                    clip_fixed_overlap = true;
+                    // Clip only when overlapping a fixed row that belongs to an actual
+                    // window region. If the destination is outside any window (wid==0),
+                    // keep the source color so the edge row doesn't flash/tint during scroll.
+                    if (new_wid != 0u) {
+                        clip_fixed_overlap = true;
+                    }
                 }
             }
         }

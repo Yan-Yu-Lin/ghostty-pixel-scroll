@@ -312,6 +312,7 @@ pub const Window = extern struct {
             // waiting possibly a few event loop ticks for it to sync from
             // the surface.
             if (config.title) |v| self.as(gtk.Window).setTitle(v);
+            if (config.title == null) self.as(gtk.Window).setTitle("Ghostty");
         }
 
         // We always sync our appearance at the end because loading our
@@ -1399,11 +1400,14 @@ pub const Window = extern struct {
     ) callconv(.c) void {
         const priv = self.private();
 
-        // Always reset our binding source in case we have no pages.
-        priv.tab_bindings.setSource(null);
-
         // Get our current page which MUST be a Tab object.
-        const page = priv.tab_view.getSelectedPage() orelse return;
+        // Keep a non-empty fallback title when no page is selected so
+        // external Wayland tab bars (e.g. Hy3) never observe an empty title.
+        const page = priv.tab_view.getSelectedPage() orelse {
+            priv.tab_bindings.setSource(null);
+            self.as(gtk.Window).setTitle("Ghostty");
+            return;
+        };
         const child = page.getChild();
         assert(gobject.ext.isA(child, Tab));
 

@@ -1996,7 +1996,9 @@ pub const Surface = extern struct {
         const priv = self.private();
         if (priv.title) |v| glib.free(@ptrCast(@constCast(v)));
         priv.title = null;
-        if (title) |v| priv.title = glib.ext.dupeZ(u8, v);
+        if (title) |v| {
+            if (v.len > 0) priv.title = glib.ext.dupeZ(u8, v);
+        }
         self.as(gobject.Object).notifyByPspec(properties.title.impl.param_spec);
     }
 

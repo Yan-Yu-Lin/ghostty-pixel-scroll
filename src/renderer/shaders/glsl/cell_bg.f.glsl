@@ -68,6 +68,7 @@ vec4 cell_bg() {
         // Read offset as int, but it's stored as i16 in lower 16 bits - sign extend it
         int offset_raw = cells[cell_index].offset_and_winid;
         int offset_i16 = (offset_raw << 16) >> 16; // Sign extend from 16-bit to 32-bit
+        uint cur_wid = uint(cells[cell_index].offset_and_winid >> 16) & 0xFFu;
         
         // Only apply offset to cells that have one (non-zero)
         // Cells with offset=0 are statuslines/margins - they stay fixed and opaque
@@ -92,7 +93,7 @@ vec4 cell_bg() {
                     // Clip only when overlapping a fixed row that belongs to an actual
                     // window region. If the destination is outside any window (wid==0),
                     // keep the source color so the edge row doesn't flash/tint during scroll.
-                    if (new_wid != 0u) {
+                    if (new_wid != 0u && new_wid == cur_wid) {
                         clip_fixed_overlap = true;
                     }
                 }

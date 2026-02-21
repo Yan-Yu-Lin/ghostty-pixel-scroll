@@ -40,16 +40,24 @@ void main() {
         vec2 adjusted_coord = gl_FragCoord.xy;
         adjusted_coord.y += pixel_scroll_offset_y;
         ivec2 dest_grid_pos = ivec2(floor((adjusted_coord - grid_padding.wx) / cell_size));
+        uint src_wid = 0u;
+        ivec2 src_grid_pos = ivec2(in_data.cell_grid_pos);
+        if (src_grid_pos.x >= 0 && src_grid_pos.x < int(grid_size.x) &&
+            src_grid_pos.y >= 0 && src_grid_pos.y < int(grid_size.y)) {
+            int src_index = src_grid_pos.y * int(grid_size.x) + src_grid_pos.x;
+            src_wid = uint(cells[src_index].offset_and_winid >> 16) & 0xFFu;
+        }
         
         if (dest_grid_pos.x >= 0 && dest_grid_pos.x < int(grid_size.x) &&
             dest_grid_pos.y >= 0 && dest_grid_pos.y < int(grid_size.y)) {
             int cell_index = dest_grid_pos.y * int(grid_size.x) + dest_grid_pos.x;
             int offset_raw = cells[cell_index].offset_and_winid;
             int offset_i16 = (offset_raw << 16) >> 16;
+            uint dest_wid = uint(cells[cell_index].offset_and_winid >> 16) & 0xFFu;
             
             // If dest cell is fixed (offset=0) but this text has offset, clip it
             // This prevents scrolling text from bleeding into statusline
-            if (offset_i16 == 0) {
+            if (offset_i16 == 0 && dest_wid != 0u && dest_wid == src_wid) {
                 discard;
             }
         }

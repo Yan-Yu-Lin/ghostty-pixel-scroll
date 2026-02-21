@@ -547,6 +547,7 @@ fragment float4 cell_bg_fragment(
       grid_pos.y >= 0 && grid_pos.y < uniforms.grid_size.y) {
     int cell_index = grid_pos.y * uniforms.grid_size.x + grid_pos.x;
     short per_cell_offset_fixed = cells[cell_index].offset_y_fixed;
+    uchar cur_wid = cells[cell_index].window_id;
     
     // Only apply offset to cells that have one (non-zero)
     // Cells with offset=0 are statuslines/margins - they stay fixed and opaque
@@ -570,7 +571,7 @@ fragment float4 cell_bg_fragment(
           // Clip only when overlapping a fixed row that belongs to an actual
           // window region. If destination is outside any window (wid==0),
           // keep source color so edge rows don't flash/tint during scroll.
-          if (new_wid != 0) {
+          if (new_wid != 0 && new_wid == cur_wid) {
             clip_fixed_overlap = true;
           }
         }
@@ -1021,14 +1022,20 @@ fragment float4 cell_text_fragment(
     float2 adjusted_pos = in.position.xy;
     adjusted_pos.y += uniforms.pixel_scroll_offset_y;
     int2 dest_grid_pos = int2(floor((adjusted_pos - uniforms.grid_padding.wx) / uniforms.cell_size));
+    uchar src_wid = 0;
+    if (in.grid_pos.x < uniforms.grid_size.x && in.grid_pos.y < uniforms.grid_size.y) {
+      int src_index = int(in.grid_pos.y) * uniforms.grid_size.x + int(in.grid_pos.x);
+      src_wid = bg_cells[src_index].window_id;
+    }
     
     if (dest_grid_pos.x >= 0 && dest_grid_pos.x < uniforms.grid_size.x &&
         dest_grid_pos.y >= 0 && dest_grid_pos.y < uniforms.grid_size.y) {
       int cell_index = dest_grid_pos.y * uniforms.grid_size.x + dest_grid_pos.x;
       short dest_offset = bg_cells[cell_index].offset_y_fixed;
+      uchar dest_wid = bg_cells[cell_index].window_id;
       
       // If dest cell is fixed (offset=0) but this text has offset, clip it
-      if (dest_offset == 0) {
+      if (dest_offset == 0 && dest_wid != 0 && dest_wid == src_wid) {
         discard_fragment();
       }
     }

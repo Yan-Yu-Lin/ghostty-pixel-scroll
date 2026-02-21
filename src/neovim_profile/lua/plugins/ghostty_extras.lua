@@ -20,9 +20,9 @@ return {
 					NoiceCmdlineIcon = "FloatTitle",
 					NoicePopupmenu = "Normal",
 					NoicePopupmenuBorder = "FloatBorder",
-					NoicePopupmenuSelected = "CursorLine",
+					NoicePopupmenuSelected = "PmenuSel",
 					NoicePopupmenuMatch = "Special",
-					BlinkCmpMenuSelection = "CursorLine",
+					BlinkCmpMenuSelection = "PmenuSel",
 					NvimTreeCursorLine = "CursorLine",
 					NvimTreeCursorLineNr = "CursorLineNr",
 				}
@@ -42,7 +42,10 @@ return {
 				pattern = "NvimTree",
 				callback = set_noice_theme_links,
 			})
-			set_noice_theme_links()
+			vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter", "CmdlineEnter" }, {
+				group = noice_theme_group,
+				callback = set_noice_theme_links,
+			})
 
 			require("noice").setup({
 				cmdline = {
@@ -149,6 +152,11 @@ return {
 					},
 				},
 			})
+
+			set_noice_theme_links()
+			for _, ms in ipairs({ 50, 150, 300, 700 }) do
+				vim.defer_fn(set_noice_theme_links, ms)
+			end
 		end,
 	},
 

@@ -61,7 +61,7 @@ void main() {
             
             // If dest cell is fixed (offset=0) but this text has offset, clip it
             // This prevents scrolling text from bleeding into statusline
-            if (offset_i16 == 0 && ((src_is_float) or (dest_wid != 0u && dest_wid == src_wid))) {
+            if (offset_i16 == 0 && (src_is_float || (dest_wid != 0u && dest_wid == src_wid))) {
                 discard;
             }
         }

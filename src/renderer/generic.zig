@@ -2539,6 +2539,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const wc: u16 = @intFromFloat(w.grid_col);
                 const wr: u16 = @intFromFloat(w.grid_row);
                 const is_msg = w.window_type == .message;
+                const is_float_win = (w.window_type == .floating or w.window_type == .message);
                 var py: u32 = 0;
                 while (py < w.render_height) : (py += 1) {
                     var px: u32 = 0;
@@ -2547,10 +2548,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         const sx = @as(u16, @intCast(px)) + wc;
                         if (sy >= rows or sx >= cols) continue;
                         if (occlusion_map[sy * cols + sx] != 0) continue;
-                        if (is_msg) {
-                            // Message windows must claim their full rect (including
-                            // margins) so border rows and padding keep their bg during
-                            // scroll/winbar updates.
+                        if (is_float_win) {
+                            // Floating windows (including messages) must claim their
+                            // full rect (including margins) so border rows and padding
+                            // keep their bg during row/winbar/scroll updates.
                             occlusion_map[sy * cols + sx] = w.id;
                         } else {
                             if (py < w.margin_top or py >= (w.render_height -| w.margin_bottom)) continue;
@@ -2580,6 +2581,30 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const cell_alpha: u8 = if (is_float) win_opacity else 255;
                 const cell_offset_fixed: i16 = if (is_scrolling) bg_offset_fixed else 0;
                 const inner_size = render_height -| window.margin_top -| window.margin_bottom;
+                // Null cells in floating/message windows can appear transiently
+                // during row/winbar updates. Use the window's own default bg as
+                // fallback so border rows don't flash to the root bg.
+                var window_base_bg: u32 = default_bg;
+                if (is_float) {
+                    var found_base = false;
+                    var probe_row: u32 = 0;
+                    while (probe_row < render_height and !found_base) : (probe_row += 1) {
+                        var probe_col: u32 = 0;
+                        while (probe_col < render_width) : (probe_col += 1) {
+                            if (window.getCell(window.ctx, probe_row, probe_col)) |probe_cell| {
+                                window_base_bg = if (probe_cell.style.reverse)
+                                    probe_cell.style.fg
+                                else
+                                    probe_cell.style.bg;
+                                found_base = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                const base_bg_r: u8 = @intCast((window_base_bg >> 16) & 0xFF);
+                const base_bg_g: u8 = @intCast((window_base_bg >> 8) & 0xFF);
+                const base_bg_b: u8 = @intCast(window_base_bg & 0xFF);
 
                 // --- Top margin (winbar etc) — no scroll, no occlusion ---
                 var row: u32 = 0;
@@ -2610,7 +2635,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         } else {
                             // Null cell: write default bg with window_id for SDF rounding.
                             self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ bg_r, bg_g, bg_b, win_opacity },
+                                .color = .{ base_bg_r, base_bg_g, base_bg_b, win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
@@ -2663,9 +2688,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     const cr: u16 = @intCast((bg >> 16) & 0xFF);
                                     const cg: u16 = @intCast((bg >> 8) & 0xFF);
                                     const cb: u16 = @intCast(bg & 0xFF);
-                                    const dr: u16 = @intCast((default_bg >> 16) & 0xFF);
-                                    const dg: u16 = @intCast((default_bg >> 8) & 0xFF);
-                                    const db: u16 = @intCast(default_bg & 0xFF);
+                                    const dr: u16 = @intCast((window_base_bg >> 16) & 0xFF);
+                                    const dg: u16 = @intCast((window_base_bg >> 8) & 0xFF);
+                                    const db: u16 = @intCast(window_base_bg & 0xFF);
                                     self.cells.bgCell(sy, sx).* = .{
                                         .color = .{ @intCast((cr * ba + dr * ia) / 255), @intCast((cg * ba + dg * ia) / 255), @intCast((cb * ba + db * ia) / 255), cell_alpha },
                                         .offset_y_fixed = cell_offset_fixed,
@@ -2693,7 +2718,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         } else if (!is_extra) {
                             // Null cell: default bg with scroll offset + window_id.
                             self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ bg_r, bg_g, bg_b, cell_alpha },
+                                .color = .{ base_bg_r, base_bg_g, base_bg_b, cell_alpha },
                                 .offset_y_fixed = cell_offset_fixed,
                                 .window_id = cur_wid,
                             };
@@ -2736,7 +2761,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
                         } else {
                             self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ bg_r, bg_g, bg_b, win_opacity },
+                                .color = .{ base_bg_r, base_bg_g, base_bg_b, win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };

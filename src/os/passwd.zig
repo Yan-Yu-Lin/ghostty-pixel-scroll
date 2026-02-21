@@ -108,7 +108,7 @@ pub fn get(alloc: Allocator) !Entry {
         const output = output: {
             var output: std.ArrayListUnmanaged(u8) = .{};
             while (true) {
-                const n = posix.read(pty.master, &buf) catch |err| {
+                const n = posix.read(pty.master, buf) catch |err| {
                     switch (err) {
                         // EIO is triggered at the end since we closed our
                         // child side. This is just EOF for this. I'm not sure

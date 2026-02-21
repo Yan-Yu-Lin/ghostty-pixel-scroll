@@ -13,23 +13,79 @@ return {
 		},
 		config = function()
 			local function set_noice_theme_links()
-				local links = {
-					NoiceCmdlinePopup = "Normal",
-					NoiceCmdlinePopupBorder = "FloatBorder",
-					NoiceCmdlinePopupTitle = "FloatTitle",
-					NoiceCmdlineIcon = "FloatTitle",
-					NoicePopupmenu = "Normal",
-					NoicePopupmenuBorder = "FloatBorder",
-					NoicePopupmenuSelected = "PmenuSel",
-					NoicePopupmenuMatch = "Special",
-					BlinkCmpMenuSelection = "PmenuSel",
-					NvimTreeCursorLine = "CursorLine",
-					NvimTreeCursorLineNr = "CursorLineNr",
-				}
-
-				for group_name, target in pairs(links) do
-					pcall(vim.api.nvim_set_hl, 0, group_name, { link = target })
+				local function get_hl(name)
+					local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+					return ok and hl or {}
 				end
+
+				local normal = get_hl("Normal")
+				local float_border = get_hl("FloatBorder")
+				local float_title = get_hl("FloatTitle")
+				local pmenu_sel = get_hl("PmenuSel")
+
+				local popup_bg = normal.bg
+				local popup_fg = normal.fg
+				local border_fg = float_border.fg or popup_fg
+				local title_fg = float_title.fg or popup_fg
+
+				pcall(vim.api.nvim_set_hl, 0, "NoiceCmdlinePopup", {
+					fg = popup_fg,
+					bg = popup_bg,
+					blend = 0,
+				})
+				pcall(vim.api.nvim_set_hl, 0, "NoiceCmdlinePopupBorder", {
+					fg = border_fg,
+					bg = popup_bg,
+					blend = 0,
+				})
+				pcall(vim.api.nvim_set_hl, 0, "NoiceCmdlinePopupTitle", {
+					fg = title_fg,
+					bg = popup_bg,
+					bold = float_title.bold,
+					italic = float_title.italic,
+					blend = 0,
+				})
+				pcall(vim.api.nvim_set_hl, 0, "NoiceCmdlineIcon", {
+					fg = title_fg,
+					bg = popup_bg,
+					bold = float_title.bold,
+					italic = float_title.italic,
+					blend = 0,
+				})
+				pcall(vim.api.nvim_set_hl, 0, "NoicePopupmenu", {
+					fg = popup_fg,
+					bg = popup_bg,
+					blend = 0,
+				})
+				pcall(vim.api.nvim_set_hl, 0, "NoicePopupmenuBorder", {
+					fg = border_fg,
+					bg = popup_bg,
+					blend = 0,
+				})
+
+				if pmenu_sel.fg or pmenu_sel.bg then
+					pcall(vim.api.nvim_set_hl, 0, "NoicePopupmenuSelected", {
+						fg = pmenu_sel.fg,
+						bg = pmenu_sel.bg,
+						bold = pmenu_sel.bold,
+						italic = pmenu_sel.italic,
+						blend = 0,
+					})
+					pcall(vim.api.nvim_set_hl, 0, "BlinkCmpMenuSelection", {
+						fg = pmenu_sel.fg,
+						bg = pmenu_sel.bg,
+						bold = pmenu_sel.bold,
+						italic = pmenu_sel.italic,
+						blend = 0,
+					})
+				else
+					pcall(vim.api.nvim_set_hl, 0, "NoicePopupmenuSelected", { link = "CursorLine" })
+					pcall(vim.api.nvim_set_hl, 0, "BlinkCmpMenuSelection", { link = "CursorLine" })
+				end
+
+				pcall(vim.api.nvim_set_hl, 0, "NoicePopupmenuMatch", { link = "Special" })
+				pcall(vim.api.nvim_set_hl, 0, "NvimTreeCursorLine", { link = "CursorLine" })
+				pcall(vim.api.nvim_set_hl, 0, "NvimTreeCursorLineNr", { link = "CursorLineNr" })
 			end
 
 			local noice_theme_group = vim.api.nvim_create_augroup("ghostty_noice_theme_links", { clear = true })

@@ -273,11 +273,6 @@ pub const RenderedWindow = struct {
     /// Window type
     window_type: WindowType = .editor,
 
-    /// Window-local fallback colors inferred from incoming hl_ids.
-    /// Floating/message grids can omit fg/bg on many cells.
-    default_foreground: ?u32 = null,
-    default_background: ?u32 = null,
-
     /// Grid dimensions (buffer size - from grid_resize)
     grid_width: u32 = 0,
     grid_height: u32 = 0,
@@ -553,8 +548,6 @@ pub const RenderedWindow = struct {
             self.viewport_margins.top = 0;
             self.margins_top_from_fallback = false;
         }
-        self.default_foreground = null;
-        self.default_background = null;
         self.dirty = true;
     }
 
@@ -635,8 +628,6 @@ pub const RenderedWindow = struct {
             self.opacity_spring.position = start_opacity - 1.0; // Spring toward target (1.0)
             self.opacity_spring.velocity = 0;
             self.fading_out = false;
-            self.default_foreground = null;
-            self.default_background = null;
         }
 
         self.valid = true;
@@ -669,8 +660,6 @@ pub const RenderedWindow = struct {
         self.zindex = zindex;
         self.composition_order = compindex;
         self.window_type = .message;
-        self.default_foreground = null;
-        self.default_background = null;
         self.anchor_info = .{
             .anchor_grid_id = 1,
             .anchor_left = 0,

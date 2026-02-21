@@ -1214,12 +1214,6 @@ pub const NeovimGui = struct {
 
         var col = col_start;
         for (cells) |cell| {
-            if ((window.window_type == .floating or window.window_type == .message) and cell.hl_id != 0) {
-                if (self.hl_attrs.get(cell.hl_id)) |attr| {
-                    if (attr.foreground) |fg| window.default_foreground = fg;
-                    if (attr.background) |bg| window.default_background = bg;
-                }
-            }
             var i: u64 = 0;
             while (i < cell.repeat) : (i += 1) {
                 if (col < window.grid_width) {

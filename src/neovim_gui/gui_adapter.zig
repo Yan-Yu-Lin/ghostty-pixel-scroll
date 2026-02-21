@@ -111,7 +111,7 @@ pub fn buildGuiState(
 // ---------------------------------------------------------------------------
 
 fn windowToGui(w: *RenderedWindow, is_float: bool, cell_h: f32) gui.GuiWindow {
-    const has_valid_scroll = if (!is_float) w.hasValidScrollbackData() else false;
+    const has_valid_scroll = if (w.window_type != .message) w.hasValidScrollbackData() else false;
 
     // Sub-pixel offset from the spring, rounded to whole pixels for crisp text.
     // Keep this symmetric with Neovide (plain round), no forced minimum step.
@@ -180,57 +180,26 @@ fn getScrollCellWrapper(ctx: *const anyopaque, inner_row: u32, col: u32) ?gui.Gu
     return gridCellToGui(gc, w, nvim);
 }
 
-fn resolveWindowDefaults(w: *const RenderedWindow, nvim: *const NeovimGui) struct { fg: u32, bg: u32 } {
-    var fg = nvim.default_foreground;
-    var bg = nvim.default_background;
-
-    if (w.window_type == .floating or w.window_type == .message) {
-        if (nvim.normal_float_hl_id) |id| {
-            if (nvim.hl_attrs.get(id)) |attr| {
-                fg = attr.foreground orelse fg;
-                bg = attr.background orelse bg;
-            }
-        }
-        if (w.default_foreground) |v| fg = v;
-        if (w.default_background) |v| bg = v;
-    }
-
-    return .{ .fg = fg, .bg = bg };
-}
-
 /// Convert a neovim GridCell + hl_id into a backend-agnostic GuiCell.
 fn gridCellToGui(gc: *const GridCell, w: *const RenderedWindow, nvim: *const NeovimGui) gui.GuiCell {
-    const defaults = resolveWindowDefaults(w, nvim);
-
-    var fg = defaults.fg;
-    var bg = defaults.bg;
-
+    _ = w;
+    const attr = nvim.getHlAttr(gc.hl_id);
     var cell: gui.GuiCell = .{
         .style = .{
-            .fg = fg,
-            .bg = bg,
+            .fg = attr.foreground.?,
+            .bg = attr.background.?,
+            .bold = attr.bold,
+            .italic = attr.italic,
+            .underline = attr.underline,
+            .undercurl = attr.undercurl,
+            .underdotted = attr.underdotted,
+            .underdashed = attr.underdashed,
+            .underdouble = attr.underdouble,
+            .strikethrough = attr.strikethrough,
+            .reverse = attr.reverse,
+            .blend = attr.blend,
         },
     };
-
-    if (gc.hl_id != 0) {
-        if (nvim.hl_attrs.get(gc.hl_id)) |attr| {
-            fg = attr.foreground orelse defaults.fg;
-            bg = attr.background orelse defaults.bg;
-            cell.style.bold = attr.bold;
-            cell.style.italic = attr.italic;
-            cell.style.underline = attr.underline;
-            cell.style.undercurl = attr.undercurl;
-            cell.style.underdotted = attr.underdotted;
-            cell.style.underdashed = attr.underdashed;
-            cell.style.underdouble = attr.underdouble;
-            cell.style.strikethrough = attr.strikethrough;
-            cell.style.reverse = attr.reverse;
-            cell.style.blend = attr.blend;
-        }
-    }
-
-    cell.style.fg = fg;
-    cell.style.bg = bg;
 
     const text = gc.getText();
     const len = @min(text.len, 16);

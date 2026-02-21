@@ -2577,7 +2577,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // Neovide always keeps one extra scroll row available for scrollable windows.
                 // If we only enable it when sub-pixel offset is non-zero, held key-scroll
                 // can show tiny step boundaries at integer crossings.
-                const is_scrolling = (window.has_scroll_animation and !is_float);
+                const is_scrolling = (window.has_scroll_animation and !is_msg);
+                const cell_alpha: u8 = if (is_float) win_opacity else 255;
+                const cell_offset_fixed: i16 = if (is_scrolling) bg_offset_fixed else 0;
                 const inner_size = render_height -| window.margin_top -| window.margin_bottom;
 
                 // --- Top margin (winbar etc) — no scroll, no occlusion ---
@@ -2638,7 +2640,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         if (is_msg and !owns_cell and !is_extra) continue;
 
                         // Read from scrollback when scroll-animating, else from actual grid.
-                        const cell: ?gui_protocol.GuiCell = if (window.has_scroll_animation and !is_float)
+                        const cell: ?gui_protocol.GuiCell = if (is_scrolling)
                             window.getScrollCell(window.ctx, inner_row, col)
                         else
                             window.getCell(window.ctx, window.margin_top + inner_row, col);
@@ -2656,13 +2658,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                             // Background — skip the extra animation row (would corrupt statusline).
                             if (!is_extra) {
-                                if (is_float) {
-                                    self.cells.bgCell(sy, sx).* = .{
-                                        .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
-                                        .offset_y_fixed = 0,
-                                        .window_id = cur_wid,
-                                    };
-                                } else if (c.style.blend > 0) {
+                                if (c.style.blend > 0) {
                                     const ba = 255 - (@as(u16, c.style.blend) * 255 / 100);
                                     const ia = 255 - ba;
                                     const cr: u16 = @intCast((bg >> 16) & 0xFF);
@@ -2672,14 +2668,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     const dg: u16 = @intCast((default_bg >> 8) & 0xFF);
                                     const db: u16 = @intCast(default_bg & 0xFF);
                                     self.cells.bgCell(sy, sx).* = .{
-                                        .color = .{ @intCast((cr * ba + dr * ia) / 255), @intCast((cg * ba + dg * ia) / 255), @intCast((cb * ba + db * ia) / 255), 255 },
-                                        .offset_y_fixed = bg_offset_fixed,
+                                        .color = .{ @intCast((cr * ba + dr * ia) / 255), @intCast((cg * ba + dg * ia) / 255), @intCast((cb * ba + db * ia) / 255), cell_alpha },
+                                        .offset_y_fixed = cell_offset_fixed,
                                         .window_id = cur_wid,
                                     };
                                 } else {
                                     self.cells.bgCell(sy, sx).* = .{
-                                        .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), 255 },
-                                        .offset_y_fixed = bg_offset_fixed,
+                                        .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), cell_alpha },
+                                        .offset_y_fixed = cell_offset_fixed,
                                         .window_id = cur_wid,
                                     };
                                 }
@@ -2691,15 +2687,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             // would render on top of the statusline.
                             if (!skip_text and (owns_cell or (is_extra and scroll_offset != 0))) {
                                 if (cell_text.len > 0) {
-                                    const eff_offset: f32 = if (is_float) 0 else scroll_offset;
+                                    const eff_offset: f32 = if (is_scrolling) scroll_offset else 0;
                                     self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};
                                 }
                             }
                         } else if (!is_extra) {
                             // Null cell: default bg with scroll offset + window_id.
                             self.cells.bgCell(sy, sx).* = .{
-                                .color = .{ bg_r, bg_g, bg_b, 255 },
-                                .offset_y_fixed = bg_offset_fixed,
+                                .color = .{ bg_r, bg_g, bg_b, cell_alpha },
+                                .offset_y_fixed = cell_offset_fixed,
                                 .window_id = cur_wid,
                             };
                         }

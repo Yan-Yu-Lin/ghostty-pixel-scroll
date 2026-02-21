@@ -79,7 +79,7 @@ return {
 						border = { style = "none", padding = { 0, 0 } },
 						win_options = {
 							winblend = 0,
-							winhighlight = "Normal:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
+							winhighlight = "Normal:NoicePopupmenu,Pmenu:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuSel:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
 						},
 					},
 					popupmenu = {
@@ -89,7 +89,7 @@ return {
 						border = { style = "none", padding = { 0, 0 } },
 						win_options = {
 							winblend = 0,
-							winhighlight = "Normal:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
+							winhighlight = "Normal:NoicePopupmenu,Pmenu:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuSel:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
 						},
 					},
 				},

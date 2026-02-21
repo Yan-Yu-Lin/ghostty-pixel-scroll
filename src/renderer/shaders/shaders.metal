@@ -486,71 +486,6 @@ struct CellBgData {
   uchar padding;
 };
 
-inline bool capsule_match(
-  constant CellBgData *cells,
-  int index,
-  uchar4 color,
-  uchar window_id
-) {
-  if (index < 0) return false;
-  if (cells[index].window_id != window_id) return false;
-  return all(cells[index].color == color);
-}
-
-inline float selection_capsule_alpha(
-  constant CellBgData *cells,
-  constant Uniforms& uniforms,
-  int2 source_grid_pos,
-  int cell_index,
-  uchar4 cell_color,
-  uchar cell_window_id,
-  float2 frag_pos
-) {
-  if (uniforms.corner_radius <= 0.0 || cell_window_id == 0 || cell_window_id > uniforms.window_rect_count) {
-    return 1.0;
-  }
-
-  // Only single-row highlight runs become capsules.
-  bool above_same = false;
-  bool below_same = false;
-  if (source_grid_pos.y > 0) {
-    above_same = capsule_match(cells, cell_index - int(uniforms.grid_size.x), cell_color, cell_window_id);
-  }
-  if (source_grid_pos.y + 1 < int(uniforms.grid_size.y)) {
-    below_same = capsule_match(cells, cell_index + int(uniforms.grid_size.x), cell_color, cell_window_id);
-  }
-  if (above_same || below_same) {
-    return 1.0;
-  }
-
-  bool has_left = false;
-  bool has_right = false;
-  if (source_grid_pos.x > 0) {
-    has_left = capsule_match(cells, cell_index - 1, cell_color, cell_window_id);
-  }
-  if (source_grid_pos.x + 1 < int(uniforms.grid_size.x)) {
-    has_right = capsule_match(cells, cell_index + 1, cell_color, cell_window_id);
-  }
-
-  float r = min(uniforms.corner_radius, uniforms.cell_size.y * 0.5 - 0.5);
-  r = min(r, uniforms.cell_size.x * 0.5 - 0.5);
-  if (r <= 0.0) return 1.0;
-
-  float2 local = fract((frag_pos - uniforms.grid_padding.wx) / uniforms.cell_size) * uniforms.cell_size;
-  float alpha = 1.0;
-
-  if (!has_left && local.x < r) {
-    float dist = length(local - float2(r, uniforms.cell_size.y * 0.5)) - r;
-    alpha = min(alpha, 1.0 - smoothstep(-0.5, 0.5, dist));
-  }
-  if (!has_right && local.x > uniforms.cell_size.x - r) {
-    float dist = length(local - float2(uniforms.cell_size.x - r, uniforms.cell_size.y * 0.5)) - r;
-    alpha = min(alpha, 1.0 - smoothstep(-0.5, 0.5, dist));
-  }
-
-  return alpha;
-}
-
 fragment float4 cell_bg_fragment(
   FullScreenVertexOut in [[stage_in]],
   constant Uniforms& uniforms [[buffer(1)]],
@@ -822,21 +757,6 @@ fragment float4 cell_bg_fragment(
       float alpha = boom_color.a * combined;
       result = mix(result, float4(boom_color.rgb, 1.0), alpha);
     }
-  }
-
-  // Rounded selection/cursorline bars (NvimTree cursorline, popup menu select, etc.).
-  // Enabled whenever Neovim corner rounding is enabled (corner_radius > 0).
-  const float capsule_a = selection_capsule_alpha(
-    cells,
-    uniforms,
-    grid_pos,
-    cell_index_final,
-    cell_color,
-    cell_window_id,
-    in.position.xy
-  );
-  if (capsule_a < 1.0) {
-    result *= capsule_a;
   }
 
   return result;

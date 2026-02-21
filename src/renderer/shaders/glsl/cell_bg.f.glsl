@@ -15,64 +15,6 @@ layout(binding = 1, std430) readonly buffer bg_cells {
     CellBgData cells[];
 };
 
-bool capsule_match(int index, uvec4 color, uint window_id) {
-    uint wid = uint(cells[index].offset_and_winid >> 16) & 0xFFu;
-    if (wid != window_id) return false;
-    return all(equal(unpack4u8(cells[index].color), color));
-}
-
-float selection_capsule_alpha(
-    ivec2 source_grid_pos,
-    uvec2 grid_size,
-    int cell_index,
-    uvec4 cell_color,
-    uint cell_window_id
-) {
-    if (corner_radius <= 0.0 || cell_window_id == 0u || cell_window_id > window_rect_count) {
-        return 1.0;
-    }
-
-    // Only single-row highlight runs become capsules.
-    bool above_same = false;
-    bool below_same = false;
-    if (source_grid_pos.y > 0) {
-        above_same = capsule_match(cell_index - int(grid_size.x), cell_color, cell_window_id);
-    }
-    if (source_grid_pos.y + 1 < int(grid_size.y)) {
-        below_same = capsule_match(cell_index + int(grid_size.x), cell_color, cell_window_id);
-    }
-    if (above_same || below_same) {
-        return 1.0;
-    }
-
-    bool has_left = false;
-    bool has_right = false;
-    if (source_grid_pos.x > 0) {
-        has_left = capsule_match(cell_index - 1, cell_color, cell_window_id);
-    }
-    if (source_grid_pos.x + 1 < int(grid_size.x)) {
-        has_right = capsule_match(cell_index + 1, cell_color, cell_window_id);
-    }
-
-    float r = min(corner_radius, cell_size.y * 0.5 - 0.5);
-    r = min(r, cell_size.x * 0.5 - 0.5);
-    if (r <= 0.0) return 1.0;
-
-    vec2 local = fract((gl_FragCoord.xy - grid_padding.wx) / cell_size) * cell_size;
-    float alpha = 1.0;
-
-    if (!has_left && local.x < r) {
-        float dist = length(local - vec2(r, cell_size.y * 0.5)) - r;
-        alpha = min(alpha, 1.0 - smoothstep(-0.5, 0.5, dist));
-    }
-    if (!has_right && local.x > cell_size.x - r) {
-        float dist = length(local - vec2(cell_size.x - r, cell_size.y * 0.5)) - r;
-        alpha = min(alpha, 1.0 - smoothstep(-0.5, 0.5, dist));
-    }
-
-    return alpha;
-}
-
 vec4 cell_bg() {
     uvec2 grid_size = unpack2u16(grid_size_packed_2u16);
     bool use_linear_blending = (bools & USE_LINEAR_BLENDING) != 0;
@@ -374,19 +316,6 @@ vec4 cell_bg() {
             float alpha = boom_color.a * combined;
             result = mix(result, vec4(boom_color.rgb, 1.0), alpha);
         }
-    }
-
-    // Rounded selection/cursorline bars (NvimTree cursorline, popup menu select, etc.).
-    // Enabled whenever Neovim corner rounding is enabled (corner_radius > 0).
-    float capsule_alpha = selection_capsule_alpha(
-        grid_pos,
-        grid_size,
-        cell_index_final,
-        raw_color,
-        cell_window_id
-    );
-    if (capsule_alpha < 1.0) {
-        result *= capsule_alpha;
     }
 
     return result;

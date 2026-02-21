@@ -2549,11 +2549,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         if (occlusion_map[sy * cols + sx] != 0) continue;
                         if (py < w.margin_top or py >= (w.render_height -| w.margin_bottom)) continue;
                         if (is_msg) {
-                            if (w.getCell(w.ctx, py, px)) |cell| {
-                                const t = cell.getText();
-                                if (t.len > 0 and t[0] != ' ' and t[0] != 0)
-                                    occlusion_map[sy * cols + sx] = w.id;
-                            }
+                            // Message windows must claim their full rect so spaces and
+                            // border padding still render the message background instead
+                            // of leaking the underlying buffer through.
+                            occlusion_map[sy * cols + sx] = w.id;
                         } else {
                             occlusion_map[sy * cols + sx] = w.id;
                         }

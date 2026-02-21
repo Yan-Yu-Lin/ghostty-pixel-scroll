@@ -12,33 +12,85 @@ return {
 			"rcarriga/nvim-notify",
 		},
 		config = function()
+			local function set_noice_theme_links()
+				local links = {
+					NoiceCmdlinePopup = "Normal",
+					NoiceCmdlinePopupBorder = "FloatBorder",
+					NoiceCmdlinePopupTitle = "FloatTitle",
+					NoiceCmdlineIcon = "FloatTitle",
+					NoicePopupmenu = "Normal",
+					NoicePopupmenuBorder = "FloatBorder",
+					NoicePopupmenuSelected = "CursorLine",
+					NoicePopupmenuMatch = "Special",
+					BlinkCmpMenuSelection = "CursorLine",
+					NvimTreeCursorLine = "CursorLine",
+					NvimTreeCursorLineNr = "CursorLineNr",
+				}
+
+				for group_name, target in pairs(links) do
+					pcall(vim.api.nvim_set_hl, 0, group_name, { link = target })
+				end
+			end
+
+			local noice_theme_group = vim.api.nvim_create_augroup("ghostty_noice_theme_links", { clear = true })
+			vim.api.nvim_create_autocmd("ColorScheme", {
+				group = noice_theme_group,
+				callback = set_noice_theme_links,
+			})
+			vim.api.nvim_create_autocmd("FileType", {
+				group = noice_theme_group,
+				pattern = "NvimTree",
+				callback = set_noice_theme_links,
+			})
+			set_noice_theme_links()
+
 			require("noice").setup({
 				cmdline = {
 					enabled = true,
 					view = "cmdline_popup",
+					opts = {
+						border = {
+							text = { top = "" },
+						},
+					},
 					format = {
-						cmdline = { pattern = "^:", icon = "", lang = "vim" },
-						search_down = { kind = "search", pattern = "^/", icon = " ", lang = "regex" },
-						search_up = { kind = "search", pattern = "^%?", icon = " ", lang = "regex" },
-						filter = { pattern = "^:%s*!", icon = "$", lang = "bash" },
-						lua = { pattern = { "^:%s*lua%s+", "^:%s*lua%s*=%s*", "^:%s*=%s*" }, icon = "", lang = "lua" },
-						help = { pattern = "^:%s*he?l?p?%s+", icon = "󰋖" },
+						cmdline = { pattern = "^:", icon = " ", lang = "vim", title = "" },
+						search_down = { kind = "search", pattern = "^/", icon = " ", lang = "regex", title = "" },
+						search_up = { kind = "search", pattern = "^%?", icon = " ", lang = "regex", title = "" },
+						filter = { pattern = "^:%s*!", icon = "$ ", lang = "bash", title = "" },
+						lua = { pattern = { "^:%s*lua%s+", "^:%s*lua%s*=%s*", "^:%s*=%s*" }, icon = " ", lang = "lua", title = "" },
+						help = { pattern = "^:%s*he?l?p?%s+", icon = "󰋖 ", title = "" },
 					},
 				},
 				views = {
 					cmdline_popup = {
 						position = { row = "50%", col = "50%" },
-						size = { width = 60, height = "auto" },
-						border = { style = "rounded", padding = { 0, 1 } },
+						size = { width = "72%", height = "auto" },
+						border = { style = "rounded", padding = { 0, 2 } },
 						win_options = {
-							winhighlight = "Normal:Normal,FloatBorder:FloatBorder",
+							winblend = 0,
+							winhighlight = "Normal:NoiceCmdlinePopup,FloatBorder:NoiceCmdlinePopupBorder,FloatTitle:NoiceCmdlinePopupTitle",
+						},
+					},
+					cmdline_popupmenu = {
+						relative = "editor",
+						position = { row = "56%", col = "50%" },
+						size = { width = "72%", height = 10 },
+						border = { style = "none", padding = { 0, 0 } },
+						win_options = {
+							winblend = 0,
+							winhighlight = "Normal:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
 						},
 					},
 					popupmenu = {
 						relative = "editor",
-						position = { row = "55%", col = "50%" },
-						size = { width = 60, height = 10 },
-						border = { style = "rounded", padding = { 0, 1 } },
+						position = { row = "56%", col = "50%" },
+						size = { width = "72%", height = 10 },
+						border = { style = "none", padding = { 0, 0 } },
+						win_options = {
+							winblend = 0,
+							winhighlight = "Normal:NoicePopupmenu,FloatBorder:NoicePopupmenuBorder,CursorLine:NoicePopupmenuSelected,PmenuMatch:NoicePopupmenuMatch",
+						},
 					},
 				},
 				messages = {
@@ -250,6 +302,42 @@ return {
 		config = function()
 			require("nvchad.configs.lspconfig").defaults()
 			require("configs.lsp_defaults").setup()
+		end,
+	},
+
+	{
+		"Saghen/blink.cmp",
+		optional = true,
+		lazy = false,
+		opts = function(_, opts)
+			opts = opts or {}
+
+			local cmdline_width = math.max(60, math.floor(vim.o.columns * 0.72))
+			local menu_width = math.max(40, cmdline_width - 2)
+
+			opts.completion = opts.completion or {}
+			opts.completion.menu = opts.completion.menu or {}
+			opts.completion.menu.border = "none"
+			opts.completion.menu.scrollbar = false
+			opts.completion.menu.min_width = menu_width
+
+			local existing_cmdline = opts.cmdline or {}
+			opts.cmdline = vim.tbl_deep_extend("force", existing_cmdline, {
+				keymap = vim.tbl_deep_extend("force", existing_cmdline.keymap or { preset = "cmdline" }, {
+					["<Up>"] = { "select_prev", "fallback" },
+					["<Down>"] = { "select_next", "fallback" },
+				}),
+				completion = {
+					menu = {
+						auto_show = true,
+						draw = {
+							columns = { { "label" } },
+						},
+					},
+				},
+			})
+
+			return opts
 		end,
 	},
 

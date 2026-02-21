@@ -11,6 +11,7 @@ const gui = @import("../gui_protocol.zig");
 const neovim_gui = @import("main.zig");
 const NeovimGui = neovim_gui.NeovimGui;
 const RenderedWindow = neovim_gui.RenderedWindow;
+const HlAttr = neovim_gui.HlAttr;
 const GridCell = neovim_gui.GridCell;
 
 /// Scratch space reused across frames to avoid per-frame allocations.
@@ -180,21 +181,51 @@ fn getScrollCellWrapper(ctx: *const anyopaque, inner_row: u32, col: u32) ?gui.Gu
     return gridCellToGui(gc, w, nvim);
 }
 
-/// Convert a neovim GridCell + hl_id into a backend-agnostic GuiCell.
-fn gridCellToGui(gc: *const GridCell, w: *const RenderedWindow, nvim: *const NeovimGui) gui.GuiCell {
-    var attr = nvim.getHlAttr(gc.hl_id);
+fn resolveWindowDefaults(w: *const RenderedWindow, nvim: *const NeovimGui) struct { fg: u32, bg: u32 } {
+    var fg = nvim.default_foreground;
+    var bg = nvim.default_background;
 
-    // Floating grids can emit hl_id=0 for many cells while expecting float-local
-    // defaults. Use NormalFloat fallback so popup/cmdline backgrounds don't depend
-    // on whichever regular window is focused.
-    if (gc.hl_id == 0 and (w.window_type == .floating or w.window_type == .message)) {
+    if (w.window_type == .floating or w.window_type == .message) {
         if (nvim.normal_float_hl_id) |id| {
-            if (nvim.hl_attrs.get(id)) |normal_float| {
-                attr.foreground = normal_float.foreground orelse attr.foreground;
-                attr.background = normal_float.background orelse attr.background;
+            if (nvim.hl_attrs.get(id)) |attr| {
+                fg = attr.foreground orelse fg;
+                bg = attr.background orelse bg;
             }
         }
     }
+
+    return .{ .fg = fg, .bg = bg };
+}
+
+/// Convert a neovim GridCell + hl_id into a backend-agnostic GuiCell.
+fn gridCellToGui(gc: *const GridCell, w: *const RenderedWindow, nvim: *const NeovimGui) gui.GuiCell {
+    const defaults = resolveWindowDefaults(w, nvim);
+    const attr: HlAttr = if (gc.hl_id == 0)
+        .{
+            .foreground = defaults.fg,
+            .background = defaults.bg,
+        }
+    else if (nvim.hl_attrs.get(gc.hl_id)) |raw|
+        .{
+            .foreground = raw.foreground orelse defaults.fg,
+            .background = raw.background orelse defaults.bg,
+            .special = raw.special,
+            .bold = raw.bold,
+            .italic = raw.italic,
+            .underline = raw.underline,
+            .undercurl = raw.undercurl,
+            .underdotted = raw.underdotted,
+            .underdashed = raw.underdashed,
+            .underdouble = raw.underdouble,
+            .strikethrough = raw.strikethrough,
+            .reverse = raw.reverse,
+            .blend = raw.blend,
+        }
+    else
+        .{
+            .foreground = defaults.fg,
+            .background = defaults.bg,
+        };
     var cell: gui.GuiCell = .{
         .style = .{
             .fg = attr.foreground.?,

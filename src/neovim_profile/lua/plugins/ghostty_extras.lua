@@ -19,12 +19,13 @@ return {
 				end
 
 				local normal = get_hl("Normal")
+				local normal_float = get_hl("NormalFloat")
 				local float_border = get_hl("FloatBorder")
 				local float_title = get_hl("FloatTitle")
 				local pmenu_sel = get_hl("PmenuSel")
 
-				local popup_bg = normal.bg
-				local popup_fg = normal.fg
+				local popup_bg = normal_float.bg or normal.bg
+				local popup_fg = normal_float.fg or normal.fg
 				local border_fg = float_border.fg or popup_fg
 				local title_fg = float_title.fg or popup_fg
 

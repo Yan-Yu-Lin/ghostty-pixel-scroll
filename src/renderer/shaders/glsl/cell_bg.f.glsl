@@ -85,15 +85,20 @@ vec4 cell_bg() {
                 int new_offset_raw = cells[new_cell_index].offset_and_winid;
                 int new_offset_i16 = (new_offset_raw << 16) >> 16;
                 uint new_wid = uint(cells[new_cell_index].offset_and_winid >> 16) & 0xFFu;
+                bool cur_is_float = false;
+                if (cur_wid > 0u && cur_wid <= window_rect_count) {
+                    cur_is_float = window_rects[cur_wid - 1u].w < 0.0;
+                }
                 
                 // Only use the new position if it's also a scrolling cell (not fixed)
                 if (new_offset_i16 != 0 || allow_fixed_overlap) {
                     grid_pos = new_grid_pos;
                 } else {
-                    // Clip only when overlapping a fixed row that belongs to an actual
-                    // window region. If the destination is outside any window (wid==0),
-                    // keep the source color so the edge row doesn't flash/tint during scroll.
-                    if (new_wid != 0u && new_wid == cur_wid) {
+                    // Floats (cmdline/popupmenu) need strict clipping to prevent highlight
+                    // smear on selection scroll. Non-floats use same-window clipping only.
+                    if (cur_is_float) {
+                        clip_fixed_overlap = true;
+                    } else if (new_wid != 0u && new_wid == cur_wid) {
                         clip_fixed_overlap = true;
                     }
                 }

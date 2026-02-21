@@ -563,15 +563,20 @@ fragment float4 cell_bg_fragment(
         int new_cell_index = new_grid_pos.y * uniforms.grid_size.x + new_grid_pos.x;
         short new_offset_fixed = cells[new_cell_index].offset_y_fixed;
         uchar new_wid = cells[new_cell_index].window_id;
+        bool cur_is_float = false;
+        if (cur_wid > 0 && cur_wid <= uniforms.window_rect_count) {
+          cur_is_float = uniforms.window_rects[cur_wid - 1].w < 0.0;
+        }
         
         // Only use the new position if it's also a scrolling cell (not fixed)
         if (new_offset_fixed != 0 || allow_fixed_overlap) {
           grid_pos = new_grid_pos;
         } else {
-          // Clip only when overlapping a fixed row that belongs to an actual
-          // window region. If destination is outside any window (wid==0),
-          // keep source color so edge rows don't flash/tint during scroll.
-          if (new_wid != 0 && new_wid == cur_wid) {
+          // Floats (cmdline/popupmenu) need strict clipping to prevent
+          // highlight smear on selection scroll. Non-floats clip same-window only.
+          if (cur_is_float) {
+            clip_fixed_overlap = true;
+          } else if (new_wid != 0 && new_wid == cur_wid) {
             clip_fixed_overlap = true;
           }
         }
@@ -1033,9 +1038,13 @@ fragment float4 cell_text_fragment(
       int cell_index = dest_grid_pos.y * uniforms.grid_size.x + dest_grid_pos.x;
       short dest_offset = bg_cells[cell_index].offset_y_fixed;
       uchar dest_wid = bg_cells[cell_index].window_id;
+      bool src_is_float = false;
+      if (src_wid > 0 && src_wid <= uniforms.window_rect_count) {
+        src_is_float = uniforms.window_rects[src_wid - 1].w < 0.0;
+      }
       
       // If dest cell is fixed (offset=0) but this text has offset, clip it
-      if (dest_offset == 0 && dest_wid != 0 && dest_wid == src_wid) {
+      if (dest_offset == 0 && (src_is_float || (dest_wid != 0 && dest_wid == src_wid))) {
         discard_fragment();
       }
     }

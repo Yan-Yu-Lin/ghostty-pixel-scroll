@@ -20,6 +20,7 @@ const c = if (builtin.os.tag != .windows) @cImport({
     @cInclude("sys/types.h");
     @cInclude("unistd.h");
     @cInclude("pwd.h");
+    @cInclude("errno.h");
 }) else {};
 
 // Entry that is retrieved from the passwd API. This only contains the fields
@@ -34,12 +35,24 @@ pub const Entry = struct {
 pub fn get(alloc: Allocator) !Entry {
     if (builtin.os.tag == .windows) @compileError("passwd is not available on windows");
 
-    var buf: [1024]u8 = undefined;
+    const max_buf_size: usize = 64 * 1024;
+    var buf = try alloc.alloc(u8, 1024);
+    defer alloc.free(buf);
+
     var pw: c.struct_passwd = undefined;
     var pw_ptr: ?*c.struct_passwd = null;
-    const res = c.getpwuid_r(c.getuid(), &pw, &buf, buf.len, &pw_ptr);
-    if (res != 0) {
-        log.warn("error retrieving pw entry code={d}", .{res});
+    while (true) {
+        pw_ptr = null;
+        const res = c.getpwuid_r(c.getuid(), &pw, buf.ptr, buf.len, &pw_ptr);
+        if (res == 0) break;
+
+        if (res == c.ERANGE and buf.len < max_buf_size) {
+            const new_len = @min(buf.len * 2, max_buf_size);
+            buf = try alloc.realloc(buf, new_len);
+            continue;
+        }
+
+        log.warn("error retrieving pw entry code={d} buf_size={d}", .{ res, buf.len });
         return Entry{};
     }
 

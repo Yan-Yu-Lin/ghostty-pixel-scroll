@@ -391,6 +391,7 @@ return {
 				keymap = vim.tbl_deep_extend("force", existing_cmdline.keymap or { preset = "cmdline" }, {
 					["<Up>"] = { "select_prev", "fallback" },
 					["<Down>"] = { "select_next", "fallback" },
+					["<Tab>"] = { "select_and_accept", "fallback" },
 				}),
 				completion = {
 					menu = {

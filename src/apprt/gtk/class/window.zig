@@ -613,10 +613,12 @@ pub const Window = extern struct {
         // Remainder uses the config
         const config = if (priv.config) |v| v.get() else return;
 
-        // Only add a solid background if we're opaque.
+        // Keep a solid window background until the first surface is initialized.
+        // This avoids startup alpha artifacts with some external Wayland tab bars
+        // (e.g. Hy3) while preserving user-configured transparency afterwards.
         self.toggleCssClass(
             "background",
-            config.@"background-opacity" >= 1,
+            !priv.surface_init or config.@"background-opacity" >= 1,
         );
 
         // Apply class to color headerbar if window-theme is set to `ghostty` and
@@ -1664,6 +1666,10 @@ pub const Window = extern struct {
                 @intCast(size.height),
             );
         }
+
+        // Re-sync appearance now that startup-only background forcing is no
+        // longer needed after the first surface exists.
+        self.syncAppearance();
     }
 
     fn tabSplitTreeChanged(

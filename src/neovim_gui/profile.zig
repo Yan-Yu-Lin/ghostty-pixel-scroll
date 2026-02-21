@@ -133,6 +133,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
+        try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
         return;
@@ -140,6 +141,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
 
     try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
+    try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
@@ -278,6 +280,51 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     });
 
     log.info("migrated managed nvim options showbreak marker", .{});
+}
+
+fn migrateManagedOptionsStatuslineBaseline(alloc: Allocator, target_path: []const u8) !void {
+    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
+    defer alloc.free(options_path);
+
+    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const has_laststatus = std.mem.indexOf(u8, data, "o.laststatus") != null or
+        std.mem.indexOf(u8, data, "vim.o.laststatus") != null;
+    const has_showmode = std.mem.indexOf(u8, data, "o.showmode") != null or
+        std.mem.indexOf(u8, data, "vim.o.showmode") != null;
+    const has_ruler = std.mem.indexOf(u8, data, "o.ruler") != null or
+        std.mem.indexOf(u8, data, "vim.o.ruler") != null;
+
+    if (has_laststatus and has_showmode and has_ruler) return;
+
+    var updated = std.ArrayList(u8).empty;
+    defer updated.deinit(alloc);
+    try updated.appendSlice(alloc, data);
+
+    if (updated.items.len > 0 and updated.items[updated.items.len - 1] != '\n') {
+        try updated.append(alloc, '\n');
+    }
+
+    try updated.appendSlice(alloc, "\n-- Keep a real statusline visible in nvim-gui on first attach.\n");
+    if (!has_laststatus) try updated.appendSlice(alloc, "o.laststatus = 3\n");
+    if (!has_showmode) try updated.appendSlice(alloc, "o.showmode = false\n");
+    if (!has_ruler) try updated.appendSlice(alloc, "o.ruler = false\n");
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/options.lua",
+        .data = updated.items,
+    });
+
+    log.info("migrated managed nvim options statusline baseline", .{});
 }
 
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {

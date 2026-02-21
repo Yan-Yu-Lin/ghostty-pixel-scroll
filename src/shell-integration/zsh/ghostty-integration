@@ -84,6 +84,12 @@ _entrypoint() {
         }
     } 2>/dev/null || (( _ghostty_fd = 1 ))
 
+    # Neovim GUI mode: install the trigger command immediately so it still
+    # works even if prompt hooks are replaced before deferred init runs.
+    if [[ -n "$GHOSTTY_NVIM_GUI_ALIAS" ]]; then
+        eval "${GHOSTTY_NVIM_GUI_ALIAS}() { builtin print -n '\\e]1338\\a'; }"
+    fi
+
     # Defer initialization so that other zsh init files can be configure
     # the integration.
     builtin typeset -ag precmd_functions
@@ -397,13 +403,6 @@ _ghostty_deferred_init() {
     # ghostty-integration though because decent public functions aren't supposed to
     # to unfunction themselves when invoked. Unfunctioning is done by calling code.
     builtin unfunction _ghostty_deferred_init
-
-    # Neovim GUI mode: create a shell function that sends OSC 1338 to switch
-    # the current terminal into Ghostty's native Neovim GUI renderer.
-    # The function name is configurable via neovim-gui-alias (default: nvim-gui).
-    if [[ -n "$GHOSTTY_NVIM_GUI_ALIAS" ]]; then
-        eval "${GHOSTTY_NVIM_GUI_ALIAS}() { builtin print -nu \$_ghostty_fd '\\e]1338\\a'; }"
-    fi
 
     # Collab session commands
     ghostty-share() {

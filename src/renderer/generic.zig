@@ -2538,7 +2538,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const w = windows[i];
                 const wc: u16 = @intFromFloat(w.grid_col);
                 const wr: u16 = @intFromFloat(w.grid_row);
-                const is_msg = w.window_type == .message;
                 const is_float_win = (w.window_type == .floating or w.window_type == .message);
                 var py: u32 = 0;
                 while (py < w.render_height) : (py += 1) {

@@ -2637,6 +2637,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         }
 
                         const is_extra = (is_scrolling and inner_row == inner_size);
+                        const draw_bg = (!is_extra) or (window.margin_bottom == 0);
                         if (is_msg and !owns_cell and !is_extra) continue;
 
                         // Read from scrollback when scroll-animating, else from actual grid.
@@ -2656,8 +2657,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                             const cell_text = c.getText();
 
-                            // Background — skip the extra animation row (would corrupt statusline).
-                            if (!is_extra) {
+                            // Background: include the extra animation row when there is no
+                            // fixed bottom margin, so downward scroll has a real incoming row
+                            // instead of stretching/reusing the last visible row's color.
+                            if (draw_bg) {
                                 if (c.style.blend > 0) {
                                     const ba = 255 - (@as(u16, c.style.blend) * 255 / 100);
                                     const ia = 255 - ba;
@@ -2691,7 +2694,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                     self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};
                                 }
                             }
-                        } else if (!is_extra) {
+                        } else if (draw_bg) {
                             // Null cell: default bg with scroll offset + window_id.
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ bg_r, bg_g, bg_b, cell_alpha },

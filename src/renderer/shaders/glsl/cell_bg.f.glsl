@@ -61,6 +61,7 @@ vec4 cell_bg() {
     
     // Apply per-cell offset for per-window smooth scrolling
     bool allow_fixed_overlap = (window_rect_count == 0u);
+    bool clip_fixed_overlap = false;
     if (grid_pos.x >= 0 && grid_pos.x < int(grid_size.x) &&
         grid_pos.y >= 0 && grid_pos.y < int(grid_size.y)) {
         int cell_index = grid_pos.y * int(grid_size.x) + grid_pos.x;
@@ -86,14 +87,20 @@ vec4 cell_bg() {
                 // Only use the new position if it's also a scrolling cell (not fixed)
                 if (new_offset_i16 != 0 || allow_fixed_overlap) {
                     grid_pos = new_grid_pos;
+                } else {
+                    // If scrolling content would map into a fixed row, clip this fragment
+                    // instead of reusing the original scrolling color. Reusing causes the
+                    // transient "stretched" color smear on scroll boundaries.
+                    clip_fixed_overlap = true;
                 }
-                // If new cell is fixed (offset=0), keep original grid_pos
-                // This prevents statusline color from bleeding into scrolling area
             }
         }
     }
 
     vec4 bg = vec4(0.0);
+    if (clip_fixed_overlap) {
+        return bg;
+    }
 
     // If this fragment is in the padding area (outside the visible grid),
     // treat it as out-of-bounds regardless of where the scroll offset maps it.

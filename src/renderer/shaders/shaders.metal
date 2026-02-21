@@ -542,6 +542,7 @@ fragment float4 cell_bg_fragment(
   
   // Apply per-cell offset for per-window smooth scrolling (Neovim GUI mode)
   bool allow_fixed_overlap = (uniforms.window_rect_count == 0);
+  bool clip_fixed_overlap = false;
   if (grid_pos.x >= 0 && grid_pos.x < uniforms.grid_size.x &&
       grid_pos.y >= 0 && grid_pos.y < uniforms.grid_size.y) {
     int cell_index = grid_pos.y * uniforms.grid_size.x + grid_pos.x;
@@ -564,13 +565,20 @@ fragment float4 cell_bg_fragment(
         // Only use the new position if it's also a scrolling cell (not fixed)
         if (new_offset_fixed != 0 || allow_fixed_overlap) {
           grid_pos = new_grid_pos;
+        } else {
+          // If scrolling content would map into a fixed row, clip this fragment
+          // instead of reusing the original scrolling color. Reusing causes
+          // transient stretched color smears at scroll boundaries.
+          clip_fixed_overlap = true;
         }
-        // If new cell is fixed (offset=0), keep original grid_pos
       }
     }
   }
 
   float4 bg = float4(0.0);
+  if (clip_fixed_overlap) {
+    return bg;
+  }
 
   // If this fragment is in the padding area (outside the visible grid),
   // treat it as out-of-bounds regardless of where the scroll offset maps it.

@@ -363,12 +363,56 @@ return {
 					vim.b[bufnr].ghostty_opencode_patched = true
 
 					local map_opts = { buffer = bufnr, noremap = true, silent = true }
+					local function opencode_move_window(dir)
+						vim.b[bufnr].ghostty_allow_nt_once = true
+						vim.cmd("stopinsert")
+						vim.cmd("wincmd " .. dir)
+					end
+					local function opencode_resize(cmd)
+						vim.b[bufnr].ghostty_allow_nt_once = true
+						vim.cmd("stopinsert")
+						vim.cmd(cmd)
+						if vim.api.nvim_get_current_buf() == bufnr then
+							vim.cmd("startinsert")
+						end
+					end
+
 					vim.keymap.set("t", "<Esc>", "<Esc>", vim.tbl_extend("force", map_opts, { desc = "opencode: send esc" }))
-					vim.keymap.set("t", "<C-h>", "<C-h>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-h passthrough" }))
-					vim.keymap.set("t", "<C-j>", "<C-j>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-j passthrough" }))
-					vim.keymap.set("t", "<C-k>", "<C-k>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-k passthrough" }))
-					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
+					vim.keymap.set("t", "<C-h>", function()
+						opencode_move_window("h")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: move to left window" }))
+					vim.keymap.set("t", "<C-j>", function()
+						opencode_move_window("j")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: move to lower window" }))
+					vim.keymap.set("t", "<C-k>", function()
+						opencode_move_window("k")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: move to upper window" }))
+					vim.keymap.set("t", "<C-l>", function()
+						opencode_move_window("l")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: move to right window" }))
+					vim.keymap.set("n", "<C-h>", "<C-w>h", vim.tbl_extend("force", map_opts, { desc = "opencode: move left window" }))
+					vim.keymap.set("n", "<C-j>", "<C-w>j", vim.tbl_extend("force", map_opts, { desc = "opencode: move lower window" }))
+					vim.keymap.set("n", "<C-k>", "<C-w>k", vim.tbl_extend("force", map_opts, { desc = "opencode: move upper window" }))
+					vim.keymap.set("n", "<C-l>", "<C-w>l", vim.tbl_extend("force", map_opts, { desc = "opencode: move right window" }))
+					vim.keymap.set("t", "<A-Left>", function()
+						opencode_resize("vertical resize -2")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: decrease window width" }))
+					vim.keymap.set("t", "<A-Right>", function()
+						opencode_resize("vertical resize +2")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: increase window width" }))
+					vim.keymap.set("t", "<A-Up>", function()
+						opencode_resize("resize +2")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: increase window height" }))
+					vim.keymap.set("t", "<A-Down>", function()
+						opencode_resize("resize -2")
+					end, vim.tbl_extend("force", map_opts, { desc = "opencode: decrease window height" }))
 					vim.keymap.set("t", "<C-\\><C-n>", "<Nop>", vim.tbl_extend("force", map_opts, { desc = "opencode: keep terminal mode" }))
+					pcall(vim.keymap.del, "n", "<C-u>", { buffer = bufnr })
+					pcall(vim.keymap.del, "n", "<C-d>", { buffer = bufnr })
+					pcall(vim.keymap.del, "n", "gg", { buffer = bufnr })
+					pcall(vim.keymap.del, "n", "G", { buffer = bufnr })
+					pcall(vim.keymap.del, "n", "<Esc>", { buffer = bufnr })
+					vim.keymap.set("n", "<Esc>", "i", vim.tbl_extend("force", map_opts, { desc = "opencode: back to terminal mode" }))
 					for _, lhs in ipairs({
 						"<ScrollWheelUp>",
 						"<ScrollWheelDown>",
@@ -381,9 +425,12 @@ return {
 						"<kPageUp>",
 						"<kPageDown>",
 					}) do
-						vim.keymap.set("t", lhs, "<Nop>", map_opts)
-						vim.keymap.set("n", lhs, "<Nop>", map_opts)
+						-- In terminal mode, leave scrolling/clicking to opencode TUI.
+						-- In terminal-normal mode, jump back to terminal mode so buffer doesn't scroll.
+						vim.keymap.set("n", lhs, "i", map_opts)
 					end
+					vim.keymap.set("n", "<LeftMouse>", "i", map_opts)
+					vim.keymap.set("n", "<LeftDrag>", "i", map_opts)
 				end
 
 				local function target_opencode_width()
@@ -575,6 +622,10 @@ return {
 					callback = function()
 						local bufnr = vim.api.nvim_get_current_buf()
 						if not is_opencode_term(bufnr) then
+							return
+						end
+						if vim.b[bufnr].ghostty_allow_nt_once then
+							vim.b[bufnr].ghostty_allow_nt_once = false
 							return
 						end
 						local winid = vim.api.nvim_get_current_win()

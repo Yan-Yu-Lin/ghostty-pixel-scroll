@@ -12,7 +12,7 @@ A file for [guiding coding agents](https://agents.md/).
 
 ## Directory Structure
 
-- Shared Zig core: `src/`
+- Shared Zig core: `src/`     
 - C API: `include`
 - macOS app: `macos/`
 - GTK (Linux and FreeBSD) app: `src/apprt/gtk`

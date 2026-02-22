@@ -576,12 +576,13 @@ return {
 			opts.completion.menu.scrollbar = false
 			opts.completion.menu.min_width = menu_width
 
-			local existing_cmdline = opts.cmdline or {}
-			opts.cmdline = vim.tbl_deep_extend("force", existing_cmdline, {
-				keymap = vim.tbl_deep_extend("force", existing_cmdline.keymap or { preset = "cmdline" }, {
-					["<Up>"] = { "select_prev", "fallback" },
-					["<Down>"] = { "select_next", "fallback" },
-				}),
+				local existing_cmdline = opts.cmdline or {}
+				opts.cmdline = vim.tbl_deep_extend("force", existing_cmdline, {
+					keymap = vim.tbl_deep_extend("force", existing_cmdline.keymap or { preset = "cmdline" }, {
+						["<Tab>"] = { "select_and_accept", "fallback" },
+						["<Up>"] = { "select_prev", "fallback" },
+						["<Down>"] = { "select_next", "fallback" },
+					}),
 				completion = {
 					menu = {
 						auto_show = true,

@@ -369,6 +369,28 @@ return {
 					return math.max(48, math.floor(vim.o.columns * 0.4))
 				end
 
+				local function sync_opencode_term_geometry(winid, bufnr)
+					if not vim.api.nvim_win_is_valid(winid) then
+						return
+					end
+					if not bufnr then
+						bufnr = vim.api.nvim_win_get_buf(winid)
+					end
+					if not is_opencode_term(bufnr) then
+						return
+					end
+
+					local job_id = vim.b[bufnr].terminal_job_id
+					if type(job_id) == "number" and job_id > 0 then
+						local ok_w, width = pcall(vim.api.nvim_win_get_width, winid)
+						local ok_h, height = pcall(vim.api.nvim_win_get_height, winid)
+						if ok_w and ok_h and width > 0 and height > 0 then
+							pcall(vim.fn.jobresize, job_id, width, height)
+						end
+					end
+					pcall(vim.cmd, "redraw!")
+				end
+
 				local function style_opencode_window(winid)
 					if not vim.api.nvim_win_is_valid(winid) then
 						return
@@ -385,9 +407,13 @@ return {
 					vim.wo[winid].foldcolumn = "0"
 					vim.wo[winid].statuscolumn = ""
 					vim.wo[winid].cursorline = false
-					vim.wo[winid].winbar = " opencode "
+					vim.wo[winid].winbar = ""
 					pcall(vim.api.nvim_set_option_value, "winfixbuf", true, { win = winid })
-					pcall(vim.api.nvim_win_set_width, winid, target_opencode_width())
+					local width = target_opencode_width()
+					if vim.api.nvim_win_get_width(winid) ~= width then
+						pcall(vim.api.nvim_win_set_width, winid, width)
+					end
+					sync_opencode_term_geometry(winid, bufnr)
 				end
 
 				local function find_opencode_win_in_current_tab()
@@ -405,9 +431,9 @@ return {
 						style_opencode_window(winid)
 						vim.api.nvim_set_current_win(winid)
 						vim.cmd("startinsert")
-						return true
+						return winid
 					end
-					return false
+					return nil
 				end
 
 				local function restyle_opencode_windows()
@@ -421,7 +447,11 @@ return {
 				local function toggle_opencode_sidebar()
 					local winid = find_opencode_win_in_current_tab()
 					if winid then
-						pcall(vim.api.nvim_win_hide, winid)
+						local ok_cfg, cfg = pcall(require, "opencode.config")
+						if ok_cfg and cfg and cfg.provider then
+							cfg.provider.winid = winid
+						end
+						require("opencode").toggle()
 						return
 					end
 
@@ -443,7 +473,15 @@ return {
 						for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
 							patch_opencode_term(bufnr)
 						end
-						focus_opencode_term()
+						local opened = focus_opencode_term()
+						if opened then
+							vim.defer_fn(function()
+								style_opencode_window(opened)
+							end, 40)
+							vim.defer_fn(function()
+								style_opencode_window(opened)
+							end, 140)
+						end
 						restyle_opencode_windows()
 					end, 80)
 				end
@@ -464,7 +502,7 @@ return {
 
 				vim.o.autoread = true
 				local augroup = vim.api.nvim_create_augroup("GhosttyOpencode", { clear = true })
-				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter", "TabEnter", "VimResized" }, {
+				vim.api.nvim_create_autocmd({ "TermOpen", "TabEnter", "VimResized" }, {
 					group = augroup,
 					callback = function(ev)
 						if ev.buf and ev.buf > 0 then

@@ -391,24 +391,6 @@ return {
 					pcall(vim.cmd, "redraw!")
 				end
 
-				local function stick_opencode_to_bottom(winid, bufnr)
-					if not vim.api.nvim_win_is_valid(winid) then
-						return
-					end
-					if not bufnr then
-						bufnr = vim.api.nvim_win_get_buf(winid)
-					end
-					if not is_opencode_term(bufnr) then
-						return
-					end
-
-					local last = math.max(1, vim.api.nvim_buf_line_count(bufnr))
-					pcall(vim.api.nvim_win_set_cursor, winid, { last, 0 })
-					pcall(vim.api.nvim_win_call, winid, function()
-						vim.cmd("normal! zb")
-					end)
-				end
-
 				local function ensure_opencode_input_mode(winid, bufnr)
 					if not vim.api.nvim_win_is_valid(winid) then
 						return
@@ -420,20 +402,25 @@ return {
 						return
 					end
 
-					stick_opencode_to_bottom(winid, bufnr)
 					if vim.api.nvim_get_current_win() ~= winid then
 						pcall(vim.api.nvim_set_current_win, winid)
 					end
+					-- Keep the TUI anchored to its live viewport instead of Neovim terminal scrollback.
+					pcall(function()
+						require("opencode").command("session.last")
+					end)
 					pcall(vim.cmd, "startinsert")
 					vim.defer_fn(function()
 						if vim.api.nvim_win_is_valid(winid) then
 							local current_buf = vim.api.nvim_win_get_buf(winid)
 							if is_opencode_term(current_buf) and vim.api.nvim_get_current_win() == winid then
-								stick_opencode_to_bottom(winid, current_buf)
+								pcall(function()
+									require("opencode").command("session.last")
+								end)
 								pcall(vim.cmd, "startinsert")
 							end
 						end
-					end, 20)
+					end, 40)
 				end
 
 				local function style_opencode_window(winid)

@@ -11,30 +11,6 @@ local startup_overlay_filetypes = {
 	mason = true,
 }
 
-local treesitter_languages = {
-	"bash",
-	"c",
-	"cpp",
-	"css",
-	"html",
-	"javascript",
-	"json",
-	"lua",
-	"markdown",
-	"markdown_inline",
-	"nix",
-	"python",
-	"query",
-	"rust",
-	"toml",
-	"tsx",
-	"typescript",
-	"vim",
-	"vimdoc",
-	"yaml",
-	"zig",
-}
-
 local default_mason_packages = {
 	"lua-language-server",
 	"bash-language-server",
@@ -79,6 +55,29 @@ local function write_done_marker()
 	write_marker(done_marker)
 end
 
+local welcome_ns = vim.api.nvim_create_namespace("ghostty_welcome")
+local welcome_win = nil
+
+local function close_startup_overlays(filetypes)
+	local targets = filetypes or startup_overlay_filetypes
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local ok_buf, buf = pcall(vim.api.nvim_win_get_buf, win)
+		if ok_buf and vim.api.nvim_buf_is_valid(buf) then
+			local ft = vim.bo[buf].filetype
+			if targets[ft] then
+				pcall(vim.api.nvim_win_close, win, true)
+			end
+		end
+	end
+end
+
+local function close_welcome_modal()
+	if welcome_win and vim.api.nvim_win_is_valid(welcome_win) then
+		pcall(vim.api.nvim_win_close, welcome_win, true)
+	end
+	welcome_win = nil
+end
+
 local function show_welcome(opts)
 	opts = opts or {}
 	local force = opts.force == true
@@ -89,25 +88,80 @@ local function show_welcome(opts)
 		return
 	end
 
-	local ansi_hello = "\27[1;38;5;45mHello\27[0m"
 	vim.schedule(function()
-		vim.notify(
-			table.concat({
-				ansi_hello .. " from Ghostty Neovim.",
-				"",
-				"Ghostty managed Neovim profile is active (NvChad-based defaults for nvim-gui).",
-				"If you stay on managed mode, edit your Neovim config in:",
-				"~/.config/ghostty/nvim",
-				"(same style/layout as a regular ~/.config/nvim folder)",
-				"",
-				"Want to use your own ~/.config/nvim instead?",
-				"Set this in ~/.config/ghostty/config:",
-				"neovim-gui-config-mode = user",
-				"(If that line is commented out, remove the leading #.)",
-			}, "\n"),
-			vim.log.levels.INFO,
-			{ title = ansi_hello, timeout = 15000 }
-		)
+		close_welcome_modal()
+
+		local lines = {
+			"Hello from Ghostty Neovim",
+			"",
+			"Ghostty managed Neovim profile is active (NvChad-based defaults for nvim-gui).",
+			"If you stay on managed mode, edit your Neovim config in:",
+			"~/.config/ghostty/nvim",
+			"(same style/layout as a regular ~/.config/nvim folder)",
+			"",
+			"Want to use your own ~/.config/nvim instead?",
+			"Set this in ~/.config/ghostty/config:",
+			"neovim-gui-config-mode = user",
+			"(If that line is commented out, remove the leading #.)",
+			"",
+			"Press <Enter>, q, or <Esc> to close",
+		}
+
+		local width = 70
+		for _, line in ipairs(lines) do
+			width = math.max(width, vim.fn.strdisplaywidth(line) + 4)
+		end
+		local max_width = math.max(40, vim.o.columns - 4)
+		width = math.max(40, math.min(width, max_width))
+		local height = math.min(#lines, math.max(8, vim.o.lines - 4))
+
+		local row = math.max(1, math.floor((vim.o.lines - height) * 0.5) - 1)
+		local col = math.max(0, math.floor((vim.o.columns - width) * 0.5))
+
+		local buf = vim.api.nvim_create_buf(false, true)
+		vim.bo[buf].bufhidden = "wipe"
+		vim.bo[buf].buftype = "nofile"
+		vim.bo[buf].swapfile = false
+		vim.bo[buf].modifiable = true
+		vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+		vim.bo[buf].modifiable = false
+		vim.bo[buf].filetype = "ghosttywelcome"
+
+		local win = vim.api.nvim_open_win(buf, true, {
+			relative = "editor",
+			style = "minimal",
+			border = "rounded",
+			width = width,
+			height = height,
+			row = row,
+			col = col,
+			zindex = 250,
+			title = " Hello ",
+			title_pos = "center",
+			noautocmd = true,
+		})
+		welcome_win = win
+
+		pcall(vim.api.nvim_set_hl, 0, "GhosttyWelcomeTitle", { fg = "#55d6ff", bold = true })
+		pcall(vim.api.nvim_set_hl, 0, "GhosttyWelcomeHello", { fg = "#55d6ff", bold = true })
+		pcall(vim.api.nvim_set_hl, 0, "GhosttyWelcomePath", { fg = "#8be9fd" })
+		pcall(vim.api.nvim_set_hl, 0, "GhosttyWelcomeHint", { fg = "#a6adc8" })
+
+		vim.wo[win].number = false
+		vim.wo[win].relativenumber = false
+		vim.wo[win].signcolumn = "no"
+		vim.wo[win].wrap = false
+		vim.wo[win].cursorline = false
+		vim.wo[win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder,FloatTitle:GhosttyWelcomeTitle"
+
+		vim.api.nvim_buf_set_extmark(buf, welcome_ns, 0, 0, { end_col = 5, hl_group = "GhosttyWelcomeHello" })
+		vim.api.nvim_buf_set_extmark(buf, welcome_ns, 4, 0, { end_col = #lines[5], hl_group = "GhosttyWelcomePath" })
+		vim.api.nvim_buf_set_extmark(buf, welcome_ns, 9, 0, { end_col = #lines[10], hl_group = "GhosttyWelcomePath" })
+		vim.api.nvim_buf_set_extmark(buf, welcome_ns, 12, 0, { end_col = #lines[13], hl_group = "GhosttyWelcomeHint" })
+
+		vim.keymap.set("n", "q", close_welcome_modal, { buffer = buf, silent = true })
+		vim.keymap.set("n", "<Esc>", close_welcome_modal, { buffer = buf, silent = true })
+		vim.keymap.set("n", "<CR>", close_welcome_modal, { buffer = buf, silent = true })
 	end)
 end
 
@@ -293,20 +347,19 @@ end
 
 local function run_bootstrap()
 	enable_quiet_mode()
+	close_startup_overlays({ lazy = true })
 
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then
 		lazy.load({
 			plugins = {
 				"mason.nvim",
-				"nvim-treesitter",
 			},
 		})
 	end
 
 	local ran_any = false
 	local ran_mason = false
-	local ran_treesitter = false
 
 	local mason_packages = get_mason_packages()
 	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
@@ -317,19 +370,12 @@ local function run_bootstrap()
 		end
 	end
 
-	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
-		ran_any = true
-		local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
-		if ok then
-			ran_treesitter = true
-		end
-	end
-
-	if ran_any and (ran_mason or ran_treesitter) then
+	if ran_any and ran_mason then
 		write_done_marker()
-		vim.schedule(function()
-			vim.notify("Ghostty first-launch setup started. Running quietly in background.", vim.log.levels.INFO)
-		end)
+		vim.defer_fn(function()
+			close_startup_overlays()
+			show_welcome()
+		end, 700)
 	end
 end
 
@@ -347,9 +393,8 @@ local function bootstrap_when_ready(max_attempts, delay_ms)
 
 		attempts = attempts + 1
 		local has_mason = vim.fn.exists(":MasonInstall") == 2
-		local has_treesitter = vim.fn.exists(":TSInstall") == 2
 
-		if has_mason or has_treesitter then
+		if has_mason then
 			run_bootstrap()
 			return
 		end
@@ -368,7 +413,7 @@ local function start_bootstrap_once()
 	end
 
 	bootstrap_start_scheduled = true
-	show_welcome()
+	close_startup_overlays({ lazy = true })
 	bootstrap_when_ready(40, 250)
 end
 

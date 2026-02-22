@@ -34,7 +34,7 @@ o.linebreak = true
 o.breakindent = true
 o.showbreak = "↪ "
 o.number = true
-o.relativenumber = true
+o.relativenumber = false
 
 o.virtualedit = "all"
 
@@ -71,7 +71,7 @@ local function refresh_line_numbers(bufnr)
 	local enabled = not is_floating and not number_excluded_filetypes[ft] and not number_excluded_buftypes[bt]
 
 	vim.wo.number = enabled
-	vim.wo.relativenumber = enabled
+	vim.wo.relativenumber = false
 end
 
 local number_group = vim.api.nvim_create_augroup("ghostty_line_numbers", { clear = true })

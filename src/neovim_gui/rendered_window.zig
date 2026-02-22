@@ -770,20 +770,22 @@ pub const RenderedWindow = struct {
 
     }
 
-    /// Get the width to use for rendering
-    /// Uses display_width (from win_pos) if set, clamped to grid_width (buffer size)
+    /// Get the width to use for rendering.
+    /// Uses live display_width from win_pos even when grid_resize lags behind.
+    /// Cells beyond current grid_width are treated as null/background until data arrives.
     pub fn getRenderWidth(self: *const Self) u32 {
         if (self.display_width > 0) {
-            return @min(self.display_width, self.grid_width);
+            return self.display_width;
         }
         return self.grid_width;
     }
 
-    /// Get the height to use for rendering
-    /// Uses display_height (from win_pos) if set, clamped to grid_height (buffer size)
+    /// Get the height to use for rendering.
+    /// Uses live display_height from win_pos even when grid_resize lags behind.
+    /// Rows beyond current grid_height are treated as null/background until data arrives.
     pub fn getRenderHeight(self: *const Self) u32 {
         if (self.display_height > 0) {
-            return @min(self.display_height, self.grid_height);
+            return self.display_height;
         }
         return self.grid_height;
     }

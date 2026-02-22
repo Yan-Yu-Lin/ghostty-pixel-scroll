@@ -314,16 +314,48 @@ return {
 					return name:find("opencode", 1, true) ~= nil
 				end
 
+				local function remove_from_tabufline(bufnr)
+					local removed = false
+					for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+						local ok, bufs = pcall(function()
+							return vim.t[tab].bufs
+						end)
+						if ok and type(bufs) == "table" then
+							local filtered = {}
+							for _, existing in ipairs(bufs) do
+								if existing ~= bufnr then
+									filtered[#filtered + 1] = existing
+								else
+									removed = true
+								end
+							end
+							if #filtered ~= #bufs then
+								pcall(function()
+									vim.t[tab].bufs = filtered
+								end)
+							end
+						end
+					end
+					if removed then
+						pcall(vim.cmd, "redrawtabline")
+					end
+				end
+
 				local function patch_opencode_term(bufnr)
 					if not is_opencode_term(bufnr) then
 						return
 					end
+
+					vim.bo[bufnr].filetype = "opencode_terminal"
+					vim.bo[bufnr].buflisted = false
+					vim.bo[bufnr].bufhidden = "hide"
+					vim.bo[bufnr].swapfile = false
+					remove_from_tabufline(bufnr)
 					if vim.b[bufnr].ghostty_opencode_patched then
 						return
 					end
 
 					vim.b[bufnr].ghostty_opencode_patched = true
-					vim.bo[bufnr].filetype = "opencode_terminal"
 
 					local map_opts = { buffer = bufnr, noremap = true, silent = true }
 					vim.keymap.set("t", "<Esc>", "<Esc>", vim.tbl_extend("force", map_opts, { desc = "opencode: send esc" }))
@@ -331,6 +363,10 @@ return {
 					vim.keymap.set("t", "<C-j>", "<C-j>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-j passthrough" }))
 					vim.keymap.set("t", "<C-k>", "<C-k>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-k passthrough" }))
 					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
+				end
+
+				local function target_opencode_width()
+					return math.max(48, math.floor(vim.o.columns * 0.4))
 				end
 
 				local function style_opencode_window(winid)
@@ -341,35 +377,65 @@ return {
 					if not ok_buf or not is_opencode_term(bufnr) then
 						return
 					end
+					patch_opencode_term(bufnr)
+					vim.wo[winid].winfixwidth = true
 					vim.wo[winid].number = false
 					vim.wo[winid].relativenumber = false
 					vim.wo[winid].signcolumn = "no"
 					vim.wo[winid].foldcolumn = "0"
+					vim.wo[winid].statuscolumn = ""
 					vim.wo[winid].cursorline = false
+					vim.wo[winid].winbar = " opencode "
+					pcall(vim.api.nvim_set_option_value, "winfixbuf", true, { win = winid })
+					pcall(vim.api.nvim_win_set_width, winid, target_opencode_width())
 				end
 
-				local function target_opencode_width()
-					return math.max(48, math.floor(vim.o.columns * 0.4))
-				end
-
-				local function focus_opencode_term()
+				local function find_opencode_win_in_current_tab()
 					for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
 						local bufnr = vim.api.nvim_win_get_buf(winid)
 						if is_opencode_term(bufnr) then
-							vim.wo[winid].winfixwidth = true
-							pcall(vim.api.nvim_win_set_width, winid, target_opencode_width())
-							style_opencode_window(winid)
-							vim.api.nvim_set_current_win(winid)
-							vim.cmd("startinsert")
-							return true
+							return winid, bufnr
 						end
+					end
+				end
+
+				local function focus_opencode_term()
+					local winid = find_opencode_win_in_current_tab()
+					if winid then
+						style_opencode_window(winid)
+						vim.api.nvim_set_current_win(winid)
+						vim.cmd("startinsert")
+						return true
 					end
 					return false
 				end
 
-				local function open_opencode_right()
-					if focus_opencode_term() then
+				local function restyle_opencode_windows()
+					for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+						for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+							style_opencode_window(winid)
+						end
+					end
+				end
+
+				local function toggle_opencode_sidebar()
+					local winid = find_opencode_win_in_current_tab()
+					if winid then
+						pcall(vim.api.nvim_win_hide, winid)
 						return
+					end
+
+					local ok_cfg, cfg = pcall(require, "opencode.config")
+					if ok_cfg and cfg and cfg.provider and cfg.provider.opts then
+						cfg.provider.opts.split = "right"
+						cfg.provider.opts.width = target_opencode_width()
+						if cfg.provider.winid and vim.api.nvim_win_is_valid(cfg.provider.winid) then
+							local provider_tab = vim.api.nvim_win_get_tabpage(cfg.provider.winid)
+							if provider_tab ~= vim.api.nvim_get_current_tabpage() then
+								pcall(vim.api.nvim_win_hide, cfg.provider.winid)
+								cfg.provider.winid = nil
+							end
+						end
 					end
 
 					require("opencode").toggle()
@@ -378,7 +444,8 @@ return {
 							patch_opencode_term(bufnr)
 						end
 						focus_opencode_term()
-					end, 60)
+						restyle_opencode_windows()
+					end, 80)
 				end
 
 				vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
@@ -397,19 +464,20 @@ return {
 
 				vim.o.autoread = true
 				local augroup = vim.api.nvim_create_augroup("GhosttyOpencode", { clear = true })
-				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter" }, {
+				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter", "TabEnter", "VimResized" }, {
 					group = augroup,
 					callback = function(ev)
-						patch_opencode_term(ev.buf)
-						local winid = vim.api.nvim_get_current_win()
-						style_opencode_window(winid)
+						if ev.buf and ev.buf > 0 then
+							patch_opencode_term(ev.buf)
+						end
+						restyle_opencode_windows()
 					end,
 				})
 
 				if vim.fn.exists(":OpenCode") == 0 then
 					vim.api.nvim_create_user_command("OpenCode", function()
-						open_opencode_right()
-					end, { desc = "Open/focus opencode (right split)" })
+						toggle_opencode_sidebar()
+					end, { desc = "Toggle opencode sidebar" })
 				end
 
 				if vim.fn.exists(":OpenCodeAsk") == 0 then
@@ -424,6 +492,8 @@ return {
 						require("opencode").select()
 					end, { desc = "Open opencode action picker" })
 				end
+
+				vim.keymap.set("n", "<leader>oo", "<cmd>OpenCode<CR>", { desc = "Toggle opencode sidebar" })
 			end,
 		},
 

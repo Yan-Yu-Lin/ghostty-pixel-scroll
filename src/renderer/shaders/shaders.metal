@@ -673,13 +673,16 @@ fragment float4 cell_bg_fragment(
       cell_window_id <= uniforms.window_rect_count) {
     float4 wrect = uniforms.window_rects[cell_window_id - 1];
     float2 win_pos = wrect.xy;
-    float2 win_size = wrect.zw;
+    bool is_float_win = (wrect.w < 0.0);
+    float2 win_size = float2(wrect.z, abs(wrect.w));
 
     // Position relative to window center
     float2 frag_pos = in.position.xy;
     float2 center = win_pos + win_size * 0.5;
     float2 half_size = win_size * 0.5;
-    float r = uniforms.corner_radius;
+    float r = is_float_win ? min(uniforms.corner_radius, 8.0) : uniforms.corner_radius;
+    float max_r = max(min(half_size.x, half_size.y) - 1.0, 0.0);
+    r = min(r, max_r);
 
     // SDF for rounded rectangle: distance from point to nearest edge
     float2 d = abs(frag_pos - center) - half_size + float2(r);
@@ -1080,10 +1083,13 @@ fragment float4 cell_text_fragment(
       if (wid > 0 && wid <= uniforms.window_rect_count) {
         float4 wrect = uniforms.window_rects[wid - 1];
         float2 win_pos = wrect.xy;
-        float2 win_size = wrect.zw;
+        bool is_float = (wrect.w < 0.0);
+        float2 win_size = float2(wrect.z, abs(wrect.w));
         float2 center = win_pos + win_size * 0.5;
         float2 half_size = win_size * 0.5;
-        float r = uniforms.corner_radius;
+        float r = is_float ? min(uniforms.corner_radius, 8.0) : uniforms.corner_radius;
+        float max_r = max(min(half_size.x, half_size.y) - 1.0, 0.0);
+        r = min(r, max_r);
         float2 d = abs(in.position.xy - center) - half_size + float2(r);
         float dist = length(max(d, float2(0.0))) + min(max(d.x, d.y), 0.0) - r;
         if (dist > 0.0) {

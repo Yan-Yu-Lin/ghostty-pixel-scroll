@@ -333,6 +333,21 @@ return {
 					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
 				end
 
+				local function style_opencode_window(winid)
+					if not vim.api.nvim_win_is_valid(winid) then
+						return
+					end
+					local ok_buf, bufnr = pcall(vim.api.nvim_win_get_buf, winid)
+					if not ok_buf or not is_opencode_term(bufnr) then
+						return
+					end
+					vim.wo[winid].number = false
+					vim.wo[winid].relativenumber = false
+					vim.wo[winid].signcolumn = "no"
+					vim.wo[winid].foldcolumn = "0"
+					vim.wo[winid].cursorline = false
+				end
+
 				local function target_opencode_width()
 					return math.max(48, math.floor(vim.o.columns * 0.4))
 				end
@@ -343,6 +358,7 @@ return {
 						if is_opencode_term(bufnr) then
 							vim.wo[winid].winfixwidth = true
 							pcall(vim.api.nvim_win_set_width, winid, target_opencode_width())
+							style_opencode_window(winid)
 							vim.api.nvim_set_current_win(winid)
 							vim.cmd("startinsert")
 							return true
@@ -381,10 +397,12 @@ return {
 
 				vim.o.autoread = true
 				local augroup = vim.api.nvim_create_augroup("GhosttyOpencode", { clear = true })
-				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter" }, {
+				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter" }, {
 					group = augroup,
 					callback = function(ev)
 						patch_opencode_term(ev.buf)
+						local winid = vim.api.nvim_get_current_win()
+						style_opencode_window(winid)
 					end,
 				})
 

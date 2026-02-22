@@ -267,6 +267,7 @@ const Mouse = struct {
     /// Pending scroll amounts for high-precision scrolls
     pending_scroll_x: f64 = 0,
     pending_scroll_y: f64 = 0,
+    pending_nvim_scroll_grid: u64 = 0,
 
     /// Current pixel scroll offset for smooth scrolling. This is the sub-line
     /// offset in pixels (0 to cell_height). Positive means user scrolled up
@@ -4650,27 +4651,51 @@ pub fn scrollCallback(
 
             // Find the window under the cursor and get local grid position
             const window_info = nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row);
+            const target_grid: u64 = if (window_info) |info| info.grid_id else 1;
+            if (self.mouse.pending_nvim_scroll_grid != target_grid) {
+                self.mouse.pending_nvim_scroll_grid = target_grid;
+                self.mouse.pending_scroll_x = 0;
+                self.mouse.pending_scroll_y = 0;
+            }
 
-            // Normalize offsets to line/column units. Precision devices report pixel
-            // deltas; discrete wheels already report tick-like units.
-            var y_units: f64 = if (scroll_mods.precision) yoff / cell_h else yoff;
-            var x_units: f64 = if (scroll_mods.precision) xoff / cell_w else xoff;
+            // Normalize offsets to line/column units using the same multipliers
+            // as terminal mode so gesture speed is consistent between modes.
+            var y_units: f64 = if (scroll_mods.precision)
+                (yoff * self.config.mouse_scroll_multiplier.precision) / cell_h
+            else y_units: {
+                const yoff_max: f64 = if (yoff > 0)
+                    @max(yoff, 1)
+                else
+                    @min(yoff, -1);
+                break :y_units yoff_max * self.config.mouse_scroll_multiplier.discrete;
+            };
+            var x_units: f64 = if (scroll_mods.precision)
+                (xoff * self.config.mouse_scroll_multiplier.precision) / cell_w
+            else
+                @round(xoff);
 
             if (scroll_mods.precision) {
                 // Trackpad horizontal gestures often include tiny vertical noise.
                 // Lock to the dominant axis to prevent accidental line jumps.
                 const abs_x = @abs(x_units);
                 const abs_y = @abs(y_units);
-                const axis_lock = 1.5;
+                const axis_lock = 1.35;
                 if (abs_x > abs_y * axis_lock) {
                     y_units = 0;
+                    self.mouse.pending_scroll_y = 0;
                 } else if (abs_y > abs_x * axis_lock) {
                     x_units = 0;
+                    self.mouse.pending_scroll_x = 0;
                 }
 
                 // Ignore sub-noise accumulation for precision scroll.
                 if (@abs(x_units) < 0.01) x_units = 0;
                 if (@abs(y_units) < 0.01) y_units = 0;
+            }
+
+            if (x_units == 0 and y_units == 0) {
+                try self.queueRender();
+                return;
             }
 
             self.mouse.pending_scroll_y += y_units;

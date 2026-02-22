@@ -210,6 +210,8 @@ vec4 cell_bg() {
         // Floats use a smaller radius so the SDF rounding doesn't eat
         // into the border characters drawn by Neovim at the edges.
         float r = is_float_win ? min(corner_radius, 8.0) : corner_radius;
+        float max_r = max(min(half_size.x, half_size.y) - 1.0, 0.0);
+        r = min(r, max_r);
 
         // SDF for rounded rectangle
         vec2 d = abs(frag_pos - center) - half_size + vec2(r);
@@ -232,7 +234,7 @@ vec4 cell_bg() {
                 vec2 shadow_offset = vec2(2.0, 3.0);
                 vec2 sd = abs(frag_pos - shadow_offset - center) - half_size + vec2(r);
                 float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
-                float shadow = smoothstep(0.0, corner_radius * 1.5, shadow_dist) * 0.35;
+                float shadow = smoothstep(0.0, max(r * 1.5, 0.001), shadow_dist) * 0.35;
                 gap_bg.rgb *= (1.0 - shadow);
 
                 result = mix(gap_bg, result, alpha);
@@ -254,11 +256,13 @@ vec4 cell_bg() {
             vec2 center = win_pos + win_size * 0.5;
             vec2 half_size = win_size * 0.5;
             float r = corner_radius;
+            float max_r = max(min(half_size.x, half_size.y) - 1.0, 0.0);
+            r = min(r, max_r);
 
             vec2 shadow_offset = vec2(2.0, 3.0);
             vec2 sd = abs(gl_FragCoord.xy - shadow_offset - center) - half_size + vec2(r);
             float shadow_dist = length(max(sd, vec2(0.0))) + min(max(sd.x, sd.y), 0.0) - r;
-            float shadow = 1.0 - smoothstep(0.0, corner_radius * 1.5, shadow_dist) * 0.35;
+            float shadow = 1.0 - smoothstep(0.0, max(r * 1.5, 0.001), shadow_dist) * 0.35;
             min_shadow = min(min_shadow, shadow);
         }
         result.rgb *= min_shadow;

@@ -97,6 +97,8 @@ void main() {
                 vec2 center = win_pos + win_size * 0.5;
                 vec2 half_size = win_size * 0.5;
                 float r = is_float ? min(corner_radius, 8.0) : corner_radius;
+                float max_r = max(min(half_size.x, half_size.y) - 1.0, 0.0);
+                r = min(r, max_r);
                 vec2 d = abs(gl_FragCoord.xy - center) - half_size + vec2(r);
                 float dist = length(max(d, vec2(0.0))) + min(max(d.x, d.y), 0.0) - r;
                 if (dist > 0.0) {

@@ -261,11 +261,11 @@ fi
 
 ghostty-shaders() {
     builtin echo "Ghostty shader presets:"
-    builtin echo "  crt-curved      (curved CRT, strongest effect)"
-    builtin echo "  phosphor-green  (green phosphor terminal)"
-    builtin echo "  blue-neon-grid  (blue/magenta cyber style)"
-    builtin echo "  amber-console   (amber monochrome)"
-    builtin echo "  hud-diagnostic  (dark purple HUD)"
+    builtin echo "  crt-curved      (curved CRT preset)"
+    builtin echo "  phosphor-green  (flat green phosphor)"
+    builtin echo "  blue-neon-grid  (flat blue/magenta cyber)"
+    builtin echo "  amber-console   (flat amber monochrome)"
+    builtin echo "  hud-diagnostic  (flat dark HUD)"
     builtin echo "  none            (disable custom shaders)"
 }
 

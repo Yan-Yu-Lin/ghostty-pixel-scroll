@@ -2974,11 +2974,11 @@ keybind: Keybinds = .{},
 ///
 /// Available built-in presets:
 ///
-///   * `builtin:crt-curved` - Strong curved CRT screen with scanlines.
-///   * `builtin:phosphor-green` - Green monochrome phosphor monitor.
-///   * `builtin:blue-neon-grid` - Blue/magenta neon cyber look.
-///   * `builtin:amber-console` - Amber monochrome glass terminal.
-///   * `builtin:hud-diagnostic` - Dark HUD with purple diagnostics.
+///   * `builtin:crt-curved` - Curved CRT preset with scanlines.
+///   * `builtin:phosphor-green` - Flat full-screen green phosphor look.
+///   * `builtin:blue-neon-grid` - Flat full-screen blue/magenta cyber look.
+///   * `builtin:amber-console` - Flat full-screen amber monochrome look.
+///   * `builtin:hud-diagnostic` - Flat full-screen dark HUD diagnostics.
 ///
 /// Warning: Invalid shaders can cause Ghostty to become unusable such as by
 /// causing the window to be completely black. If this happens, you can

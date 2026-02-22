@@ -230,11 +230,11 @@ end
 
 function ghostty-shaders
     echo "Ghostty shader presets:"
-    echo "  crt-curved      (curved CRT, strongest effect)"
-    echo "  phosphor-green  (green phosphor terminal)"
-    echo "  blue-neon-grid  (blue/magenta cyber style)"
-    echo "  amber-console   (amber monochrome)"
-    echo "  hud-diagnostic  (dark purple HUD)"
+    echo "  crt-curved      (curved CRT preset)"
+    echo "  phosphor-green  (flat green phosphor)"
+    echo "  blue-neon-grid  (flat blue/magenta cyber)"
+    echo "  amber-console   (flat amber monochrome)"
+    echo "  hud-diagnostic  (flat dark HUD)"
     echo "  none            (disable custom shaders)"
 end
 

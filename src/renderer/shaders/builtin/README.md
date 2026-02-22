@@ -8,11 +8,11 @@ custom-shader = builtin:crt-curved
 
 Available presets:
 
-- `crt-curved`
-- `phosphor-green`
-- `blue-neon-grid`
-- `amber-console`
-- `hud-diagnostic`
+- `crt-curved` (curve preset)
+- `phosphor-green` (flat green phosphor)
+- `blue-neon-grid` (flat blue/magenta cyber)
+- `amber-console` (flat amber monochrome)
+- `hud-diagnostic` (flat dark HUD)
 
 Disable shader effects:
 

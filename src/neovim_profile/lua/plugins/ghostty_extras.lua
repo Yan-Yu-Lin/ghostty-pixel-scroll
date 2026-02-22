@@ -264,12 +264,87 @@ return {
 				vim.defer_fn(set_noice_theme_links, ms)
 			end
 		end,
-	},
+		},
 
-	{
-		"rcarriga/nvim-notify",
-		lazy = false,
-		priority = 950,
+		{
+			"nickjvandyke/opencode.nvim",
+			version = "*",
+			lazy = false,
+			config = function()
+				local function detect_opencode_theme()
+					local name = (vim.g.colors_name or ""):lower()
+					if name == "" then
+						return "system"
+					end
+
+					local map = {
+						{ "catppuccin", "catppuccin" },
+						{ "tokyonight", "tokyonight" },
+						{ "kanagawa", "kanagawa" },
+						{ "gruvbox", "gruvbox" },
+						{ "everforest", "everforest" },
+						{ "rose-pine", "rose-pine" },
+						{ "rosepine", "rose-pine" },
+						{ "nightfox", "nightfox" },
+						{ "onedark", "one-dark" },
+						{ "one_dark", "one-dark" },
+						{ "nord", "nord" },
+						{ "ayu", "ayu" },
+					}
+
+					for _, entry in ipairs(map) do
+						if name:find(entry[1], 1, true) then
+							return entry[2]
+						end
+					end
+
+					return "system"
+				end
+
+				local function build_provider_cmd(theme_name)
+					local cfg = vim.json.encode({ theme = theme_name })
+					return "OPENCODE_CONFIG_CONTENT=" .. vim.fn.shellescape(cfg) .. " opencode --port"
+				end
+
+				local function sync_opencode_theme()
+					local theme_name = detect_opencode_theme()
+					local cmd = build_provider_cmd(theme_name)
+
+					vim.g.ghostty_opencode_theme = theme_name
+					vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
+						auto_reload = true,
+						provider = {
+							cmd = cmd,
+							enabled = "terminal",
+						},
+					})
+
+					local ok_cfg, cfg = pcall(require, "opencode.config")
+					if ok_cfg and type(cfg) == "table" and type(cfg.opts) == "table" then
+						cfg.opts = vim.tbl_deep_extend("force", cfg.opts, {
+							auto_reload = true,
+							provider = {
+								cmd = cmd,
+								enabled = "terminal",
+							},
+						})
+					end
+				end
+
+				sync_opencode_theme()
+
+				local group = vim.api.nvim_create_augroup("ghostty_opencode_theme_sync", { clear = true })
+				vim.api.nvim_create_autocmd("ColorScheme", {
+					group = group,
+					callback = sync_opencode_theme,
+				})
+			end,
+		},
+
+		{
+			"rcarriga/nvim-notify",
+			lazy = false,
+			priority = 950,
 		config = function()
 			local bg = require("base46").get_theme_tb("base_30").black
 			require("notify").setup({

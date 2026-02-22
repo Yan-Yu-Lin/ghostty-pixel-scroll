@@ -4,6 +4,24 @@ const internal_os = @import("../os/main.zig");
 
 const log = std.log.scoped(.neovim_profile);
 
+const EmbeddedProfileFile = struct {
+    path: []const u8,
+    data: []const u8,
+};
+
+const embedded_profile_files = [_]EmbeddedProfileFile{
+    .{ .path = "init.lua", .data = @embedFile("../neovim_profile/init.lua") },
+    .{ .path = "lua/bootstrap.lua", .data = @embedFile("../neovim_profile/lua/bootstrap.lua") },
+    .{ .path = "lua/chadrc.lua", .data = @embedFile("../neovim_profile/lua/chadrc.lua") },
+    .{ .path = "lua/configs/lazy.lua", .data = @embedFile("../neovim_profile/lua/configs/lazy.lua") },
+    .{ .path = "lua/configs/lsp_defaults.lua", .data = @embedFile("../neovim_profile/lua/configs/lsp_defaults.lua") },
+    .{ .path = "lua/mappings.lua", .data = @embedFile("../neovim_profile/lua/mappings.lua") },
+    .{ .path = "lua/options.lua", .data = @embedFile("../neovim_profile/lua/options.lua") },
+    .{ .path = "lua/plugins/ghostty_extras.lua", .data = @embedFile("../neovim_profile/lua/plugins/ghostty_extras.lua") },
+    .{ .path = "lua/plugins/init.lua", .data = @embedFile("../neovim_profile/lua/plugins/init.lua") },
+    .{ .path = "plugin/ghostty_bootstrap.lua", .data = @embedFile("../neovim_profile/plugin/ghostty_bootstrap.lua") },
+};
+
 /// Configuration profile mode for Neovim GUI sessions.
 pub const Mode = enum {
     /// Prefer the user's own ~/.config/nvim if it exists, otherwise fall back
@@ -94,17 +112,19 @@ pub fn managedInitPath(alloc: Allocator) !?[]const u8 {
 /// Ensure the managed profile exists at ~/.config/ghostty/nvim by seeding it
 /// from bundled resources (share/ghostty/nvim) on first launch.
 pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) !void {
-    const base = resources_dir orelse {
-        log.warn("resources dir unavailable; cannot seed managed nvim profile", .{});
-        return;
-    };
+    var source_dir: ?[]const u8 = null;
+    defer if (source_dir) |dir| alloc.free(dir);
+    var use_embedded_seed = true;
 
-    const source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
-    defer alloc.free(source_dir);
-
-    if (std.fs.accessAbsolute(source_dir, .{})) |_| {} else |_| {
-        log.warn("bundled nvim profile not found at: {s}", .{source_dir});
-        return;
+    if (resources_dir) |base| {
+        source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
+        if (std.fs.accessAbsolute(source_dir.?, .{})) |_| {
+            use_embedded_seed = false;
+        } else |_| {
+            log.warn("bundled nvim profile not found at: {s}; falling back to embedded profile", .{source_dir.?});
+        }
+    } else {
+        log.warn("resources dir unavailable; falling back to embedded managed nvim profile", .{});
     }
 
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -127,11 +147,25 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     // managed profiles by pre-creating its marker directory.
     try home_dir.makePath(".local/share/ghostty/nvim/nvnotify1");
 
+    if (use_embedded_seed) {
+        // Seed from embedded fallback so managed mode still works when runtime
+        // resources aren't discoverable (for example some dev/local launches).
+        try seedEmbeddedProfile(target_dir);
+        try migrateManagedOptionsShowbreak(alloc, target_dir);
+        try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
+        try migrateManagedMappingsCleanup(alloc, target_dir);
+        try migrateManagedMappingsDiffview(alloc, target_dir);
+        try migrateManagedInitResilience(alloc, target_dir);
+        try migrateManagedOptionsNvchadGuard(alloc, target_dir);
+        log.info("seeded managed nvim profile from embedded fallback at: {s}", .{target_dir});
+        return;
+    }
+
     // First launch: copy full bundled profile.
     if (std.fs.accessAbsolute(target_dir, .{})) |_| {
         // Existing managed profile: only backfill missing bundled files so users
         // keep their edits while still getting newly added managed defaults.
-        try copyMissingFilesRecursive(alloc, source_dir, target_dir);
+        try copyMissingFilesRecursive(alloc, source_dir.?, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
         try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
@@ -141,7 +175,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         return;
     } else |_| {}
 
-    try copyDirRecursive(alloc, source_dir, target_dir);
+    try copyDirRecursive(alloc, source_dir.?, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
     try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
@@ -149,6 +183,39 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     try migrateManagedInitResilience(alloc, target_dir);
     try migrateManagedOptionsNvchadGuard(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
+}
+
+fn shouldAlwaysRefreshManagedFile(path: []const u8) bool {
+    return std.mem.eql(u8, path, "lua/plugins/ghostty_extras.lua") or
+        std.mem.eql(u8, path, "lua/bootstrap.lua") or
+        std.mem.eql(u8, path, "plugin/ghostty_bootstrap.lua");
+}
+
+fn seedEmbeddedProfile(target_path: []const u8) !void {
+    var target = try std.fs.openDirAbsolute(target_path, .{});
+    defer target.close();
+
+    for (embedded_profile_files) |file| {
+        if (std.fs.path.dirname(file.path)) |parent| {
+            try target.makePath(parent);
+        }
+
+        if (shouldAlwaysRefreshManagedFile(file.path)) {
+            target.deleteFile(file.path) catch |err| switch (err) {
+                error.FileNotFound => {},
+                else => return err,
+            };
+        } else {
+            if (target.access(file.path, .{})) |_| {
+                continue;
+            } else |_| {}
+        }
+
+        try target.writeFile(.{
+            .sub_path = file.path,
+            .data = file.data,
+        });
+    }
 }
 
 fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {

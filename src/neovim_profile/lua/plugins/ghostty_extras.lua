@@ -426,18 +426,11 @@ return {
 					if vim.api.nvim_get_current_win() ~= winid then
 						pcall(vim.api.nvim_set_current_win, winid)
 					end
-					-- Keep the TUI anchored to its live viewport instead of Neovim terminal scrollback.
-					pcall(function()
-						require("opencode").command("session.last")
-					end)
 					pcall(vim.cmd, "startinsert")
 					vim.defer_fn(function()
 						if vim.api.nvim_win_is_valid(winid) then
 							local current_buf = vim.api.nvim_win_get_buf(winid)
 							if is_opencode_term(current_buf) and vim.api.nvim_get_current_win() == winid then
-								pcall(function()
-									require("opencode").command("session.last")
-								end)
 								pcall(vim.cmd, "startinsert")
 							end
 						end

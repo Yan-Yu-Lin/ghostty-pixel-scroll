@@ -301,295 +301,49 @@ return {
 		},
 
 		{
+			"folke/snacks.nvim",
+			lazy = false,
+			opts = {
+				input = {},
+				picker = {
+					actions = {
+						opencode_send = function(...)
+							return require("opencode").snacks_picker_send(...)
+						end,
+					},
+					win = {
+						input = {
+							keys = {
+								["<a-a>"] = { "opencode_send", mode = { "n", "i" } },
+							},
+						},
+					},
+				},
+				terminal = {},
+			},
+		},
+
+		{
 			"nickjvandyke/opencode.nvim",
 			version = "*",
 			lazy = false,
 			cond = function()
 				return vim.fn.executable("opencode") == 1
 			end,
+			dependencies = {
+				"folke/snacks.nvim",
+			},
 			config = function()
-				local function is_opencode_term(bufnr)
-					if not vim.api.nvim_buf_is_valid(bufnr) then
-						return false
-					end
-					if vim.bo[bufnr].buftype ~= "terminal" then
-						return false
-					end
-					local name = vim.api.nvim_buf_get_name(bufnr)
-					return name:find("opencode", 1, true) ~= nil
-				end
-
-				local function remove_from_tabufline(bufnr)
-					local removed = false
-					for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-						local ok, bufs = pcall(function()
-							return vim.t[tab].bufs
-						end)
-						if ok and type(bufs) == "table" then
-							local filtered = {}
-							for _, existing in ipairs(bufs) do
-								if existing ~= bufnr then
-									filtered[#filtered + 1] = existing
-								else
-									removed = true
-								end
-							end
-							if #filtered ~= #bufs then
-								pcall(function()
-									vim.t[tab].bufs = filtered
-								end)
-							end
-						end
-					end
-					if removed then
-						pcall(vim.cmd, "redrawtabline")
-					end
-				end
-
-				local function patch_opencode_term(bufnr)
-					if not is_opencode_term(bufnr) then
-						return
-					end
-
-					vim.bo[bufnr].filetype = "opencode_terminal"
-					vim.bo[bufnr].buflisted = false
-					vim.bo[bufnr].bufhidden = "hide"
-					vim.bo[bufnr].swapfile = false
-					remove_from_tabufline(bufnr)
-					if vim.b[bufnr].ghostty_opencode_patched then
-						return
-					end
-
-					vim.b[bufnr].ghostty_opencode_patched = true
-
-					local map_opts = { buffer = bufnr, noremap = true, silent = true }
-
-					vim.keymap.set("t", "<Esc>", "<Esc>", vim.tbl_extend("force", map_opts, { desc = "opencode: send esc" }))
-					vim.keymap.set("t", "<C-h>", "<C-\\><C-N><C-w>h", vim.tbl_extend("force", map_opts, { desc = "opencode: move to left window" }))
-					vim.keymap.set("t", "<C-j>", "<C-\\><C-N><C-w>j", vim.tbl_extend("force", map_opts, { desc = "opencode: move to lower window" }))
-					vim.keymap.set("t", "<C-k>", "<C-\\><C-N><C-w>k", vim.tbl_extend("force", map_opts, { desc = "opencode: move to upper window" }))
-					vim.keymap.set("t", "<C-l>", "<C-\\><C-N><C-w>l", vim.tbl_extend("force", map_opts, { desc = "opencode: move to right window" }))
-					vim.keymap.set("n", "<C-h>", "<C-w>h", vim.tbl_extend("force", map_opts, { desc = "opencode: move left window" }))
-					vim.keymap.set("n", "<C-j>", "<C-w>j", vim.tbl_extend("force", map_opts, { desc = "opencode: move lower window" }))
-					vim.keymap.set("n", "<C-k>", "<C-w>k", vim.tbl_extend("force", map_opts, { desc = "opencode: move upper window" }))
-					vim.keymap.set("n", "<C-l>", "<C-w>l", vim.tbl_extend("force", map_opts, { desc = "opencode: move right window" }))
-					vim.keymap.set("t", "<A-Left>", "<C-\\><C-N>:vertical resize -2<CR>i", vim.tbl_extend("force", map_opts, { desc = "opencode: decrease window width" }))
-					vim.keymap.set("t", "<A-Right>", "<C-\\><C-N>:vertical resize +2<CR>i", vim.tbl_extend("force", map_opts, { desc = "opencode: increase window width" }))
-					vim.keymap.set("t", "<A-Up>", "<C-\\><C-N>:resize +2<CR>i", vim.tbl_extend("force", map_opts, { desc = "opencode: increase window height" }))
-					vim.keymap.set("t", "<A-Down>", "<C-\\><C-N>:resize -2<CR>i", vim.tbl_extend("force", map_opts, { desc = "opencode: decrease window height" }))
-					vim.keymap.set("t", "<C-\\><C-n>", "<Nop>", vim.tbl_extend("force", map_opts, { desc = "opencode: keep terminal mode" }))
-					pcall(vim.keymap.del, "n", "<C-u>", { buffer = bufnr })
-					pcall(vim.keymap.del, "n", "<C-d>", { buffer = bufnr })
-					pcall(vim.keymap.del, "n", "gg", { buffer = bufnr })
-					pcall(vim.keymap.del, "n", "G", { buffer = bufnr })
-					pcall(vim.keymap.del, "n", "<Esc>", { buffer = bufnr })
-					vim.keymap.set("n", "<Esc>", "i", vim.tbl_extend("force", map_opts, { desc = "opencode: back to terminal mode" }))
-					for _, lhs in ipairs({
-						"<ScrollWheelUp>",
-						"<ScrollWheelDown>",
-						"<ScrollWheelLeft>",
-						"<ScrollWheelRight>",
-						"<S-ScrollWheelUp>",
-						"<S-ScrollWheelDown>",
-						"<S-ScrollWheelLeft>",
-						"<S-ScrollWheelRight>",
-						"<C-ScrollWheelUp>",
-						"<C-ScrollWheelDown>",
-						"<C-ScrollWheelLeft>",
-						"<C-ScrollWheelRight>",
-						"<PageUp>",
-						"<PageDown>",
-						"<kPageUp>",
-						"<kPageDown>",
-					}) do
-						-- In terminal mode, leave scrolling/clicking to opencode TUI.
-						-- In terminal-normal mode, jump back to terminal mode so buffer doesn't scroll.
-						vim.keymap.set("n", lhs, "i", map_opts)
-					end
-					vim.keymap.set("n", "<LeftMouse>", "i", map_opts)
-					vim.keymap.set("n", "<LeftDrag>", "i", map_opts)
-					for _, lhs in ipairs({
-						"h",
-						"j",
-						"k",
-						"l",
-						"0",
-						"$",
-						"^",
-						"gg",
-						"G",
-						"H",
-						"M",
-						"L",
-						"zh",
-						"zl",
-						"zH",
-						"zL",
-						"<Left>",
-						"<Right>",
-						"<Up>",
-						"<Down>",
-						"<Home>",
-						"<End>",
-					}) do
-						vim.keymap.set("n", lhs, "i", map_opts)
-					end
-				end
-
-				local function target_opencode_width()
-					return math.max(48, math.floor(vim.o.columns * 0.4))
-				end
-
-				local function sync_opencode_term_geometry(winid, bufnr)
-					if not vim.api.nvim_win_is_valid(winid) then
-						return
-					end
-					if not bufnr then
-						bufnr = vim.api.nvim_win_get_buf(winid)
-					end
-					if not is_opencode_term(bufnr) then
-						return
-					end
-
-					local job_id = vim.b[bufnr].terminal_job_id
-					if type(job_id) == "number" and job_id > 0 then
-						local ok_w, width = pcall(vim.api.nvim_win_get_width, winid)
-						local ok_h, height = pcall(vim.api.nvim_win_get_height, winid)
-						if ok_w and ok_h and width > 0 and height > 0 then
-							pcall(vim.fn.jobresize, job_id, width, height)
-						end
-					end
-					pcall(vim.cmd, "redraw!")
-				end
-
-				local function ensure_opencode_input_mode(winid, bufnr)
-					if not vim.api.nvim_win_is_valid(winid) then
-						return
-					end
-					if not bufnr then
-						bufnr = vim.api.nvim_win_get_buf(winid)
-					end
-					if not is_opencode_term(bufnr) then
-						return
-					end
-
-					if vim.api.nvim_get_current_win() ~= winid then
-						pcall(vim.api.nvim_set_current_win, winid)
-					end
-					pcall(vim.cmd, "startinsert")
-					vim.defer_fn(function()
-						if vim.api.nvim_win_is_valid(winid) then
-							local current_buf = vim.api.nvim_win_get_buf(winid)
-							if is_opencode_term(current_buf) and vim.api.nvim_get_current_win() == winid then
-								pcall(vim.cmd, "startinsert")
-							end
-						end
-					end, 40)
-				end
-
-				local function style_opencode_window(winid)
-					if not vim.api.nvim_win_is_valid(winid) then
-						return
-					end
-					local ok_buf, bufnr = pcall(vim.api.nvim_win_get_buf, winid)
-					if not ok_buf or not is_opencode_term(bufnr) then
-						return
-					end
-					patch_opencode_term(bufnr)
-					vim.wo[winid].winfixwidth = true
-					vim.wo[winid].number = false
-					vim.wo[winid].relativenumber = false
-					vim.wo[winid].signcolumn = "no"
-					vim.wo[winid].foldcolumn = "0"
-					vim.wo[winid].statuscolumn = ""
-					vim.wo[winid].cursorline = false
-					vim.wo[winid].winbar = ""
-					pcall(vim.api.nvim_set_option_value, "winfixbuf", true, { win = winid })
-					local width = target_opencode_width()
-					if vim.api.nvim_win_get_width(winid) ~= width then
-						pcall(vim.api.nvim_win_set_width, winid, width)
-					end
-					sync_opencode_term_geometry(winid, bufnr)
-				end
-
-				local function find_opencode_win_in_current_tab()
-					for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-						local bufnr = vim.api.nvim_win_get_buf(winid)
-						if is_opencode_term(bufnr) then
-							return winid, bufnr
-						end
-					end
-				end
-
-				local function focus_opencode_term()
-					local winid = find_opencode_win_in_current_tab()
-					if winid then
-						style_opencode_window(winid)
-						ensure_opencode_input_mode(winid)
-						return winid
-					end
-					return nil
-				end
-
-				local function restyle_opencode_windows()
-					for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
-						for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
-							style_opencode_window(winid)
-						end
-					end
-				end
-
-				local function toggle_opencode_sidebar()
-					local winid = find_opencode_win_in_current_tab()
-					if winid then
-						local ok_cfg, cfg = pcall(require, "opencode.config")
-						if ok_cfg and cfg and cfg.provider then
-							cfg.provider.winid = winid
-						end
-						require("opencode").toggle()
-						return
-					end
-
-					local ok_cfg, cfg = pcall(require, "opencode.config")
-					if ok_cfg and cfg and cfg.provider and cfg.provider.opts then
-						cfg.provider.opts.split = "right"
-						cfg.provider.opts.width = target_opencode_width()
-						if cfg.provider.winid and vim.api.nvim_win_is_valid(cfg.provider.winid) then
-							local provider_tab = vim.api.nvim_win_get_tabpage(cfg.provider.winid)
-							if provider_tab ~= vim.api.nvim_get_current_tabpage() then
-								pcall(vim.api.nvim_win_hide, cfg.provider.winid)
-								cfg.provider.winid = nil
-							end
-						end
-					end
-
-					require("opencode").toggle()
-					vim.defer_fn(function()
-						for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-							patch_opencode_term(bufnr)
-						end
-						local opened = focus_opencode_term()
-						if opened then
-							vim.defer_fn(function()
-								style_opencode_window(opened)
-								ensure_opencode_input_mode(opened)
-							end, 40)
-							vim.defer_fn(function()
-								style_opencode_window(opened)
-								ensure_opencode_input_mode(opened)
-							end, 140)
-						end
-						restyle_opencode_windows()
-					end, 80)
-				end
-
 				vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
 					provider = {
-						enabled = "terminal",
+						enabled = "snacks",
 						cmd = "opencode --port",
-						terminal = {
-							split = "right",
-							width = target_opencode_width(),
+						snacks = {
+							win = {
+								position = "right",
+								enter = false,
+								width = 0.40,
+							},
 						},
 					},
 					events = {
@@ -598,54 +352,11 @@ return {
 				})
 
 				vim.o.autoread = true
-				local augroup = vim.api.nvim_create_augroup("GhosttyOpencode", { clear = true })
-				vim.api.nvim_create_autocmd({ "TermOpen", "TabEnter", "VimResized" }, {
-					group = augroup,
-					callback = function(ev)
-						if ev.buf and ev.buf > 0 then
-							patch_opencode_term(ev.buf)
-						end
-						restyle_opencode_windows()
-					end,
-				})
-				vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
-					group = augroup,
-					callback = function(ev)
-						if not ev.buf or ev.buf <= 0 or not is_opencode_term(ev.buf) then
-							return
-						end
-						local winid = vim.api.nvim_get_current_win()
-						style_opencode_window(winid)
-						ensure_opencode_input_mode(winid, ev.buf)
-					end,
-				})
-				vim.api.nvim_create_autocmd("ModeChanged", {
-					group = augroup,
-					pattern = "*:*",
-					callback = function()
-						local bufnr = vim.api.nvim_get_current_buf()
-						if not is_opencode_term(bufnr) then
-							return
-						end
-						local mode = vim.api.nvim_get_mode().mode
-						if mode:sub(1, 1) == "t" then
-							return
-						end
-						vim.schedule(function()
-							if vim.api.nvim_get_current_buf() ~= bufnr or not vim.api.nvim_win_is_valid(0) then
-								return
-							end
-							local winid = vim.api.nvim_get_current_win()
-							style_opencode_window(winid)
-							ensure_opencode_input_mode(winid, bufnr)
-						end)
-					end,
-				})
 
 				if vim.fn.exists(":OpenCode") == 0 then
 					vim.api.nvim_create_user_command("OpenCode", function()
-						toggle_opencode_sidebar()
-					end, { desc = "Toggle opencode sidebar" })
+						require("opencode").toggle()
+					end, { desc = "Toggle opencode" })
 				end
 
 				if vim.fn.exists(":OpenCodeAsk") == 0 then
@@ -661,7 +372,33 @@ return {
 					end, { desc = "Open opencode action picker" })
 				end
 
-				vim.keymap.set("n", "<leader>oo", "<cmd>OpenCode<CR>", { desc = "Toggle opencode sidebar" })
+				vim.keymap.set({ "n", "x" }, "<C-a>", function()
+					require("opencode").ask("@this: ", { submit = true })
+				end, { desc = "Ask opencode" })
+				vim.keymap.set({ "n", "x" }, "<C-x>", function()
+					require("opencode").select()
+				end, { desc = "Execute opencode action" })
+				vim.keymap.set({ "n", "t" }, "<C-.>", function()
+					require("opencode").toggle()
+				end, { desc = "Toggle opencode" })
+
+				vim.keymap.set({ "n", "x" }, "go", function()
+					return require("opencode").operator("@this ")
+				end, { expr = true, desc = "Add range to opencode" })
+				vim.keymap.set("n", "goo", function()
+					return require("opencode").operator("@this ") .. "_"
+				end, { expr = true, desc = "Add line to opencode" })
+
+				vim.keymap.set("n", "<S-C-u>", function()
+					require("opencode").command("session.half.page.up")
+				end, { desc = "Scroll opencode up" })
+				vim.keymap.set("n", "<S-C-d>", function()
+					require("opencode").command("session.half.page.down")
+				end, { desc = "Scroll opencode down" })
+
+				vim.keymap.set("n", "+", "<C-a>", { noremap = true, desc = "Increment under cursor" })
+				vim.keymap.set("n", "-", "<C-x>", { noremap = true, desc = "Decrement under cursor" })
+				vim.keymap.set("n", "<leader>oo", "<cmd>OpenCode<CR>", { desc = "Toggle opencode" })
 			end,
 		},
 

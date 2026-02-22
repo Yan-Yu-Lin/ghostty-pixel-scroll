@@ -132,17 +132,22 @@ return {
 						{ label = "None", value = "none" },
 					}
 
-				local function send_shader_preset(preset)
-					local name = (preset and preset ~= "") and preset or "crt-curved"
-					local chan = vim.g.ghostty_channel
-					if type(chan) == "number" then
-						pcall(vim.rpcnotify, chan, "ghostty_shader", name)
-						return
-					end
+					local function send_shader_preset(preset)
+						local name = (preset and preset ~= "") and preset or "crt-curved"
+						local chan = vim.g.ghostty_channel
+						if type(chan) == "number" then
+							local ok_info = pcall(vim.api.nvim_get_chan_info, chan)
+							if ok_info then
+								local ok_notify = pcall(vim.rpcnotify, chan, "ghostty_shader", name)
+								if ok_notify then
+									return
+								end
+							end
+						end
 
-					local ok, err = pcall(function()
-						io.stdout:write(string.format("\27]1345;%s\7", name))
-						io.stdout:flush()
+						local ok, err = pcall(function()
+							io.stdout:write(string.format("\27]1345;%s\7", name))
+							io.stdout:flush()
 					end)
 					if not ok then
 						vim.notify("Ghostty shader send failed: " .. tostring(err), vim.log.levels.WARN)
@@ -363,6 +368,22 @@ return {
 					vim.keymap.set("t", "<C-j>", "<C-j>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-j passthrough" }))
 					vim.keymap.set("t", "<C-k>", "<C-k>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-k passthrough" }))
 					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
+					vim.keymap.set("t", "<C-\\><C-n>", "<Nop>", vim.tbl_extend("force", map_opts, { desc = "opencode: keep terminal mode" }))
+					for _, lhs in ipairs({
+						"<ScrollWheelUp>",
+						"<ScrollWheelDown>",
+						"<S-ScrollWheelUp>",
+						"<S-ScrollWheelDown>",
+						"<C-ScrollWheelUp>",
+						"<C-ScrollWheelDown>",
+						"<PageUp>",
+						"<PageDown>",
+						"<kPageUp>",
+						"<kPageDown>",
+					}) do
+						vim.keymap.set("t", lhs, "<Nop>", map_opts)
+						vim.keymap.set("n", lhs, "<Nop>", map_opts)
+					end
 				end
 
 				local function target_opencode_width()
@@ -553,6 +574,19 @@ return {
 						local winid = vim.api.nvim_get_current_win()
 						style_opencode_window(winid)
 						ensure_opencode_input_mode(winid, ev.buf)
+					end,
+				})
+				vim.api.nvim_create_autocmd("ModeChanged", {
+					group = augroup,
+					pattern = "*:nt",
+					callback = function()
+						local bufnr = vim.api.nvim_get_current_buf()
+						if not is_opencode_term(bufnr) then
+							return
+						end
+						local winid = vim.api.nvim_get_current_win()
+						style_opencode_window(winid)
+						ensure_opencode_input_mode(winid, bufnr)
 					end,
 				})
 

@@ -1016,11 +1016,11 @@ palette: Palette = .{},
 
 /// Gap size in pixels between Neovim split windows. Creates visible space
 /// between side-by-side panes so rounded corners are visible between them.
-/// Set to 0 for edge-to-edge windows.
-@"neovim-window-padding": f32 = 0.0,
+/// Recommended: 4-8 pixels. Set to 0 for edge-to-edge windows.
+@"neovim-window-padding": f32 = 4.0,
 
 /// Rounded corner radius (pixels) for Neovim windows. 0 = sharp corners.
-@"neovim-corner-radius": f32 = 0.0,
+@"neovim-corner-radius": f32 = 25.0,
 
 /// Your display name for collaborative sessions. Other participants see
 /// this name floating above your cursor in their terminal. If unset,

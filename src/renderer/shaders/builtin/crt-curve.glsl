@@ -22,19 +22,19 @@ float curvedFalloff(vec2 warped_uv) {
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord / iResolution.xy;
-    vec2 warped = crtWarp(uv, 0.11);
+    vec2 warped = crtWarp(uv, 0.07);
     vec2 sample_uv = clamp(warped, vec2(0.001), vec2(0.999));
 
     vec3 color = texture(iChannel0, sample_uv).rgb;
 
     float vignette = 16.0 * sample_uv.x * sample_uv.y * (1.0 - sample_uv.x) * (1.0 - sample_uv.y);
-    vignette = 0.86 + 0.14 * pow(clamp(vignette, 0.0, 1.0), 0.22);
+    vignette = 0.95 + 0.05 * pow(clamp(vignette, 0.0, 1.0), 0.22);
 
     float curve = curvedFalloff(warped);
-    float edge = edgeMask(sample_uv, 0.02);
+    float edge = edgeMask(sample_uv, 0.008);
 
     color *= vignette;
-    color *= mix(0.62, 1.0, curve * edge);
+    color *= mix(0.9, 1.0, curve * edge);
 
     fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

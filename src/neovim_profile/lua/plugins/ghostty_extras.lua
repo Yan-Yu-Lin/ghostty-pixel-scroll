@@ -302,6 +302,42 @@ return {
 			cond = function()
 				return vim.fn.executable("opencode") == 1
 			end,
+			config = function()
+				vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
+					provider = {
+						enabled = "terminal",
+						cmd = "opencode --port",
+						terminal = {
+							split = "right",
+							width = math.floor(vim.o.columns * 0.4),
+						},
+					},
+					events = {
+						reload = true,
+					},
+				})
+
+				vim.o.autoread = true
+
+				if vim.fn.exists(":OpenCode") == 0 then
+					vim.api.nvim_create_user_command("OpenCode", function()
+						require("opencode").toggle()
+					end, { desc = "Toggle opencode (right split)" })
+				end
+
+				if vim.fn.exists(":OpenCodeAsk") == 0 then
+					vim.api.nvim_create_user_command("OpenCodeAsk", function(opts)
+						local prompt = opts.args ~= "" and opts.args or "@this: "
+						require("opencode").ask(prompt, { submit = true })
+					end, { nargs = "*", desc = "Ask opencode" })
+				end
+
+				if vim.fn.exists(":OpenCodeSelect") == 0 then
+					vim.api.nvim_create_user_command("OpenCodeSelect", function()
+						require("opencode").select()
+					end, { desc = "Open opencode action picker" })
+				end
+			end,
 		},
 
 		{

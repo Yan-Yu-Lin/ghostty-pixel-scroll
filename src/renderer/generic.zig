@@ -1894,6 +1894,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Step 1: Process events FIRST (includes flush which updates scrollback and position)
             nvim.processEvents() catch {};
 
+            if (nvim.takePendingShaderPreset()) |preset| {
+                defer nvim.alloc.free(preset);
+                self.setCustomShaderPresetLocked(preset) catch |err| {
+                    log.warn("failed to set live shader preset from Neovim err={}", .{err});
+                };
+            }
+
             // Step 2: Animate with subdivision approach
             // Subdivide large dt values to prevent animation jumps from inconsistent frame timing
             const MAX_ANIMATION_DT: f32 = 1.0 / 120.0; // 8.33ms max per animation step
@@ -4398,6 +4405,40 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (custom_shaders_changed) {
                 self.reinitialize_shaders = true;
             }
+        }
+
+        /// Set a live built-in shader preset for this renderer instance.
+        /// `none` / `off` / `default` clears all custom shaders.
+        pub fn setCustomShaderPreset(self: *Self, preset: []const u8) !void {
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+
+            try self.setCustomShaderPresetLocked(preset);
+        }
+
+        fn setCustomShaderPresetLocked(self: *Self, preset: []const u8) !void {
+            const trimmed = std.mem.trim(u8, preset, " \t\r\n");
+            const alloc = self.config.arena.allocator();
+            self.config.custom_shaders.value.clearRetainingCapacity();
+
+            const disable =
+                trimmed.len == 0 or
+                std.ascii.eqlIgnoreCase(trimmed, "none") or
+                std.ascii.eqlIgnoreCase(trimmed, "off") or
+                std.ascii.eqlIgnoreCase(trimmed, "disable") or
+                std.ascii.eqlIgnoreCase(trimmed, "disabled") or
+                std.ascii.eqlIgnoreCase(trimmed, "default") or
+                std.ascii.eqlIgnoreCase(trimmed, "reset");
+
+            if (!disable) {
+                const path = try std.fmt.allocPrintSentinel(alloc, "builtin:{s}", .{trimmed}, 0);
+                try self.config.custom_shaders.value.append(alloc, .{
+                    .required = path,
+                });
+            }
+
+            self.reinitialize_shaders = true;
+            self.markDirty();
         }
 
         /// Resize the screen.

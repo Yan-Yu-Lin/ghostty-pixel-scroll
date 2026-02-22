@@ -123,6 +123,9 @@ pub const Message = union(enum) {
     /// Connect NeovimGui to remote Neovim TCP (triggered by OSC 1344;host:port)
     collab_nvim_connect: [256]u8,
 
+    /// Set shader preset (triggered by OSC 1345;preset)
+    set_shader_preset: [256]u8,
+
     pub const ReportTitleStyle = enum {
         csi_21_t,
 

@@ -39,6 +39,34 @@ pub const Uniforms = extern struct {
 /// The target to load shaders for.
 pub const Target = enum { glsl, msl };
 
+const BuiltinShader = struct {
+    name: []const u8,
+    source: []const u8,
+};
+
+const builtin_shaders = [_]BuiltinShader{
+    .{
+        .name = "crt-curved",
+        .source = @embedFile("shaders/builtin/crt-curved.glsl"),
+    },
+    .{
+        .name = "phosphor-green",
+        .source = @embedFile("shaders/builtin/phosphor-green.glsl"),
+    },
+    .{
+        .name = "blue-neon-grid",
+        .source = @embedFile("shaders/builtin/blue-neon-grid.glsl"),
+    },
+    .{
+        .name = "amber-console",
+        .source = @embedFile("shaders/builtin/amber-console.glsl"),
+    },
+    .{
+        .name = "hud-diagnostic",
+        .source = @embedFile("shaders/builtin/hud-diagnostic.glsl"),
+    },
+};
+
 /// Load a set of shaders from files and convert them to the target
 /// format. The shader order is preserved.
 pub fn loadFromFiles(
@@ -57,7 +85,7 @@ pub fn loadFromFiles(
         };
 
         const shader = loadFromFile(alloc_gpa, path, target) catch |err| {
-            if (err == error.FileNotFound and optional) {
+            if ((err == error.FileNotFound or err == error.BuiltinShaderNotFound) and optional) {
                 continue;
             }
 
@@ -83,6 +111,16 @@ pub fn loadFromFile(
 
     // Read it all into memory -- we don't expect shaders to be large.
     const src = src: {
+        if (builtinShaderName(path)) |name| {
+            if (builtinShaderSource(name)) |source| {
+                log.info("loaded built-in shader preset={s}", .{name});
+                break :src source;
+            }
+
+            log.warn("unknown built-in shader preset={s}", .{name});
+            return error.BuiltinShaderNotFound;
+        }
+
         // Load the shader file
         const cwd = std.fs.cwd();
         const file = try cwd.openFile(path, .{});
@@ -133,6 +171,35 @@ pub fn loadFromFile(
         .glsl => try glslFromSpv(alloc_gpa, spirv),
         .msl => try mslFromSpv(alloc_gpa, spirv),
     };
+}
+
+/// Return a built-in preset name from a path-like string, if present.
+/// Supported syntax is `builtin:<name>`.
+fn builtinShaderName(path: []const u8) ?[]const u8 {
+    const prefix = "builtin:";
+
+    if (std.mem.startsWith(u8, path, prefix)) {
+        const name = path[prefix.len..];
+        if (name.len == 0) return null;
+        return name;
+    }
+
+    const base = std.fs.path.basename(path);
+    if (std.mem.startsWith(u8, base, prefix)) {
+        const name = base[prefix.len..];
+        if (name.len == 0) return null;
+        return name;
+    }
+
+    return null;
+}
+
+fn builtinShaderSource(name: []const u8) ?[]const u8 {
+    for (builtin_shaders) |entry| {
+        if (std.mem.eql(u8, entry.name, name)) return entry.source;
+    }
+
+    return null;
 }
 
 /// Convert a ShaderToy shader into valid GLSL.
@@ -417,6 +484,23 @@ test "shadertoy to glsl" {
     defer alloc.free(glsl);
 
     // log.warn("glsl={s}", .{glsl});
+}
+
+test "builtin shader path parser" {
+    const testing = std.testing;
+
+    try testing.expectEqualStrings("crt-curved", builtinShaderName("builtin:crt-curved").?);
+    try testing.expectEqualStrings("phosphor-green", builtinShaderName("/tmp/builtin:phosphor-green").?);
+    try testing.expectEqual(null, builtinShaderName("crt-curved.glsl"));
+    try testing.expectEqual(null, builtinShaderName("builtin:"));
+}
+
+test "builtin shader lookup" {
+    const testing = std.testing;
+
+    try testing.expect(builtinShaderSource("crt-curved") != null);
+    try testing.expect(builtinShaderSource("phosphor-green") != null);
+    try testing.expectEqual(null, builtinShaderSource("does-not-exist"));
 }
 
 const test_crt = @embedFile("shaders/test_shadertoy_crt.glsl");

@@ -137,6 +137,7 @@ pub const Event = union(enum) {
     set_title: []const u8, // Window title from Neovim
     set_icon: []const u8, // Window icon name (rarely used)
     image_preview: []const u8, // Image preview path from Neovim
+    shader_preset: []const u8, // Shader preset request from Neovim RPC
     win_viewport_margins: WinViewportMargins,
     win_external_pos: WinExternalPos,
     nvim_exited, // Neovim process exited (:q, :qall, etc.)
@@ -613,6 +614,7 @@ pub const Event = union(enum) {
             .set_title => |title| alloc.free(title),
             .set_icon => |icon| alloc.free(icon),
             .image_preview => |path| alloc.free(path),
+            .shader_preset => |preset| alloc.free(preset),
             .mode_info_set => |*mis| mis.deinit(alloc),
             .cmdline_show => |*cs| cs.deinit(alloc),
             .cmdline_special_char => |*csc| csc.deinit(alloc),
@@ -1369,6 +1371,33 @@ pub const IoThread = struct {
 
                     const duped = self.alloc.dupe(u8, path) catch return {};
                     self.event_queue.push(.{ .image_preview = duped }) catch {
+                        self.alloc.free(duped);
+                        return {};
+                    };
+
+                    if (self.nvim_gui) |nvim_ptr| {
+                        const neovim_gui = @import("main.zig");
+                        const nvim: *neovim_gui.NeovimGui = @ptrCast(@alignCast(nvim_ptr));
+                        nvim.triggerRenderWakeup();
+                    }
+                } else if (std.mem.eql(u8, notif.method, "ghostty_shader")) {
+                    // Shader preset request from injected Lua:
+                    // ghostty_shader(<preset>)
+                    const params = notif.params;
+                    const arr = switch (params) {
+                        .arr => |a| a,
+                        else => return {},
+                    };
+
+                    if (arr.len < 1) return {};
+
+                    const preset = switch (arr[0]) {
+                        .str => |s| s.value(),
+                        else => return {},
+                    };
+
+                    const duped = self.alloc.dupe(u8, preset) catch return {};
+                    self.event_queue.push(.{ .shader_preset = duped }) catch {
                         self.alloc.free(duped);
                         return {};
                     };

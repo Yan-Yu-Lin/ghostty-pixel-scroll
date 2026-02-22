@@ -2135,6 +2135,21 @@ pub fn Stream(comptime Handler: type) type {
                     }
                 },
 
+                .set_shader_preset => |v| {
+                    // OSC 1345 - Set shader preset
+                    const HandlerType = switch (@typeInfo(@TypeOf(self.handler))) {
+                        .pointer => |p| p.child,
+                        else => @TypeOf(self.handler),
+                    };
+                    if (@hasField(HandlerType, "surface_mailbox")) {
+                        log.info("OSC 1345 received - setting shader preset: {s}", .{v.value});
+                        var buf: [256]u8 = .{0} ** 256;
+                        const len = @min(v.value.len, 255);
+                        @memcpy(buf[0..len], v.value[0..len]);
+                        _ = self.handler.surface_mailbox.push(.{ .set_shader_preset = buf }, .{ .instant = {} });
+                    }
+                },
+
                 .conemu_output_environment_variable,
                 .conemu_run_process,
                 .kitty_text_sizing,

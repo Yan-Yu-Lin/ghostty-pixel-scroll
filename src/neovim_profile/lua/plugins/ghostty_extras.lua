@@ -104,6 +104,55 @@ return {
 				callback = set_noice_theme_links,
 			})
 
+			local shader_presets = {
+				"crt-curved",
+				"phosphor-green",
+				"blue-neon-grid",
+				"amber-console",
+				"hud-diagnostic",
+				"none",
+			}
+
+			local function send_shader_preset(preset)
+				local name = (preset and preset ~= "") and preset or "crt-curved"
+
+				local chan = vim.g.ghostty_channel
+				if type(chan) == "number" then
+					pcall(vim.rpcnotify, chan, "ghostty_shader", name)
+					return
+				end
+
+				local ok, err = pcall(function()
+					io.stdout:write(string.format("\27]1345;%s\7", name))
+					io.stdout:flush()
+				end)
+				if not ok then
+					vim.notify("Ghostty shader send failed: " .. tostring(err), vim.log.levels.WARN)
+				end
+			end
+
+			if vim.fn.exists(":GhosttyShader") == 0 then
+				vim.api.nvim_create_user_command("GhosttyShader", function(opts)
+					send_shader_preset(opts.args)
+				end, {
+					nargs = "?",
+					complete = function()
+						return shader_presets
+					end,
+					desc = "Set Ghostty shader preset",
+				})
+			end
+
+			if vim.fn.exists(":GhosttyShaders") == 0 then
+				vim.api.nvim_create_user_command("GhosttyShaders", function()
+					vim.ui.select(shader_presets, { prompt = "Ghostty Shader" }, function(choice)
+						if choice then
+							send_shader_preset(choice)
+						end
+					end)
+				end, { desc = "Pick Ghostty shader preset" })
+			end
+
 			require("noice").setup({
 				cmdline = {
 					enabled = true,

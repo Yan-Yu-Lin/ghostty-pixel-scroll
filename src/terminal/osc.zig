@@ -167,6 +167,9 @@ pub const Command = union(Key) {
     /// Ghostty: Connect NeovimGui to remote Neovim TCP (OSC 1344;host:port)
     collab_nvim_connect: struct { value: [:0]const u8 },
 
+    /// Ghostty: Set shader preset (OSC 1345;preset)
+    set_shader_preset: struct { value: [:0]const u8 },
+
     pub const SemanticPrompt = parsers.semantic_prompt.Command;
 
     pub const Key = LibEnum(
@@ -201,6 +204,7 @@ pub const Command = union(Key) {
             "collab_share",
             "collab_join",
             "collab_nvim_connect",
+            "set_shader_preset",
         },
     );
 
@@ -366,6 +370,7 @@ pub const Parser = struct {
         @"1342",
         @"1343",
         @"1344",
+        @"1345",
     };
 
     pub fn init(alloc: ?Allocator) Parser {
@@ -433,6 +438,7 @@ pub const Parser = struct {
             => {},
             .collab_join => {},
             .collab_nvim_connect => {},
+            .set_shader_preset => {},
         }
 
         self.state = .start;
@@ -647,12 +653,14 @@ pub const Parser = struct {
                 '2' => self.state = .@"1342",
                 '3' => self.state = .@"1343",
                 '4' => self.state = .@"1344",
+                '5' => self.state = .@"1345",
                 else => self.state = .invalid,
             },
 
             .@"1342",
             .@"1343",
             .@"1344",
+            .@"1345",
             => switch (c) {
                 ';' => self.writeToFixed(),
                 else => self.state = .invalid,
@@ -740,7 +748,7 @@ pub const Parser = struct {
 
             .@"777" => parsers.rxvt_extension.parse(self, terminator_ch),
 
-            .@"134" => null, // incomplete: needs digit 2 or 3
+            .@"134" => null, // incomplete: needs digit 2-5
 
             .@"1337" => parsers.iterm2.parse(self, terminator_ch),
 
@@ -786,6 +794,20 @@ pub const Parser = struct {
                 const data = writer.buffered();
                 if (data.len <= 1) return null;
                 self.command = .{ .collab_nvim_connect = .{
+                    .value = data[0 .. data.len - 1 :0],
+                } };
+                return &self.command;
+            },
+
+            .@"1345" => {
+                // OSC 1345 - Set shader preset
+                // Usage: printf '\e]1345;crt-curved\a'
+                //        printf '\e]1345;none\a'
+                const writer = self.writer orelse return null;
+                writer.writeByte(0) catch return null;
+                const data = writer.buffered();
+                if (data.len <= 1) return null;
+                self.command = .{ .set_shader_preset = .{
                     .value = data[0 .. data.len - 1 :0],
                 } };
                 return &self.command;

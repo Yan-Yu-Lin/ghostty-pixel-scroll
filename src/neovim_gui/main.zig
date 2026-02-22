@@ -167,6 +167,9 @@ pub const NeovimGui = struct {
     image_preview_path: []const u8 = "",
     image_preview_token: u64 = 0,
 
+    /// Pending live shader preset request from Neovim RPC notifications.
+    pending_shader_preset: []const u8 = "",
+
     /// Current buffer file name (from collab presence, for same-buffer detection)
     current_file: []const u8 = "",
 
@@ -248,6 +251,7 @@ pub const NeovimGui = struct {
         if (self.title.len > 0) self.alloc.free(self.title);
         if (self.icon.len > 0) self.alloc.free(self.icon);
         if (self.image_preview_path.len > 0) self.alloc.free(self.image_preview_path);
+        if (self.pending_shader_preset.len > 0) self.alloc.free(self.pending_shader_preset);
         if (self.current_file.len > 0) self.alloc.free(self.current_file);
 
         var opt_it = self.options.iterator();
@@ -414,6 +418,9 @@ pub const NeovimGui = struct {
         self.installCollabPresenceAutocmd() catch |err| {
             log.warn("failed to install collab presence autocmd: {}", .{err});
         };
+        self.installShaderControlCommands() catch |err| {
+            log.warn("failed to install shader control commands: {}", .{err});
+        };
         self.installRoundedBorders() catch |err| {
             log.warn("failed to install rounded borders: {}", .{err});
         };
@@ -443,6 +450,39 @@ pub const NeovimGui = struct {
             "end " ++
             "vim.api.nvim_create_autocmd({'BufEnter','BufWinEnter','WinEnter'}, {callback = ghostty_send}) " ++
             "ghostty_send() " ++
+            "end";
+        try self.io.?.sendCommand(cmd);
+    }
+
+    fn installShaderControlCommands(self: *Self) !void {
+        if (self.io == null) return;
+        const cmd =
+            "lua if vim.g.ghostty_shader_rpc ~= 1 then " ++
+            "vim.g.ghostty_shader_rpc = 1 " ++
+            "local function ghostty_chan() " ++
+            "local c = vim.g.ghostty_channel " ++
+            "if type(c) == 'number' then return c end " ++
+            "local uis = vim.api.nvim_list_uis() " ++
+            "if uis and uis[1] and type(uis[1].chan) == 'number' then " ++
+            "vim.g.ghostty_channel = uis[1].chan " ++
+            "return uis[1].chan end " ++
+            "return nil end " ++
+            "local presets = {'crt-curved','phosphor-green','blue-neon-grid','amber-console','hud-diagnostic','none'} " ++
+            "local function ghostty_set_shader(name) " ++
+            "local c = ghostty_chan() " ++
+            "if not c then return end " ++
+            "if name == nil or name == '' then name = 'crt-curved' end " ++
+            "vim.rpcnotify(c, 'ghostty_shader', name) " ++
+            "end " ++
+            "if vim.fn.exists(':GhosttyShader') == 0 then " ++
+            "vim.api.nvim_create_user_command('GhosttyShader', function(opts) " ++
+            "ghostty_set_shader(opts.args) " ++
+            "end, {nargs='?', complete=function() return presets end}) end " ++
+            "if vim.fn.exists(':GhosttyShaders') == 0 then " ++
+            "vim.api.nvim_create_user_command('GhosttyShaders', function() " ++
+            "vim.ui.select(presets, {prompt='Ghostty Shader'}, function(choice) " ++
+            "if choice then ghostty_set_shader(choice) end end) " ++
+            "end, {}) end " ++
             "end";
         try self.io.?.sendCommand(cmd);
     }
@@ -853,6 +893,15 @@ pub const NeovimGui = struct {
         self.pushPeerBufferPositions();
     }
 
+    /// Consume a pending shader preset request if one exists.
+    /// Caller owns the returned memory and must free it with `self.alloc`.
+    pub fn takePendingShaderPreset(self: *Self) ?[]const u8 {
+        if (self.pending_shader_preset.len == 0) return null;
+        const preset = self.pending_shader_preset;
+        self.pending_shader_preset = "";
+        return preset;
+    }
+
     fn handleEvent(self: *Self, event: Event) !void {
         switch (event) {
             .grid_resize => |data| {
@@ -970,6 +1019,12 @@ pub const NeovimGui = struct {
                 self.image_preview_path = self.alloc.dupe(u8, path) catch "";
                 self.image_preview_token +%= 1;
                 self.dirty = true;
+            },
+            .shader_preset => |preset| {
+                if (self.pending_shader_preset.len > 0) {
+                    self.alloc.free(self.pending_shader_preset);
+                }
+                self.pending_shader_preset = self.alloc.dupe(u8, preset) catch "";
             },
             .collab_presence => |data| {
                 if (self.current_file.len > 0) {

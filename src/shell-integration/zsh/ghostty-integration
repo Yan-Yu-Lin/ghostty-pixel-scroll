@@ -90,6 +90,29 @@ _entrypoint() {
         eval "${GHOSTTY_NVIM_GUI_ALIAS}() { builtin print -n '\\e]1338\\a'; }"
     fi
 
+    ghostty-shaders() {
+        builtin print "Ghostty shader presets:"
+        builtin print "  crt-curved      (curved CRT, strongest effect)"
+        builtin print "  phosphor-green  (green phosphor terminal)"
+        builtin print "  blue-neon-grid  (blue/magenta cyber style)"
+        builtin print "  amber-console   (amber monochrome)"
+        builtin print "  hud-diagnostic  (dark purple HUD)"
+        builtin print "  none            (disable custom shaders)"
+    }
+
+    ghostty-shader() {
+        builtin emulate -L zsh -o no_warn_create_global -o no_aliases
+        builtin local preset="${1:-}"
+
+        if [[ -z "$preset" || "$preset" == "list" || "$preset" == "--list" ]]; then
+            ghostty-shaders
+            [[ -z "$preset" ]] && builtin print "Usage: ghostty-shader <preset>"
+            return 0
+        fi
+
+        builtin print -nu $_ghostty_fd -- "\e]1345;${preset}\a"
+    }
+
     # Defer initialization so that other zsh init files can be configure
     # the integration.
     builtin typeset -ag precmd_functions

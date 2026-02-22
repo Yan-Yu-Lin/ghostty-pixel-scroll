@@ -2966,6 +2966,20 @@ keybind: Keybinds = .{},
 /// Custom shaders to run after the default shaders. This is a file path
 /// to a GLSL-syntax shader for all platforms.
 ///
+/// Built-in shader presets are also available via:
+///
+/// ```ini
+/// custom-shader = builtin:crt-curved
+/// ```
+///
+/// Available built-in presets:
+///
+///   * `builtin:crt-curved` - Strong curved CRT screen with scanlines.
+///   * `builtin:phosphor-green` - Green monochrome phosphor monitor.
+///   * `builtin:blue-neon-grid` - Blue/magenta neon cyber look.
+///   * `builtin:amber-console` - Amber monochrome glass terminal.
+///   * `builtin:hud-diagnostic` - Dark HUD with purple diagnostics.
+///
 /// Warning: Invalid shaders can cause Ghostty to become unusable such as by
 /// causing the window to be completely black. If this happens, you can
 /// unset this configuration to disable the shader.

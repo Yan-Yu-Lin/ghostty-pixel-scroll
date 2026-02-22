@@ -503,6 +503,18 @@ fn drainMailbox(self: *Thread) !void {
                 self.syncDrawTimer();
             },
 
+            .set_shader_preset => |*buf| {
+                const preset = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(buf)), 0);
+                if (@hasDecl(rendererpkg.Renderer, "setCustomShaderPreset")) {
+                    try self.renderer.setCustomShaderPreset(preset);
+
+                    // Custom shader presence affects animation loop behavior.
+                    self.syncDrawTimer();
+                } else {
+                    log.warn("shader preset switching not supported by this renderer backend", .{});
+                }
+            },
+
             .search_viewport_matches => |v| {
                 // Note we don't free the new value because we expect our
                 // allocators to match.

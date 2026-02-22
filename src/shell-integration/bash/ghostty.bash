@@ -259,6 +259,27 @@ if [[ -n "$GHOSTTY_NVIM_GUI_ALIAS" ]]; then
     eval "${GHOSTTY_NVIM_GUI_ALIAS}() { builtin printf '\\e]1338\\a'; }"
 fi
 
+ghostty-shaders() {
+    builtin echo "Ghostty shader presets:"
+    builtin echo "  crt-curved      (curved CRT, strongest effect)"
+    builtin echo "  phosphor-green  (green phosphor terminal)"
+    builtin echo "  blue-neon-grid  (blue/magenta cyber style)"
+    builtin echo "  amber-console   (amber monochrome)"
+    builtin echo "  hud-diagnostic  (dark purple HUD)"
+    builtin echo "  none            (disable custom shaders)"
+}
+
+ghostty-shader() {
+    local preset="$1"
+    if [[ -z "$preset" || "$preset" == "list" || "$preset" == "--list" ]]; then
+        ghostty-shaders
+        [[ -z "$preset" ]] && builtin echo "Usage: ghostty-shader <preset>"
+        return 0
+    fi
+
+    builtin printf '\e]1345;%s\a' "$preset"
+}
+
 # Collab session commands: ghostty-share starts hosting, ghostty-join connects.
 ghostty-share() {
     local share_dir="${1:-.}"

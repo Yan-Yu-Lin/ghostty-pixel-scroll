@@ -52,6 +52,10 @@ pub const Message = union(enum) {
         impl: *renderer.Renderer.DerivedConfig,
     },
 
+    /// Set a live shader preset for this renderer instance.
+    /// Empty/`default` clears override, `none` disables custom shaders.
+    set_shader_preset: [64]u8,
+
     /// Matches for the current viewport from the search thread. These happen
     /// async so they may be off for a frame or two from the actually rendered
     /// viewport. The renderer must handle this gracefully.

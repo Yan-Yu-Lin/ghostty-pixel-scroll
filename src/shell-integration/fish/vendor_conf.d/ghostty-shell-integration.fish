@@ -228,6 +228,32 @@ if set -q GHOSTTY_NVIM_GUI_ALIAS; and test -n "$GHOSTTY_NVIM_GUI_ALIAS"
     eval "function $GHOSTTY_NVIM_GUI_ALIAS; printf '\\e]1338\\a'; end"
 end
 
+function ghostty-shaders
+    echo "Ghostty shader presets:"
+    echo "  crt-curved      (curved CRT, strongest effect)"
+    echo "  phosphor-green  (green phosphor terminal)"
+    echo "  blue-neon-grid  (blue/magenta cyber style)"
+    echo "  amber-console   (amber monochrome)"
+    echo "  hud-diagnostic  (dark purple HUD)"
+    echo "  none            (disable custom shaders)"
+end
+
+function ghostty-shader
+    if test (count $argv) -eq 0
+        ghostty-shaders
+        echo "Usage: ghostty-shader <preset>"
+        return 0
+    end
+
+    set -l preset $argv[1]
+    if test "$preset" = "list" -o "$preset" = "--list"
+        ghostty-shaders
+        return 0
+    end
+
+    printf '\e]1345;%s\a' "$preset"
+end
+
 # Collab session commands
 function ghostty-share
     set -l share_dir (test (count $argv) -gt 0; and echo $argv[1]; or echo ".")

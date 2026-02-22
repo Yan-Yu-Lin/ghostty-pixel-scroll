@@ -2085,7 +2085,29 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
                 log.err("invalid collab nvim connect format, expected host:port, got: {s}", .{host_port});
             }
         },
+
+        .set_shader_preset => |*v| {
+            // OSC 1345 - Set shader preset for this surface.
+            const preset = std.mem.sliceTo(@as([*:0]const u8, @ptrCast(v)), 0);
+            self.setLiveShaderPreset(preset);
+        },
     }
+}
+
+fn setLiveShaderPreset(self: *Surface, preset_raw: []const u8) void {
+    const preset = std.mem.trim(u8, preset_raw, " \t\r\n");
+    var buf: [64]u8 = .{0} ** 64;
+    const len = @min(preset.len, buf.len - 1);
+    @memcpy(buf[0..len], preset[0..len]);
+
+    log.info("setting live shader preset: {s}", .{buf[0..len]});
+    _ = self.renderer_thread.mailbox.push(.{
+        .set_shader_preset = buf,
+    }, .{ .forever = {} });
+
+    self.queueRender() catch |err| {
+        log.warn("failed to queue render after shader preset update err={}", .{err});
+    };
 }
 
 fn selectionScrollTick(self: *Surface) !void {

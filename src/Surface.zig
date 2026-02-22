@@ -267,7 +267,6 @@ const Mouse = struct {
     /// Pending scroll amounts for high-precision scrolls
     pending_scroll_x: f64 = 0,
     pending_scroll_y: f64 = 0,
-    pending_nvim_scroll_grid: u64 = 0,
 
     /// Current pixel scroll offset for smooth scrolling. This is the sub-line
     /// offset in pixels (0 to cell_height). Positive means user scrolled up
@@ -4649,15 +4648,6 @@ pub fn scrollCallback(
             const cell_w: f64 = @floatFromInt(self.size.cell.width);
             const cell_h: f64 = @floatFromInt(self.size.cell.height);
 
-            // Find the window under the cursor and get local grid position
-            const window_info = nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row);
-            const target_grid: u64 = if (window_info) |info| info.grid_id else 1;
-            if (self.mouse.pending_nvim_scroll_grid != target_grid) {
-                self.mouse.pending_nvim_scroll_grid = target_grid;
-                self.mouse.pending_scroll_x = 0;
-                self.mouse.pending_scroll_y = 0;
-            }
-
             // Normalize offsets to line/column units using the same multipliers
             // as terminal mode so gesture speed is consistent between modes.
             var y_units: f64 = if (scroll_mods.precision)
@@ -4706,37 +4696,19 @@ pub fn scrollCallback(
             // Note: positive = up/right in Neovim's convention.
             while (self.mouse.pending_scroll_y >= 1.0) {
                 self.mouse.pending_scroll_y -= 1.0;
-                if (window_info) |info| {
-                    nvim.sendScroll("up", info.grid_id, info.col, info.row) catch {};
-                } else {
-                    // Fallback to grid 1 if no window found
-                    nvim.sendScroll("up", 1, nvim_mouse.col, nvim_mouse.row) catch {};
-                }
+                nvim.sendScroll("up", 0, nvim_mouse.col, nvim_mouse.row) catch {};
             }
             while (self.mouse.pending_scroll_y <= -1.0) {
                 self.mouse.pending_scroll_y += 1.0;
-                if (window_info) |info| {
-                    nvim.sendScroll("down", info.grid_id, info.col, info.row) catch {};
-                } else {
-                    // Fallback to grid 1 if no window found
-                    nvim.sendScroll("down", 1, nvim_mouse.col, nvim_mouse.row) catch {};
-                }
+                nvim.sendScroll("down", 0, nvim_mouse.col, nvim_mouse.row) catch {};
             }
             while (self.mouse.pending_scroll_x >= 1.0) {
                 self.mouse.pending_scroll_x -= 1.0;
-                if (window_info) |info| {
-                    nvim.sendScroll("right", info.grid_id, info.col, info.row) catch {};
-                } else {
-                    nvim.sendScroll("right", 1, nvim_mouse.col, nvim_mouse.row) catch {};
-                }
+                nvim.sendScroll("right", 0, nvim_mouse.col, nvim_mouse.row) catch {};
             }
             while (self.mouse.pending_scroll_x <= -1.0) {
                 self.mouse.pending_scroll_x += 1.0;
-                if (window_info) |info| {
-                    nvim.sendScroll("left", info.grid_id, info.col, info.row) catch {};
-                } else {
-                    nvim.sendScroll("left", 1, nvim_mouse.col, nvim_mouse.row) catch {};
-                }
+                nvim.sendScroll("left", 0, nvim_mouse.col, nvim_mouse.row) catch {};
             }
         }
         try self.queueRender();
@@ -5448,27 +5420,16 @@ pub fn mouseButtonCallback(
         // padding-aware conversion to avoid drift in nvim-gui mode.
         const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
 
-        // Find the window under the cursor and get grid-local coordinates
-        if (nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row)) |window_info| {
-            try nvim.sendMouse(
-                nvim_button,
-                nvim_action,
-                nvim_mods,
-                window_info.grid_id,
-                window_info.row,
-                window_info.col,
-            );
-        } else {
-            // No window found, send to grid 0 with screen coordinates
-            try nvim.sendMouse(
-                nvim_button,
-                nvim_action,
-                nvim_mods,
-                0,
-                nvim_mouse.row,
-                nvim_mouse.col,
-            );
-        }
+        // Use global screen coordinates (grid 0) to avoid local-grid coordinate
+        // discontinuities while resizing splits.
+        try nvim.sendMouse(
+            nvim_button,
+            nvim_action,
+            nvim_mods,
+            0,
+            nvim_mouse.row,
+            nvim_mouse.col,
+        );
 
         try self.queueRender();
         return true;
@@ -6333,12 +6294,7 @@ pub fn cursorPosCallback(
                 const nvim_button: []const u8 = if (left_pressed) "left" else if (right_pressed) "right" else "middle";
                 const nvim_mods = neovim_gui.nvim_input.toNeovimMouseMods(self.mouse.mods);
                 const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
-
-                if (nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row)) |window_info| {
-                    try nvim.sendMouse(nvim_button, "drag", nvim_mods, window_info.grid_id, window_info.row, window_info.col);
-                } else {
-                    try nvim.sendMouse(nvim_button, "drag", nvim_mods, 0, nvim_mouse.row, nvim_mouse.col);
-                }
+                try nvim.sendMouse(nvim_button, "drag", nvim_mods, 0, nvim_mouse.row, nvim_mouse.col);
                 try self.queueRender();
             }
         }

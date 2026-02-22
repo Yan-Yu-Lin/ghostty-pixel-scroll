@@ -4644,13 +4644,11 @@ pub fn scrollCallback(
         if (yoff != 0) {
             // Get cursor position for scroll event
             const pos = try self.rt_surface.getCursorPos();
-            const cell_w: f64 = @floatFromInt(self.size.cell.width);
+            const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
             const cell_h: f64 = @floatFromInt(self.size.cell.height);
-            const screen_col: f32 = @floatCast(@max(0, pos.x) / cell_w);
-            const screen_row: f32 = @floatCast(@max(0, pos.y) / cell_h);
 
             // Find the window under the cursor and get local grid position
-            const window_info = nvim.findWindowAtPosition(screen_col, screen_row);
+            const window_info = nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row);
 
             // Normalize yoff to lines. For precision scroll (touchpad), yoff is in pixels,
             // so divide by cell height to get lines. For discrete scroll (mouse wheel),
@@ -4672,9 +4670,7 @@ pub fn scrollCallback(
                     nvim.sendScroll("up", info.grid_id, info.col, info.row) catch {};
                 } else {
                     // Fallback to grid 1 if no window found
-                    const col: u64 = @intFromFloat(screen_col);
-                    const row: u64 = @intFromFloat(screen_row);
-                    nvim.sendScroll("up", 1, col, row) catch {};
+                    nvim.sendScroll("up", 1, nvim_mouse.col, nvim_mouse.row) catch {};
                 }
             }
             while (self.mouse.pending_scroll_y <= -1.0) {
@@ -4683,9 +4679,7 @@ pub fn scrollCallback(
                     nvim.sendScroll("down", info.grid_id, info.col, info.row) catch {};
                 } else {
                     // Fallback to grid 1 if no window found
-                    const col: u64 = @intFromFloat(screen_col);
-                    const row: u64 = @intFromFloat(screen_row);
-                    nvim.sendScroll("down", 1, col, row) catch {};
+                    nvim.sendScroll("down", 1, nvim_mouse.col, nvim_mouse.row) catch {};
                 }
             }
         }
@@ -5394,14 +5388,12 @@ pub fn mouseButtonCallback(
         // Convert modifiers to Neovim modifier string
         const nvim_mods = neovim_gui.nvim_input.toNeovimMouseMods(mods);
 
-        // Convert position to grid coordinates
-        const cell_w: f64 = @floatFromInt(self.size.cell.width);
-        const cell_h: f64 = @floatFromInt(self.size.cell.height);
-        const screen_col: f32 = @floatCast(@max(0, pos.x) / cell_w);
-        const screen_row: f32 = @floatCast(@max(0, pos.y) / cell_h);
+        // Convert position to viewport/grid coordinates using the renderer's
+        // padding-aware conversion to avoid drift in nvim-gui mode.
+        const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
 
         // Find the window under the cursor and get grid-local coordinates
-        if (nvim.findWindowAtPosition(screen_col, screen_row)) |window_info| {
+        if (nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row)) |window_info| {
             try nvim.sendMouse(
                 nvim_button,
                 nvim_action,
@@ -5417,8 +5409,8 @@ pub fn mouseButtonCallback(
                 nvim_action,
                 nvim_mods,
                 0,
-                @intFromFloat(screen_row),
-                @intFromFloat(screen_col),
+                nvim_mouse.row,
+                nvim_mouse.col,
             );
         }
 
@@ -6284,16 +6276,12 @@ pub fn cursorPosCallback(
             if (left_pressed or right_pressed or middle_pressed) {
                 const nvim_button: []const u8 = if (left_pressed) "left" else if (right_pressed) "right" else "middle";
                 const nvim_mods = neovim_gui.nvim_input.toNeovimMouseMods(self.mouse.mods);
+                const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
 
-                const cell_w: f64 = @floatFromInt(self.size.cell.width);
-                const cell_h: f64 = @floatFromInt(self.size.cell.height);
-                const screen_col: f32 = @floatCast(@max(0, pos.x) / cell_w);
-                const screen_row: f32 = @floatCast(@max(0, pos.y) / cell_h);
-
-                if (nvim.findWindowAtPosition(screen_col, screen_row)) |window_info| {
+                if (nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row)) |window_info| {
                     try nvim.sendMouse(nvim_button, "drag", nvim_mods, window_info.grid_id, window_info.row, window_info.col);
                 } else {
-                    try nvim.sendMouse(nvim_button, "drag", nvim_mods, 0, @intFromFloat(screen_row), @intFromFloat(screen_col));
+                    try nvim.sendMouse(nvim_button, "drag", nvim_mods, 0, nvim_mouse.row, nvim_mouse.col);
                 }
                 try self.queueRender();
             }
@@ -6623,6 +6611,25 @@ pub fn posToViewport(self: Surface, xpos: f64, ypos: f64) terminal.point.Coordin
     const coord: rendererpkg.Coordinate = .{ .surface = .{ .x = xpos, .y = ypos } };
     const grid = coord.convert(.grid, self.size).grid;
     return .{ .x = grid.x, .y = grid.y };
+}
+
+const NvimMousePosition = struct {
+    screen_col: f32,
+    screen_row: f32,
+    col: u64,
+    row: u64,
+};
+
+fn nvimMousePositionFromSurface(self: *const Surface, xpos: f64, ypos: f64) NvimMousePosition {
+    const viewport = self.posToViewport(xpos, ypos);
+    const col: u64 = @intCast(viewport.x);
+    const row: u64 = @intCast(viewport.y);
+    return .{
+        .screen_col = @floatFromInt(col),
+        .screen_row = @floatFromInt(row),
+        .col = col,
+        .row = row,
+    };
 }
 
 /// Scroll to the bottom of the viewport.

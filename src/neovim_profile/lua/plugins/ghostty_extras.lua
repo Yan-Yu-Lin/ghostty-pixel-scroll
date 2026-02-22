@@ -303,13 +303,69 @@ return {
 				return vim.fn.executable("opencode") == 1
 			end,
 			config = function()
+				local function is_opencode_term(bufnr)
+					if not vim.api.nvim_buf_is_valid(bufnr) then
+						return false
+					end
+					if vim.bo[bufnr].buftype ~= "terminal" then
+						return false
+					end
+					local name = vim.api.nvim_buf_get_name(bufnr)
+					return name:find("opencode", 1, true) ~= nil
+				end
+
+				local function patch_opencode_term(bufnr)
+					if not is_opencode_term(bufnr) then
+						return
+					end
+					if vim.b[bufnr].ghostty_opencode_patched then
+						return
+					end
+
+					vim.b[bufnr].ghostty_opencode_patched = true
+					vim.bo[bufnr].filetype = "opencode_terminal"
+
+					local map_opts = { buffer = bufnr, noremap = true, silent = true }
+					vim.keymap.set("t", "<Esc>", "<Esc>", vim.tbl_extend("force", map_opts, { desc = "opencode: send esc" }))
+					vim.keymap.set("t", "<C-h>", "<C-h>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-h passthrough" }))
+					vim.keymap.set("t", "<C-j>", "<C-j>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-j passthrough" }))
+					vim.keymap.set("t", "<C-k>", "<C-k>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-k passthrough" }))
+					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
+				end
+
+				local function focus_opencode_term()
+					for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+						local bufnr = vim.api.nvim_win_get_buf(winid)
+						if is_opencode_term(bufnr) then
+							vim.api.nvim_set_current_win(winid)
+							vim.cmd("startinsert")
+							return true
+						end
+					end
+					return false
+				end
+
+				local function open_opencode_right()
+					if focus_opencode_term() then
+						return
+					end
+
+					require("opencode").toggle()
+					vim.defer_fn(function()
+						for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+							patch_opencode_term(bufnr)
+						end
+						focus_opencode_term()
+					end, 60)
+				end
+
 				vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
 					provider = {
 						enabled = "terminal",
 						cmd = "opencode --port",
 						terminal = {
 							split = "right",
-							width = math.floor(vim.o.columns * 0.4),
+							width = math.max(48, math.floor(vim.o.columns * 0.4)),
 						},
 					},
 					events = {
@@ -318,11 +374,18 @@ return {
 				})
 
 				vim.o.autoread = true
+				local augroup = vim.api.nvim_create_augroup("GhosttyOpencode", { clear = true })
+				vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter" }, {
+					group = augroup,
+					callback = function(ev)
+						patch_opencode_term(ev.buf)
+					end,
+				})
 
 				if vim.fn.exists(":OpenCode") == 0 then
 					vim.api.nvim_create_user_command("OpenCode", function()
-						require("opencode").toggle()
-					end, { desc = "Toggle opencode (right split)" })
+						open_opencode_right()
+					end, { desc = "Open/focus opencode (right split)" })
 				end
 
 				if vim.fn.exists(":OpenCodeAsk") == 0 then

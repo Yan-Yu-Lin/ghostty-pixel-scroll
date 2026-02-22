@@ -562,6 +562,23 @@ fn migrateManagedInitResilience(alloc: Allocator, target_path: []const u8) !void
         changed = true;
     }
 
+    if (std.mem.indexOf(u8, updated, "table.insert(specs, {\n\t\t\t\"williamboman/mason.nvim\",") == null) {
+        const legacy_fallback =
+            "else\n\t\t-- Fallback: avoid hard import errors when offline or before first install.\n\t\ttable.insert(specs, {\n\t\t\t\"NvChad/NvChad\",\n\t\t\tlazy = true,\n\t\t\tbranch = \"v2.5\",\n\t\t})\n\tend";
+        if (std.mem.indexOf(u8, updated, legacy_fallback) != null) {
+            const replaced = try std.mem.replaceOwned(
+                u8,
+                alloc,
+                updated,
+                legacy_fallback,
+                "else\n\t\t-- Fallback: avoid hard import errors when offline or before first install.\n\t\ttable.insert(specs, {\n\t\t\t\"NvChad/NvChad\",\n\t\t\tlazy = true,\n\t\t\tbranch = \"v2.5\",\n\t\t})\n\t\t-- Minimal bootstrap plugins for first launch before NvChad imports resolve.\n\t\ttable.insert(specs, {\n\t\t\t\"williamboman/mason.nvim\",\n\t\t\tlazy = true,\n\t\t})\n\t\ttable.insert(specs, {\n\t\t\t\"nvim-treesitter/nvim-treesitter\",\n\t\t\tlazy = true,\n\t\t})\n\tend",
+            );
+            if (changed) alloc.free(updated);
+            updated = replaced;
+            changed = true;
+        }
+    }
+
     if (!changed) return;
     defer alloc.free(updated);
 

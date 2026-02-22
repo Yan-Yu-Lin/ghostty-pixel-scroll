@@ -55,6 +55,15 @@ if ok_lazy then
 			lazy = true,
 			branch = "v2.5",
 		})
+		-- Minimal bootstrap plugins for first launch before NvChad imports resolve.
+		table.insert(specs, {
+			"williamboman/mason.nvim",
+			lazy = true,
+		})
+		table.insert(specs, {
+			"nvim-treesitter/nvim-treesitter",
+			lazy = true,
+		})
 	end
 
 	table.insert(specs, { import = "plugins" })

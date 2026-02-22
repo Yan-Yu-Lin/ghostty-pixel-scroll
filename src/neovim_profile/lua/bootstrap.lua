@@ -227,21 +227,33 @@ end
 local function run_bootstrap()
 	enable_quiet_mode()
 
+	local has_mason_plugin = false
+	local has_treesitter_plugin = false
+	local ok_lazy_cfg, lazy_cfg = pcall(require, "lazy.core.config")
+	if ok_lazy_cfg and type(lazy_cfg) == "table" and type(lazy_cfg.plugins) == "table" then
+		has_mason_plugin = lazy_cfg.plugins["mason.nvim"] ~= nil
+		has_treesitter_plugin = lazy_cfg.plugins["nvim-treesitter"] ~= nil
+	end
+
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then
-		lazy.load({
-			plugins = {
-				"mason.nvim",
-				"nvim-treesitter",
-			},
-		})
+		local preload = {}
+		if has_mason_plugin then
+			table.insert(preload, "mason.nvim")
+		end
+		if has_treesitter_plugin then
+			table.insert(preload, "nvim-treesitter")
+		end
+		if #preload > 0 then
+			lazy.load({ plugins = preload })
+		end
 	end
 
 	local ran_mason = false
 	local ran_treesitter = false
 
 	local mason_packages = get_mason_packages()
-	local has_mason = vim.fn.exists(":MasonInstall") == 2
+	local has_mason = has_mason_plugin and vim.fn.exists(":MasonInstall") == 2
 	if #mason_packages == 0 then
 		ran_mason = true
 	elseif has_mason then
@@ -256,7 +268,7 @@ local function run_bootstrap()
 		end
 	end
 
-	local has_treesitter = vim.fn.exists(":TSInstall") == 2
+	local has_treesitter = has_treesitter_plugin and vim.fn.exists(":TSInstall") == 2
 	if #treesitter_languages == 0 then
 		ran_treesitter = true
 	elseif has_treesitter then

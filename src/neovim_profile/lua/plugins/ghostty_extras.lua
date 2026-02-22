@@ -99,12 +99,90 @@ return {
 				pattern = "NvimTree",
 				callback = set_noice_theme_links,
 			})
-			vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter", "CmdlineEnter" }, {
-				group = noice_theme_group,
-				callback = set_noice_theme_links,
-			})
+				vim.api.nvim_create_autocmd({ "VimEnter", "UIEnter", "CmdlineEnter" }, {
+					group = noice_theme_group,
+					callback = set_noice_theme_links,
+				})
 
-			require("noice").setup({
+					local shader_presets = {
+						"crt-curved",
+						"crt-curve",
+						"phosphor-green",
+						"blue-neon-grid",
+						"amber-console",
+						"hud-diagnostic",
+						"phosphor-green+crt-curve",
+						"amber-console+crt-curve",
+						"blue-neon-grid+crt-curve",
+						"hud-diagnostic+crt-curve",
+						"none",
+					}
+
+					local shader_picker_items = {
+						{ label = "CRT Curved", value = "crt-curved" },
+						{ label = "CRT Curve", value = "crt-curve" },
+						{ label = "Green", value = "phosphor-green" },
+						{ label = "Blue Grid", value = "blue-neon-grid" },
+						{ label = "Amber", value = "amber-console" },
+						{ label = "HUD", value = "hud-diagnostic" },
+						{ label = "Green+Curve", value = "phosphor-green+crt-curve" },
+						{ label = "Amber+Curve", value = "amber-console+crt-curve" },
+						{ label = "Blue+Curve", value = "blue-neon-grid+crt-curve" },
+						{ label = "HUD+Curve", value = "hud-diagnostic+crt-curve" },
+						{ label = "None", value = "none" },
+					}
+
+				local function send_shader_preset(preset)
+					local name = (preset and preset ~= "") and preset or "crt-curved"
+					local chan = vim.g.ghostty_channel
+					if type(chan) == "number" then
+						pcall(vim.rpcnotify, chan, "ghostty_shader", name)
+						return
+					end
+
+					local ok, err = pcall(function()
+						io.stdout:write(string.format("\27]1345;%s\7", name))
+						io.stdout:flush()
+					end)
+					if not ok then
+						vim.notify("Ghostty shader send failed: " .. tostring(err), vim.log.levels.WARN)
+					end
+				end
+
+				if vim.fn.exists(":GhosttyShader") == 0 then
+					vim.api.nvim_create_user_command("GhosttyShader", function(opts)
+						local name = ""
+						if opts.fargs and #opts.fargs > 0 then
+							name = table.concat(opts.fargs, "+")
+						else
+							name = opts.args
+						end
+						send_shader_preset(name)
+					end, {
+						nargs = "*",
+						complete = function()
+							return shader_presets
+						end,
+						desc = "Set Ghostty shader preset",
+					})
+				end
+
+					if vim.fn.exists(":GhosttyShaders") == 0 then
+						vim.api.nvim_create_user_command("GhosttyShaders", function()
+							vim.ui.select(shader_picker_items, {
+								prompt = "Shader",
+								format_item = function(item)
+									return item.label
+								end,
+							}, function(choice)
+								if choice then
+									send_shader_preset(choice.value)
+								end
+							end)
+						end, { desc = "Pick Ghostty shader preset" })
+					end
+
+				require("noice").setup({
 				cmdline = {
 					enabled = true,
 					view = "cmdline_popup",
@@ -215,10 +293,19 @@ return {
 				vim.defer_fn(set_noice_theme_links, ms)
 			end
 		end,
-	},
+		},
 
-	{
-		"rcarriga/nvim-notify",
+		{
+			"nickjvandyke/opencode.nvim",
+			version = "*",
+			lazy = false,
+			cond = function()
+				return vim.fn.executable("opencode") == 1
+			end,
+		},
+
+		{
+			"rcarriga/nvim-notify",
 		lazy = false,
 		priority = 950,
 		config = function()

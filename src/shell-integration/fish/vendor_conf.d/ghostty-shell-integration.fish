@@ -231,21 +231,23 @@ end
 function ghostty-shaders
     echo "Ghostty shader presets:"
     echo "  crt-curved      (curved CRT preset)"
+    echo "  crt-curve       (curve-only overlay, for stacking)"
     echo "  phosphor-green  (flat green phosphor)"
     echo "  blue-neon-grid  (flat blue/magenta cyber)"
     echo "  amber-console   (flat amber monochrome)"
     echo "  hud-diagnostic  (flat dark HUD)"
+    echo "  combine with +  (example: phosphor-green+crt-curve)"
     echo "  none            (disable custom shaders)"
 end
 
 function ghostty-shader
     if test (count $argv) -eq 0
         ghostty-shaders
-        echo "Usage: ghostty-shader <preset>"
+        echo "Usage: ghostty-shader <preset...>"
         return 0
     end
 
-    set -l preset $argv[1]
+    set -l preset (string join + $argv)
     if test "$preset" = "list" -o "$preset" = "--list"
         ghostty-shaders
         return 0

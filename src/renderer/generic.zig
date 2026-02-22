@@ -4407,7 +4407,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
         }
 
-        /// Set a live built-in shader preset for this renderer instance.
+        /// Set live built-in shader preset(s) for this renderer instance.
+        /// Presets can be stacked with `+`, `,`, or spaces:
+        /// `phosphor-green+crt-curve`.
         /// `none` / `off` / `default` clears all custom shaders.
         pub fn setCustomShaderPreset(self: *Self, preset: []const u8) !void {
             self.draw_mutex.lock();
@@ -4416,25 +4418,49 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             try self.setCustomShaderPresetLocked(preset);
         }
 
+        fn isDisableShaderPreset(token: []const u8) bool {
+            return token.len == 0 or
+                std.ascii.eqlIgnoreCase(token, "none") or
+                std.ascii.eqlIgnoreCase(token, "off") or
+                std.ascii.eqlIgnoreCase(token, "disable") or
+                std.ascii.eqlIgnoreCase(token, "disabled") or
+                std.ascii.eqlIgnoreCase(token, "default") or
+                std.ascii.eqlIgnoreCase(token, "reset");
+        }
+
         fn setCustomShaderPresetLocked(self: *Self, preset: []const u8) !void {
             const trimmed = std.mem.trim(u8, preset, " \t\r\n");
             const alloc = self.config.arena.allocator();
             self.config.custom_shaders.value.clearRetainingCapacity();
 
-            const disable =
-                trimmed.len == 0 or
-                std.ascii.eqlIgnoreCase(trimmed, "none") or
-                std.ascii.eqlIgnoreCase(trimmed, "off") or
-                std.ascii.eqlIgnoreCase(trimmed, "disable") or
-                std.ascii.eqlIgnoreCase(trimmed, "disabled") or
-                std.ascii.eqlIgnoreCase(trimmed, "default") or
-                std.ascii.eqlIgnoreCase(trimmed, "reset");
+            if (!isDisableShaderPreset(trimmed)) {
+                var count: usize = 0;
+                var it = std.mem.tokenizeAny(u8, trimmed, "+, ");
+                while (it.next()) |raw_token| {
+                    const token = std.mem.trim(u8, raw_token, " \t\r\n");
+                    if (isDisableShaderPreset(token)) continue;
 
-            if (!disable) {
-                const path = try std.fmt.allocPrintSentinel(alloc, "builtin:{s}", .{trimmed}, 0);
-                try self.config.custom_shaders.value.append(alloc, .{
-                    .required = path,
-                });
+                    const path = if (std.mem.startsWith(u8, token, "builtin:"))
+                        try std.fmt.allocPrintSentinel(alloc, "{s}", .{token}, 0)
+                    else
+                        try std.fmt.allocPrintSentinel(alloc, "builtin:{s}", .{token}, 0);
+
+                    try self.config.custom_shaders.value.append(alloc, .{
+                        .required = path,
+                    });
+                    count += 1;
+                }
+
+                // Fallback for values that don't tokenize but are still non-empty.
+                if (count == 0 and trimmed.len > 0) {
+                    const path = if (std.mem.startsWith(u8, trimmed, "builtin:"))
+                        try std.fmt.allocPrintSentinel(alloc, "{s}", .{trimmed}, 0)
+                    else
+                        try std.fmt.allocPrintSentinel(alloc, "builtin:{s}", .{trimmed}, 0);
+                    try self.config.custom_shaders.value.append(alloc, .{
+                        .required = path,
+                    });
+                }
             }
 
             self.reinitialize_shaders = true;

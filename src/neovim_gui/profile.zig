@@ -136,6 +136,8 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
+        try migrateManagedInitResilience(alloc, target_dir);
+        try migrateManagedOptionsNvchadGuard(alloc, target_dir);
         return;
     } else |_| {}
 
@@ -144,6 +146,8 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
+    try migrateManagedInitResilience(alloc, target_dir);
+    try migrateManagedOptionsNvchadGuard(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
 }
 
@@ -408,6 +412,121 @@ fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !vo
     });
 
     log.info("migrated managed nvim mappings to Diffview", .{});
+}
+
+fn migrateManagedInitResilience(alloc: Allocator, target_path: []const u8) !void {
+    const init_path = try std.fmt.allocPrint(alloc, "{s}/init.lua", .{target_path});
+    defer alloc.free(init_path);
+
+    var file = std.fs.openFileAbsolute(init_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    var updated = data;
+    var changed = false;
+
+    if (std.mem.indexOf(u8, updated, "require(\"options\")") != null) {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            "require(\"options\")",
+            "pcall(require, \"options\")",
+        );
+        if (changed) alloc.free(updated);
+        updated = replaced;
+        changed = true;
+    }
+
+    if (std.mem.indexOf(u8, updated, "require(\"nvchad.autocmds\")") != null) {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            "require(\"nvchad.autocmds\")",
+            "pcall(require, \"nvchad.autocmds\")",
+        );
+        if (changed) alloc.free(updated);
+        updated = replaced;
+        changed = true;
+    }
+
+    if (std.mem.indexOf(u8, updated, "require(\"bootstrap\").setup()") != null) {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            "require(\"bootstrap\").setup()",
+            "pcall(function()\n\trequire(\"bootstrap\").setup()\nend)",
+        );
+        if (changed) alloc.free(updated);
+        updated = replaced;
+        changed = true;
+    }
+
+    if (std.mem.indexOf(u8, updated, "\trequire(\"mappings\")") != null) {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            "\trequire(\"mappings\")",
+            "\tpcall(require, \"mappings\")",
+        );
+        if (changed) alloc.free(updated);
+        updated = replaced;
+        changed = true;
+    }
+
+    if (!changed) return;
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "init.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim init resilience guards", .{});
+}
+
+fn migrateManagedOptionsNvchadGuard(alloc: Allocator, target_path: []const u8) !void {
+    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
+    defer alloc.free(options_path);
+
+    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    if (std.mem.indexOf(u8, data, "require(\"nvchad.options\")") == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        "require(\"nvchad.options\")",
+        "pcall(require, \"nvchad.options\")",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/options.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim options nvchad guard", .{});
 }
 
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {

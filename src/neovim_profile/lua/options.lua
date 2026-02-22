@@ -1,4 +1,4 @@
-require("nvchad.options")
+pcall(require, "nvchad.options")
 
 local border = "rounded"
 

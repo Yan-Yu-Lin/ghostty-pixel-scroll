@@ -467,7 +467,7 @@ pub const NeovimGui = struct {
             "vim.g.ghostty_channel = uis[1].chan " ++
             "return uis[1].chan end " ++
             "return nil end " ++
-            "local presets = {'crt-curved','phosphor-green','blue-neon-grid','amber-console','hud-diagnostic','none'} " ++
+            "local presets = {'crt-curved','crt-curve','phosphor-green','blue-neon-grid','amber-console','hud-diagnostic','phosphor-green+crt-curve','amber-console+crt-curve','blue-neon-grid+crt-curve','hud-diagnostic+crt-curve','none'} " ++
             "local function ghostty_set_shader(name) " ++
             "local c = ghostty_chan() " ++
             "if not c then return end " ++
@@ -476,8 +476,10 @@ pub const NeovimGui = struct {
             "end " ++
             "if vim.fn.exists(':GhosttyShader') == 0 then " ++
             "vim.api.nvim_create_user_command('GhosttyShader', function(opts) " ++
-            "ghostty_set_shader(opts.args) " ++
-            "end, {nargs='?', complete=function() return presets end}) end " ++
+            "local name = '' " ++
+            "if opts.fargs and #opts.fargs > 0 then name = table.concat(opts.fargs, '+') else name = opts.args end " ++
+            "ghostty_set_shader(name) " ++
+            "end, {nargs='*', complete=function() return presets end}) end " ++
             "if vim.fn.exists(':GhosttyShaders') == 0 then " ++
             "vim.api.nvim_create_user_command('GhosttyShaders', function() " ++
             "vim.ui.select(presets, {prompt='Ghostty Shader'}, function(choice) " ++

@@ -9,10 +9,16 @@ custom-shader = builtin:crt-curved
 Available presets:
 
 - `crt-curved` (curve preset)
+- `crt-curve` (curve-only overlay)
 - `phosphor-green` (flat green phosphor)
 - `blue-neon-grid` (flat blue/magenta cyber)
 - `amber-console` (flat amber monochrome)
 - `hud-diagnostic` (flat dark HUD)
+
+Preset stacking (live switching):
+
+- `phosphor-green+crt-curve`
+- `amber-console+crt-curve`
 
 Disable shader effects:
 
@@ -30,4 +36,5 @@ Live switching (current surface):
   - `ghostty-shader none`
 - Neovim commands:
   - `:GhosttyShader <preset>`
+  - `:GhosttyShader phosphor-green crt-curve`
   - `:GhosttyShaders`

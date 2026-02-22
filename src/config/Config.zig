@@ -2975,10 +2975,14 @@ keybind: Keybinds = .{},
 /// Available built-in presets:
 ///
 ///   * `builtin:crt-curved` - Curved CRT preset with scanlines.
+///   * `builtin:crt-curve` - Curve-only overlay for stacking.
 ///   * `builtin:phosphor-green` - Flat full-screen green phosphor look.
 ///   * `builtin:blue-neon-grid` - Flat full-screen blue/magenta cyber look.
 ///   * `builtin:amber-console` - Flat full-screen amber monochrome look.
 ///   * `builtin:hud-diagnostic` - Flat full-screen dark HUD diagnostics.
+///
+/// Presets can be stacked for live shader switching by combining names with
+/// `+`/`,`/spaces, for example: `phosphor-green+crt-curve`.
 ///
 /// Warning: Invalid shaders can cause Ghostty to become unusable such as by
 /// causing the window to be completely black. If this happens, you can

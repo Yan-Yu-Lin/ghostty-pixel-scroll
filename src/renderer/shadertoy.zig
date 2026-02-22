@@ -50,6 +50,10 @@ const builtin_shaders = [_]BuiltinShader{
         .source = @embedFile("shaders/builtin/crt-curved.glsl"),
     },
     .{
+        .name = "crt-curve",
+        .source = @embedFile("shaders/builtin/crt-curve.glsl"),
+    },
+    .{
         .name = "phosphor-green",
         .source = @embedFile("shaders/builtin/phosphor-green.glsl"),
     },
@@ -499,6 +503,7 @@ test "builtin shader lookup" {
     const testing = std.testing;
 
     try testing.expect(builtinShaderSource("crt-curved") != null);
+    try testing.expect(builtinShaderSource("crt-curve") != null);
     try testing.expect(builtinShaderSource("phosphor-green") != null);
     try testing.expectEqual(null, builtinShaderSource("does-not-exist"));
 }

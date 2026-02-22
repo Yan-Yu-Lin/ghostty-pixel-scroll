@@ -2,6 +2,26 @@ pcall(function()
 	require("bootstrap").setup()
 end)
 
+local function ghostty_base30()
+	local ok, base46 = pcall(require, "base46")
+	if ok and type(base46) == "table" and type(base46.get_theme_tb) == "function" then
+		local ok_colors, colors = pcall(base46.get_theme_tb, "base_30")
+		if ok_colors and type(colors) == "table" then
+			return colors
+		end
+	end
+
+	return {
+		black = "#101014",
+		blue = "#61afef",
+		red = "#e06c75",
+		purple = "#c678dd",
+		yellow = "#e5c07b",
+		green = "#98c379",
+		cyan = "#56b6c2",
+	}
+end
+
 return {
 	{
 		"folke/noice.nvim",
@@ -104,14 +124,19 @@ return {
 				callback = set_noice_theme_links,
 			})
 
-			local shader_presets = {
-				"crt-curved",
-				"phosphor-green",
-				"blue-neon-grid",
-				"amber-console",
-				"hud-diagnostic",
-				"none",
-			}
+				local shader_presets = {
+					"crt-curved",
+					"crt-curve",
+					"phosphor-green",
+					"blue-neon-grid",
+					"amber-console",
+					"hud-diagnostic",
+					"phosphor-green+crt-curve",
+					"amber-console+crt-curve",
+					"blue-neon-grid+crt-curve",
+					"hud-diagnostic+crt-curve",
+					"none",
+				}
 
 			local function send_shader_preset(preset)
 				local name = (preset and preset ~= "") and preset or "crt-curved"
@@ -131,17 +156,23 @@ return {
 				end
 			end
 
-			if vim.fn.exists(":GhosttyShader") == 0 then
-				vim.api.nvim_create_user_command("GhosttyShader", function(opts)
-					send_shader_preset(opts.args)
-				end, {
-					nargs = "?",
-					complete = function()
-						return shader_presets
-					end,
-					desc = "Set Ghostty shader preset",
-				})
-			end
+				if vim.fn.exists(":GhosttyShader") == 0 then
+					vim.api.nvim_create_user_command("GhosttyShader", function(opts)
+						local name = ""
+						if opts.fargs and #opts.fargs > 0 then
+							name = table.concat(opts.fargs, "+")
+						else
+							name = opts.args
+						end
+						send_shader_preset(name)
+					end, {
+						nargs = "*",
+						complete = function()
+							return shader_presets
+						end,
+						desc = "Set Ghostty shader preset",
+					})
+				end
 
 			if vim.fn.exists(":GhosttyShaders") == 0 then
 				vim.api.nvim_create_user_command("GhosttyShaders", function()
@@ -270,6 +301,9 @@ return {
 			"nickjvandyke/opencode.nvim",
 			version = "*",
 			lazy = false,
+			cond = function()
+				return vim.fn.executable("opencode") == 1
+			end,
 			config = function()
 				local function detect_opencode_theme()
 					local name = (vim.g.colors_name or ""):lower()
@@ -345,10 +379,10 @@ return {
 			"rcarriga/nvim-notify",
 			lazy = false,
 			priority = 950,
-		config = function()
-			local bg = require("base46").get_theme_tb("base_30").black
-			require("notify").setup({
-				background_colour = bg,
+			config = function()
+				local bg = ghostty_base30().black
+				require("notify").setup({
+					background_colour = bg,
 				fps = 165,
 				render = "wrapped-compact",
 				stages = "fade_in_slide_out",
@@ -359,19 +393,19 @@ return {
 				on_open = function(win)
 					vim.api.nvim_win_set_config(win, { border = "rounded" })
 				end,
-			})
-			vim.notify = require("notify")
-		end,
-	},
+				})
+				vim.notify = require("notify")
+			end,
+		},
 
-	{
+		{
 		"parkers0405/hlchunk.nvim",
 		url = "https://github.com/parkers0405/hlchunk.nvim.git",
-		branch = "main",
-		event = "BufReadPost",
-		config = function()
-			local colors = require("base46").get_theme_tb("base_30")
-			require("hlchunk").setup({
+			branch = "main",
+			event = "BufReadPost",
+			config = function()
+				local colors = ghostty_base30()
+				require("hlchunk").setup({
 				chunk = {
 					enable = true,
 					use_treesitter = true,

@@ -93,20 +93,25 @@ _entrypoint() {
     ghostty-shaders() {
         builtin print "Ghostty shader presets:"
         builtin print "  crt-curved      (curved CRT preset)"
+        builtin print "  crt-curve       (curve-only overlay, for stacking)"
         builtin print "  phosphor-green  (flat green phosphor)"
         builtin print "  blue-neon-grid  (flat blue/magenta cyber)"
         builtin print "  amber-console   (flat amber monochrome)"
         builtin print "  hud-diagnostic  (flat dark HUD)"
+        builtin print "  combine with +  (example: phosphor-green+crt-curve)"
         builtin print "  none            (disable custom shaders)"
     }
 
     ghostty-shader() {
         builtin emulate -L zsh -o no_warn_create_global -o no_aliases
         builtin local preset="${1:-}"
+        if (( $# > 1 )); then
+            preset="${*// /+}"
+        fi
 
         if [[ -z "$preset" || "$preset" == "list" || "$preset" == "--list" ]]; then
             ghostty-shaders
-            [[ -z "$preset" ]] && builtin print "Usage: ghostty-shader <preset>"
+            [[ -z "$preset" ]] && builtin print "Usage: ghostty-shader <preset...>"
             return 0
         fi
 

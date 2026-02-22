@@ -5,7 +5,7 @@ end)
 return {
 	{
 		"folke/noice.nvim",
-		lazy = false,
+		event = "VeryLazy",
 		priority = 1000,
 		dependencies = {
 			"MunifTanjim/nui.nvim",
@@ -244,6 +244,10 @@ return {
 					view_history = "messages",
 					view_search = "virtualtext",
 				},
+				notify = {
+					enabled = true,
+					view = "notify",
+				},
 				lsp = {
 					progress = { enabled = false },
 					override = {
@@ -404,26 +408,27 @@ return {
 
 		{
 			"rcarriga/nvim-notify",
-		lazy = false,
-		priority = 950,
-		config = function()
-			local bg = require("base46").get_theme_tb("base_30").black
-			require("notify").setup({
-				background_colour = bg,
-				fps = 165,
-				render = "wrapped-compact",
-				stages = "fade_in_slide_out",
-				timeout = 3000,
-				top_down = true,
-				max_width = 50,
-				minimum_width = 30,
-				on_open = function(win)
-					vim.api.nvim_win_set_config(win, { border = "rounded" })
-				end,
-			})
-			vim.notify = require("notify")
-		end,
-	},
+			priority = 950,
+			config = function()
+				local uv = vim.uv or vim.loop
+				local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v3.done"
+				local first_launch = uv.fs_stat(done_marker) == nil
+				local bg = require("base46").get_theme_tb("base_30").black
+				require("notify").setup({
+					background_colour = bg,
+					fps = first_launch and 60 or 165,
+					render = "wrapped-compact",
+					stages = first_launch and "static" or "fade_in_slide_out",
+					timeout = first_launch and 1800 or 3000,
+					top_down = true,
+					max_width = 50,
+					minimum_width = 30,
+					on_open = function(win)
+						vim.api.nvim_win_set_config(win, { border = "rounded" })
+					end,
+				})
+			end,
+		},
 
 	{
 		"parkers0405/hlchunk.nvim",

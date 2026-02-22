@@ -2,8 +2,14 @@ local M = {}
 
 local uv = vim.uv or vim.loop
 local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v3.done"
+local welcome_marker = vim.fn.stdpath("state") .. "/ghostty/welcome-v1.done"
 local setup_done = vim.g.ghostty_bootstrap_setup_done
 local quiet_state = nil
+local bootstrap_start_scheduled = false
+local startup_overlay_filetypes = {
+	lazy = true,
+	mason = true,
+}
 
 local treesitter_languages = {
 	"bash",
@@ -52,13 +58,70 @@ local default_mason_packages = {
 	"alejandra",
 }
 
+local function path_exists(path)
+	return uv.fs_stat(path) ~= nil
+end
+
 local function marker_exists()
-	return uv.fs_stat(done_marker) ~= nil
+	return path_exists(done_marker)
+end
+
+local function welcome_marker_exists()
+	return path_exists(welcome_marker)
+end
+
+local function write_marker(path)
+	vim.fn.mkdir(vim.fn.fnamemodify(path, ":h"), "p")
+	vim.fn.writefile({ os.date("!%Y-%m-%dT%H:%M:%SZ") }, path)
 end
 
 local function write_done_marker()
-	vim.fn.mkdir(vim.fn.fnamemodify(done_marker, ":h"), "p")
-	vim.fn.writefile({ os.date("!%Y-%m-%dT%H:%M:%SZ") }, done_marker)
+	write_marker(done_marker)
+end
+
+local function show_welcome(opts)
+	opts = opts or {}
+	local force = opts.force == true
+	local already_shown = welcome_marker_exists()
+	if not already_shown then
+		write_marker(welcome_marker)
+	elseif not force then
+		return
+	end
+
+	local ansi_hello = "\27[1;38;5;45mHello\27[0m"
+	vim.schedule(function()
+		vim.notify(
+			table.concat({
+				ansi_hello .. " from Ghostty Neovim.",
+				"",
+				"Ghostty managed Neovim profile is active (NvChad-based defaults for nvim-gui).",
+				"If you stay on managed mode, edit your Neovim config in:",
+				"~/.config/ghostty/nvim",
+				"(same style/layout as a regular ~/.config/nvim folder)",
+				"",
+				"Want to use your own ~/.config/nvim instead?",
+				"Set this in ~/.config/ghostty/config:",
+				"neovim-gui-config-mode = user",
+				"(If that line is commented out, remove the leading #.)",
+			}, "\n"),
+			vim.log.levels.INFO,
+			{ title = ansi_hello, timeout = 15000 }
+		)
+	end)
+end
+
+local function startup_overlay_visible()
+	for _, win in ipairs(vim.api.nvim_list_wins()) do
+		local ok_buf, buf = pcall(vim.api.nvim_win_get_buf, win)
+		if ok_buf and vim.api.nvim_buf_is_valid(buf) then
+			local ft = vim.bo[buf].filetype
+			if startup_overlay_filetypes[ft] then
+				return true
+			end
+		end
+	end
+	return false
 end
 
 local function get_mason_packages()
@@ -118,8 +181,10 @@ local function disable_quiet_mode()
 	local suppressed = quiet_state.suppressed
 	quiet_state.active = false
 
-	vim.notify = quiet_state.original_notify
-	vim.notify_once = quiet_state.original_notify_once
+	if quiet_state.wrap_notify then
+		vim.notify = quiet_state.original_notify
+		vim.notify_once = quiet_state.original_notify_once
+	end
 	vim.api.nvim_echo = quiet_state.original_echo
 	_G.print = quiet_state.original_print
 	quiet_state = nil
@@ -156,6 +221,7 @@ local function enable_quiet_mode()
 	local original_notify_once = vim.notify_once
 	local original_echo = vim.api.nvim_echo
 	local original_print = _G.print
+	local wrap_notify = package.loaded["noice"] == nil
 	quiet_state = {
 		active = true,
 		generation = 0,
@@ -164,27 +230,30 @@ local function enable_quiet_mode()
 		original_notify_once = original_notify_once,
 		original_echo = original_echo,
 		original_print = original_print,
+		wrap_notify = wrap_notify,
 	}
 	vim.g.ghostty_bootstrap_quiet = true
 
-	vim.notify = function(msg, level, opts)
-		level = level or vim.log.levels.INFO
-		if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
-			quiet_state.suppressed = quiet_state.suppressed + 1
-			schedule_quiet_disable(90000)
-			return
+	if wrap_notify then
+		vim.notify = function(msg, level, opts)
+			level = level or vim.log.levels.INFO
+			if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
+				quiet_state.suppressed = quiet_state.suppressed + 1
+				schedule_quiet_disable(90000)
+				return
+			end
+			return original_notify(msg, level, opts)
 		end
-		return original_notify(msg, level, opts)
-	end
 
-	vim.notify_once = function(msg, level, opts)
-		level = level or vim.log.levels.INFO
-		if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
-			quiet_state.suppressed = quiet_state.suppressed + 1
-			schedule_quiet_disable(90000)
-			return
+		vim.notify_once = function(msg, level, opts)
+			level = level or vim.log.levels.INFO
+			if quiet_state and quiet_state.active and level < vim.log.levels.WARN and is_install_noise(msg) then
+				quiet_state.suppressed = quiet_state.suppressed + 1
+				schedule_quiet_disable(90000)
+				return
+			end
+			return original_notify_once(msg, level, opts)
 		end
-		return original_notify_once(msg, level, opts)
 	end
 
 	vim.api.nvim_echo = function(chunks, history, opts)
@@ -271,6 +340,11 @@ local function bootstrap_when_ready(max_attempts, delay_ms)
 			return
 		end
 
+		if startup_overlay_visible() then
+			vim.defer_fn(tick, math.max(delay_ms, 1000))
+			return
+		end
+
 		attempts = attempts + 1
 		local has_mason = vim.fn.exists(":MasonInstall") == 2
 		local has_treesitter = vim.fn.exists(":TSInstall") == 2
@@ -288,6 +362,16 @@ local function bootstrap_when_ready(max_attempts, delay_ms)
 	vim.defer_fn(tick, delay_ms)
 end
 
+local function start_bootstrap_once()
+	if marker_exists() or bootstrap_start_scheduled then
+		return
+	end
+
+	bootstrap_start_scheduled = true
+	show_welcome()
+	bootstrap_when_ready(40, 250)
+end
+
 function M.setup()
 	if setup_done then
 		return
@@ -295,16 +379,38 @@ function M.setup()
 	vim.g.ghostty_bootstrap_setup_done = true
 	setup_done = true
 
+	if vim.fn.exists(":GhosttyBootstrap") == 0 then
+		vim.api.nvim_create_user_command("GhosttyBootstrap", function()
+			run_bootstrap()
+		end, { desc = "Re-run Ghostty managed Neovim bootstrap installs" })
+	end
+
+	if vim.fn.exists(":GhosttyWelcome") == 0 then
+		vim.api.nvim_create_user_command("GhosttyWelcome", function()
+			show_welcome({ force = true })
+		end, { desc = "Show Ghostty managed Neovim welcome message" })
+	end
+
 	if marker_exists() then
 		return
 	end
 
-	vim.api.nvim_create_user_command("GhosttyBootstrap", function()
-		run_bootstrap()
-	end, { desc = "Re-run Ghostty managed Neovim bootstrap installs" })
+	local start_group = vim.api.nvim_create_augroup("ghostty_bootstrap_start", { clear = true })
+	vim.api.nvim_create_autocmd("User", {
+		group = start_group,
+		pattern = "LazyDone",
+		once = true,
+		callback = start_bootstrap_once,
+	})
+	vim.api.nvim_create_autocmd("User", {
+		group = start_group,
+		pattern = "VeryLazy",
+		once = true,
+		callback = start_bootstrap_once,
+	})
 
-	-- Don't rely on VeryLazy timing; keep retrying briefly until commands exist.
-	bootstrap_when_ready(40, 250)
+	-- Fallback when User events were already fired before this module initialized.
+	vim.defer_fn(start_bootstrap_once, 12000)
 end
 
 return M

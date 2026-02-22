@@ -8,6 +8,10 @@ vec2 crtWarp(vec2 uv, float amount) {
     return p * 0.5 + 0.5;
 }
 
+vec2 overscan(vec2 uv, float zoom) {
+    return (uv - 0.5) * zoom + 0.5;
+}
+
 float edgeMask(vec2 uv, float soft) {
     vec2 d = min(uv, 1.0 - uv);
     float e = min(d.x, d.y);
@@ -37,8 +41,8 @@ float hash12(vec2 p) {
 
 void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     vec2 uv = fragCoord / iResolution.xy;
-    vec2 warped = crtWarp(uv, 0.07);
-    vec2 sample_uv = clamp(warped, vec2(0.001), vec2(0.999));
+    vec2 warped = crtWarp(uv, 0.075);
+    vec2 sample_uv = clamp(overscan(warped, 0.94), vec2(0.001), vec2(0.999));
 
     vec2 px = vec2(1.0) / iResolution.xy;
     vec3 color = sampleRgbSplit(sample_uv);
@@ -65,17 +69,16 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     }
 
     float vignette = 16.0 * sample_uv.x * sample_uv.y * (1.0 - sample_uv.x) * (1.0 - sample_uv.y);
-    vignette = 0.9 + 0.1 * pow(clamp(vignette, 0.0, 1.0), 0.23);
+    vignette = 0.94 + 0.06 * pow(clamp(vignette, 0.0, 1.0), 0.23);
 
     float flicker = 1.0 + 0.012 * sin(iTime * 59.0) + 0.008 * sin(iTime * 23.0);
     float noise = (hash12(floor(fragCoord) + iTime) - 0.5) * 0.03;
     float curve = curvedFalloff(warped);
-    float edge = edgeMask(sample_uv, 0.008);
 
     color *= scanline;
     color *= grille;
     color *= vignette * flicker;
-    color *= mix(0.88, 1.0, curve * edge);
+    color *= mix(0.94, 1.0, curve);
     color += noise;
 
     fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);

@@ -482,6 +482,19 @@ fn migrateManagedInitResilience(alloc: Allocator, target_path: []const u8) !void
         changed = true;
     }
 
+    if (std.mem.indexOf(u8, updated, "table.insert(specs, { import = \"nvchad.blink.lazyspec\" })") != null) {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            "table.insert(specs, { import = \"nvchad.blink.lazyspec\" })",
+            "local nvchad_blink_spec = lazy_root .. \"/NvChad/lua/nvchad/blink/lazyspec.lua\"\n\t\tif exists(nvchad_blink_spec) then\n\t\t\ttable.insert(specs, { import = \"nvchad.blink.lazyspec\" })\n\t\tend",
+        );
+        if (changed) alloc.free(updated);
+        updated = replaced;
+        changed = true;
+    }
+
     if (!changed) return;
     defer alloc.free(updated);
 

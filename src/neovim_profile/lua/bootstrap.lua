@@ -4,7 +4,6 @@ local uv = vim.uv or vim.loop
 local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v4.done"
 local setup_done = vim.g.ghostty_bootstrap_setup_done
 local quiet_state = nil
-local lazy_sync_started = false
 local mason_bootstrap_requested = false
 local treesitter_bootstrap_requested = false
 
@@ -227,11 +226,6 @@ end
 
 local function run_bootstrap()
 	enable_quiet_mode()
-
-	if not lazy_sync_started and vim.fn.exists(":Lazy") == 2 then
-		lazy_sync_started = true
-		pcall(vim.cmd, "silent! noautocmd Lazy! sync")
-	end
 
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then

@@ -44,7 +44,10 @@ if ok_lazy then
 			branch = "v2.5",
 			import = "nvchad.plugins",
 		})
-		table.insert(specs, { import = "nvchad.blink.lazyspec" })
+		local nvchad_blink_spec = lazy_root .. "/NvChad/lua/nvchad/blink/lazyspec.lua"
+		if exists(nvchad_blink_spec) then
+			table.insert(specs, { import = "nvchad.blink.lazyspec" })
+		end
 	else
 		-- Fallback: avoid hard import errors when offline or before first install.
 		table.insert(specs, {

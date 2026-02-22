@@ -391,6 +391,51 @@ return {
 					pcall(vim.cmd, "redraw!")
 				end
 
+				local function stick_opencode_to_bottom(winid, bufnr)
+					if not vim.api.nvim_win_is_valid(winid) then
+						return
+					end
+					if not bufnr then
+						bufnr = vim.api.nvim_win_get_buf(winid)
+					end
+					if not is_opencode_term(bufnr) then
+						return
+					end
+
+					local last = math.max(1, vim.api.nvim_buf_line_count(bufnr))
+					pcall(vim.api.nvim_win_set_cursor, winid, { last, 0 })
+					pcall(vim.api.nvim_win_call, winid, function()
+						vim.cmd("normal! zb")
+					end)
+				end
+
+				local function ensure_opencode_input_mode(winid, bufnr)
+					if not vim.api.nvim_win_is_valid(winid) then
+						return
+					end
+					if not bufnr then
+						bufnr = vim.api.nvim_win_get_buf(winid)
+					end
+					if not is_opencode_term(bufnr) then
+						return
+					end
+
+					stick_opencode_to_bottom(winid, bufnr)
+					if vim.api.nvim_get_current_win() ~= winid then
+						pcall(vim.api.nvim_set_current_win, winid)
+					end
+					pcall(vim.cmd, "startinsert")
+					vim.defer_fn(function()
+						if vim.api.nvim_win_is_valid(winid) then
+							local current_buf = vim.api.nvim_win_get_buf(winid)
+							if is_opencode_term(current_buf) and vim.api.nvim_get_current_win() == winid then
+								stick_opencode_to_bottom(winid, current_buf)
+								pcall(vim.cmd, "startinsert")
+							end
+						end
+					end, 20)
+				end
+
 				local function style_opencode_window(winid)
 					if not vim.api.nvim_win_is_valid(winid) then
 						return
@@ -429,8 +474,7 @@ return {
 					local winid = find_opencode_win_in_current_tab()
 					if winid then
 						style_opencode_window(winid)
-						vim.api.nvim_set_current_win(winid)
-						vim.cmd("startinsert")
+						ensure_opencode_input_mode(winid)
 						return winid
 					end
 					return nil
@@ -477,9 +521,11 @@ return {
 						if opened then
 							vim.defer_fn(function()
 								style_opencode_window(opened)
+								ensure_opencode_input_mode(opened)
 							end, 40)
 							vim.defer_fn(function()
 								style_opencode_window(opened)
+								ensure_opencode_input_mode(opened)
 							end, 140)
 						end
 						restyle_opencode_windows()
@@ -509,6 +555,17 @@ return {
 							patch_opencode_term(ev.buf)
 						end
 						restyle_opencode_windows()
+					end,
+				})
+				vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter" }, {
+					group = augroup,
+					callback = function(ev)
+						if not ev.buf or ev.buf <= 0 or not is_opencode_term(ev.buf) then
+							return
+						end
+						local winid = vim.api.nvim_get_current_win()
+						style_opencode_window(winid)
+						ensure_opencode_input_mode(winid, ev.buf)
 					end,
 				})
 

@@ -4,24 +4,6 @@ const internal_os = @import("../os/main.zig");
 
 const log = std.log.scoped(.neovim_profile);
 
-const EmbeddedProfileFile = struct {
-    path: []const u8,
-    data: []const u8,
-};
-
-const embedded_profile_files = [_]EmbeddedProfileFile{
-    .{ .path = "init.lua", .data = @embedFile("../neovim_profile/init.lua") },
-    .{ .path = "lua/bootstrap.lua", .data = @embedFile("../neovim_profile/lua/bootstrap.lua") },
-    .{ .path = "lua/chadrc.lua", .data = @embedFile("../neovim_profile/lua/chadrc.lua") },
-    .{ .path = "lua/configs/lazy.lua", .data = @embedFile("../neovim_profile/lua/configs/lazy.lua") },
-    .{ .path = "lua/configs/lsp_defaults.lua", .data = @embedFile("../neovim_profile/lua/configs/lsp_defaults.lua") },
-    .{ .path = "lua/mappings.lua", .data = @embedFile("../neovim_profile/lua/mappings.lua") },
-    .{ .path = "lua/options.lua", .data = @embedFile("../neovim_profile/lua/options.lua") },
-    .{ .path = "lua/plugins/ghostty_extras.lua", .data = @embedFile("../neovim_profile/lua/plugins/ghostty_extras.lua") },
-    .{ .path = "lua/plugins/init.lua", .data = @embedFile("../neovim_profile/lua/plugins/init.lua") },
-    .{ .path = "plugin/ghostty_bootstrap.lua", .data = @embedFile("../neovim_profile/plugin/ghostty_bootstrap.lua") },
-};
-
 /// Configuration profile mode for Neovim GUI sessions.
 pub const Mode = enum {
     /// Prefer the user's own ~/.config/nvim if it exists, otherwise fall back
@@ -112,19 +94,17 @@ pub fn managedInitPath(alloc: Allocator) !?[]const u8 {
 /// Ensure the managed profile exists at ~/.config/ghostty/nvim by seeding it
 /// from bundled resources (share/ghostty/nvim) on first launch.
 pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) !void {
-    var source_dir: ?[]const u8 = null;
-    defer if (source_dir) |dir| alloc.free(dir);
-    var use_embedded_seed = true;
+    const base = resources_dir orelse {
+        log.warn("resources dir unavailable; cannot seed managed nvim profile", .{});
+        return;
+    };
 
-    if (resources_dir) |base| {
-        source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
-        if (std.fs.accessAbsolute(source_dir.?, .{})) |_| {
-            use_embedded_seed = false;
-        } else |_| {
-            log.warn("bundled nvim profile not found at: {s}; falling back to embedded profile", .{source_dir.?});
-        }
-    } else {
-        log.warn("resources dir unavailable; falling back to embedded managed nvim profile", .{});
+    const source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
+    defer alloc.free(source_dir);
+
+    if (std.fs.accessAbsolute(source_dir, .{})) |_| {} else |_| {
+        log.warn("bundled nvim profile not found at: {s}", .{source_dir});
+        return;
     }
 
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
@@ -147,75 +127,22 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     // managed profiles by pre-creating its marker directory.
     try home_dir.makePath(".local/share/ghostty/nvim/nvnotify1");
 
-    if (use_embedded_seed) {
-        // Seed from embedded fallback so managed mode still works when runtime
-        // resources aren't discoverable (for example some dev/local launches).
-        try seedEmbeddedProfile(target_dir);
-        try migrateManagedOptionsShowbreak(alloc, target_dir);
-        try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
-        try migrateManagedMappingsCleanup(alloc, target_dir);
-        try migrateManagedMappingsDiffview(alloc, target_dir);
-        try migrateManagedInitResilience(alloc, target_dir);
-        try migrateManagedOptionsNvchadGuard(alloc, target_dir);
-        log.info("seeded managed nvim profile from embedded fallback at: {s}", .{target_dir});
-        return;
-    }
-
     // First launch: copy full bundled profile.
     if (std.fs.accessAbsolute(target_dir, .{})) |_| {
         // Existing managed profile: only backfill missing bundled files so users
         // keep their edits while still getting newly added managed defaults.
-        try copyMissingFilesRecursive(alloc, source_dir.?, target_dir);
+        try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
-        try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
-        try migrateManagedInitResilience(alloc, target_dir);
-        try migrateManagedOptionsNvchadGuard(alloc, target_dir);
         return;
     } else |_| {}
 
-    try copyDirRecursive(alloc, source_dir.?, target_dir);
+    try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
-    try migrateManagedOptionsStatuslineBaseline(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
-    try migrateManagedInitResilience(alloc, target_dir);
-    try migrateManagedOptionsNvchadGuard(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
-}
-
-fn shouldAlwaysRefreshManagedFile(path: []const u8) bool {
-    return std.mem.eql(u8, path, "lua/plugins/ghostty_extras.lua") or
-        std.mem.eql(u8, path, "lua/bootstrap.lua") or
-        std.mem.eql(u8, path, "plugin/ghostty_bootstrap.lua");
-}
-
-fn seedEmbeddedProfile(target_path: []const u8) !void {
-    var target = try std.fs.openDirAbsolute(target_path, .{});
-    defer target.close();
-
-    for (embedded_profile_files) |file| {
-        if (std.fs.path.dirname(file.path)) |parent| {
-            try target.makePath(parent);
-        }
-
-        if (shouldAlwaysRefreshManagedFile(file.path)) {
-            target.deleteFile(file.path) catch |err| switch (err) {
-                error.FileNotFound => {},
-                else => return err,
-            };
-        } else {
-            if (target.access(file.path, .{})) |_| {
-                continue;
-            } else |_| {}
-        }
-
-        try target.writeFile(.{
-            .sub_path = file.path,
-            .data = file.data,
-        });
-    }
 }
 
 fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {
@@ -353,51 +280,6 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     log.info("migrated managed nvim options showbreak marker", .{});
 }
 
-fn migrateManagedOptionsStatuslineBaseline(alloc: Allocator, target_path: []const u8) !void {
-    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
-    defer alloc.free(options_path);
-
-    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    defer file.close();
-
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
-    defer alloc.free(data);
-
-    const has_laststatus = std.mem.indexOf(u8, data, "o.laststatus") != null or
-        std.mem.indexOf(u8, data, "vim.o.laststatus") != null;
-    const has_showmode = std.mem.indexOf(u8, data, "o.showmode") != null or
-        std.mem.indexOf(u8, data, "vim.o.showmode") != null;
-    const has_ruler = std.mem.indexOf(u8, data, "o.ruler") != null or
-        std.mem.indexOf(u8, data, "vim.o.ruler") != null;
-
-    if (has_laststatus and has_showmode and has_ruler) return;
-
-    var updated = std.ArrayList(u8).empty;
-    defer updated.deinit(alloc);
-    try updated.appendSlice(alloc, data);
-
-    if (updated.items.len > 0 and updated.items[updated.items.len - 1] != '\n') {
-        try updated.append(alloc, '\n');
-    }
-
-    try updated.appendSlice(alloc, "\n-- Keep a real statusline visible in nvim-gui on first attach.\n");
-    if (!has_laststatus) try updated.appendSlice(alloc, "o.laststatus = 3\n");
-    if (!has_showmode) try updated.appendSlice(alloc, "o.showmode = false\n");
-    if (!has_ruler) try updated.appendSlice(alloc, "o.ruler = false\n");
-
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
-        .sub_path = "lua/options.lua",
-        .data = updated.items,
-    });
-
-    log.info("migrated managed nvim options statusline baseline", .{});
-}
-
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {
     const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
     defer alloc.free(mappings_path);
@@ -479,151 +361,6 @@ fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !vo
     });
 
     log.info("migrated managed nvim mappings to Diffview", .{});
-}
-
-fn migrateManagedInitResilience(alloc: Allocator, target_path: []const u8) !void {
-    const init_path = try std.fmt.allocPrint(alloc, "{s}/init.lua", .{target_path});
-    defer alloc.free(init_path);
-
-    var file = std.fs.openFileAbsolute(init_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    defer file.close();
-
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
-    defer alloc.free(data);
-
-    var updated = data;
-    var changed = false;
-
-    if (std.mem.indexOf(u8, updated, "require(\"options\")") != null) {
-        const replaced = try std.mem.replaceOwned(
-            u8,
-            alloc,
-            updated,
-            "require(\"options\")",
-            "pcall(require, \"options\")",
-        );
-        if (changed) alloc.free(updated);
-        updated = replaced;
-        changed = true;
-    }
-
-    if (std.mem.indexOf(u8, updated, "require(\"nvchad.autocmds\")") != null) {
-        const replaced = try std.mem.replaceOwned(
-            u8,
-            alloc,
-            updated,
-            "require(\"nvchad.autocmds\")",
-            "pcall(require, \"nvchad.autocmds\")",
-        );
-        if (changed) alloc.free(updated);
-        updated = replaced;
-        changed = true;
-    }
-
-    if (std.mem.indexOf(u8, updated, "require(\"bootstrap\").setup()") != null) {
-        const replaced = try std.mem.replaceOwned(
-            u8,
-            alloc,
-            updated,
-            "require(\"bootstrap\").setup()",
-            "pcall(function()\n\trequire(\"bootstrap\").setup()\nend)",
-        );
-        if (changed) alloc.free(updated);
-        updated = replaced;
-        changed = true;
-    }
-
-    if (std.mem.indexOf(u8, updated, "\trequire(\"mappings\")") != null) {
-        const replaced = try std.mem.replaceOwned(
-            u8,
-            alloc,
-            updated,
-            "\trequire(\"mappings\")",
-            "\tpcall(require, \"mappings\")",
-        );
-        if (changed) alloc.free(updated);
-        updated = replaced;
-        changed = true;
-    }
-
-    if (std.mem.indexOf(u8, updated, "table.insert(specs, { import = \"nvchad.blink.lazyspec\" })") != null) {
-        const replaced = try std.mem.replaceOwned(
-            u8,
-            alloc,
-            updated,
-            "table.insert(specs, { import = \"nvchad.blink.lazyspec\" })",
-            "local nvchad_blink_spec = lazy_root .. \"/NvChad/lua/nvchad/blink/lazyspec.lua\"\n\t\tif exists(nvchad_blink_spec) then\n\t\t\ttable.insert(specs, { import = \"nvchad.blink.lazyspec\" })\n\t\tend",
-        );
-        if (changed) alloc.free(updated);
-        updated = replaced;
-        changed = true;
-    }
-
-    if (std.mem.indexOf(u8, updated, "table.insert(specs, {\n\t\t\t\"williamboman/mason.nvim\",") == null) {
-        const legacy_fallback =
-            "else\n\t\t-- Fallback: avoid hard import errors when offline or before first install.\n\t\ttable.insert(specs, {\n\t\t\t\"NvChad/NvChad\",\n\t\t\tlazy = true,\n\t\t\tbranch = \"v2.5\",\n\t\t})\n\tend";
-        if (std.mem.indexOf(u8, updated, legacy_fallback) != null) {
-            const replaced = try std.mem.replaceOwned(
-                u8,
-                alloc,
-                updated,
-                legacy_fallback,
-                "else\n\t\t-- Fallback: avoid hard import errors when offline or before first install.\n\t\ttable.insert(specs, {\n\t\t\t\"NvChad/NvChad\",\n\t\t\tlazy = true,\n\t\t\tbranch = \"v2.5\",\n\t\t})\n\t\t-- Minimal bootstrap plugins for first launch before NvChad imports resolve.\n\t\ttable.insert(specs, {\n\t\t\t\"williamboman/mason.nvim\",\n\t\t\tlazy = true,\n\t\t})\n\t\ttable.insert(specs, {\n\t\t\t\"nvim-treesitter/nvim-treesitter\",\n\t\t\tlazy = true,\n\t\t})\n\tend",
-            );
-            if (changed) alloc.free(updated);
-            updated = replaced;
-            changed = true;
-        }
-    }
-
-    if (!changed) return;
-    defer alloc.free(updated);
-
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
-        .sub_path = "init.lua",
-        .data = updated,
-    });
-
-    log.info("migrated managed nvim init resilience guards", .{});
-}
-
-fn migrateManagedOptionsNvchadGuard(alloc: Allocator, target_path: []const u8) !void {
-    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
-    defer alloc.free(options_path);
-
-    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return err,
-    };
-    defer file.close();
-
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
-    defer alloc.free(data);
-
-    if (std.mem.indexOf(u8, data, "require(\"nvchad.options\")") == null) return;
-
-    const updated = try std.mem.replaceOwned(
-        u8,
-        alloc,
-        data,
-        "require(\"nvchad.options\")",
-        "pcall(require, \"nvchad.options\")",
-    );
-    defer alloc.free(updated);
-
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
-        .sub_path = "lua/options.lua",
-        .data = updated,
-    });
-
-    log.info("migrated managed nvim options nvchad guard", .{});
 }
 
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {

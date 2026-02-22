@@ -1,4 +1,4 @@
-pcall(require, "nvchad.options")
+require("nvchad.options")
 
 local border = "rounded"
 
@@ -28,11 +28,6 @@ pcall(function()
 end)
 
 local o = vim.opt
-
--- Keep a real statusline visible in nvim-gui even before plugin UI settles.
-o.laststatus = 3
-o.showmode = false
-o.ruler = false
 
 o.wrap = true
 o.linebreak = true

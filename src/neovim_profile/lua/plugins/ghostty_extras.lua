@@ -2,26 +2,6 @@ pcall(function()
 	require("bootstrap").setup()
 end)
 
-local function ghostty_base30()
-	local ok, base46 = pcall(require, "base46")
-	if ok and type(base46) == "table" and type(base46.get_theme_tb) == "function" then
-		local ok_colors, colors = pcall(base46.get_theme_tb, "base_30")
-		if ok_colors and type(colors) == "table" then
-			return colors
-		end
-	end
-
-	return {
-		black = "#101014",
-		blue = "#61afef",
-		red = "#e06c75",
-		purple = "#c678dd",
-		yellow = "#e5c07b",
-		green = "#98c379",
-		cyan = "#56b6c2",
-	}
-end
-
 return {
 	{
 		"folke/noice.nvim",
@@ -123,66 +103,6 @@ return {
 				group = noice_theme_group,
 				callback = set_noice_theme_links,
 			})
-
-				local shader_presets = {
-					"crt-curved",
-					"crt-curve",
-					"phosphor-green",
-					"blue-neon-grid",
-					"amber-console",
-					"hud-diagnostic",
-					"phosphor-green+crt-curve",
-					"amber-console+crt-curve",
-					"blue-neon-grid+crt-curve",
-					"hud-diagnostic+crt-curve",
-					"none",
-				}
-
-			local function send_shader_preset(preset)
-				local name = (preset and preset ~= "") and preset or "crt-curved"
-
-				local chan = vim.g.ghostty_channel
-				if type(chan) == "number" then
-					pcall(vim.rpcnotify, chan, "ghostty_shader", name)
-					return
-				end
-
-				local ok, err = pcall(function()
-					io.stdout:write(string.format("\27]1345;%s\7", name))
-					io.stdout:flush()
-				end)
-				if not ok then
-					vim.notify("Ghostty shader send failed: " .. tostring(err), vim.log.levels.WARN)
-				end
-			end
-
-				if vim.fn.exists(":GhosttyShader") == 0 then
-					vim.api.nvim_create_user_command("GhosttyShader", function(opts)
-						local name = ""
-						if opts.fargs and #opts.fargs > 0 then
-							name = table.concat(opts.fargs, "+")
-						else
-							name = opts.args
-						end
-						send_shader_preset(name)
-					end, {
-						nargs = "*",
-						complete = function()
-							return shader_presets
-						end,
-						desc = "Set Ghostty shader preset",
-					})
-				end
-
-			if vim.fn.exists(":GhosttyShaders") == 0 then
-				vim.api.nvim_create_user_command("GhosttyShaders", function()
-					vim.ui.select(shader_presets, { prompt = "Ghostty Shader" }, function(choice)
-						if choice then
-							send_shader_preset(choice)
-						end
-					end)
-				end, { desc = "Pick Ghostty shader preset" })
-			end
 
 			require("noice").setup({
 				cmdline = {
@@ -295,94 +215,16 @@ return {
 				vim.defer_fn(set_noice_theme_links, ms)
 			end
 		end,
-		},
+	},
 
-		{
-			"nickjvandyke/opencode.nvim",
-			version = "*",
-			lazy = false,
-			cond = function()
-				return vim.fn.executable("opencode") == 1
-			end,
-			config = function()
-				local function detect_opencode_theme()
-					local name = (vim.g.colors_name or ""):lower()
-					if name == "" then
-						return "system"
-					end
-
-					local map = {
-						{ "catppuccin", "catppuccin" },
-						{ "tokyonight", "tokyonight" },
-						{ "kanagawa", "kanagawa" },
-						{ "gruvbox", "gruvbox" },
-						{ "everforest", "everforest" },
-						{ "rose-pine", "rose-pine" },
-						{ "rosepine", "rose-pine" },
-						{ "nightfox", "nightfox" },
-						{ "onedark", "one-dark" },
-						{ "one_dark", "one-dark" },
-						{ "nord", "nord" },
-						{ "ayu", "ayu" },
-					}
-
-					for _, entry in ipairs(map) do
-						if name:find(entry[1], 1, true) then
-							return entry[2]
-						end
-					end
-
-					return "system"
-				end
-
-				local function build_provider_cmd(theme_name)
-					local cfg = vim.json.encode({ theme = theme_name })
-					return "OPENCODE_CONFIG_CONTENT=" .. vim.fn.shellescape(cfg) .. " opencode --port"
-				end
-
-				local function sync_opencode_theme()
-					local theme_name = detect_opencode_theme()
-					local cmd = build_provider_cmd(theme_name)
-
-					vim.g.ghostty_opencode_theme = theme_name
-					vim.g.opencode_opts = vim.tbl_deep_extend("force", vim.g.opencode_opts or {}, {
-						auto_reload = true,
-						provider = {
-							cmd = cmd,
-							enabled = "terminal",
-						},
-					})
-
-					local ok_cfg, cfg = pcall(require, "opencode.config")
-					if ok_cfg and type(cfg) == "table" and type(cfg.opts) == "table" then
-						cfg.opts = vim.tbl_deep_extend("force", cfg.opts, {
-							auto_reload = true,
-							provider = {
-								cmd = cmd,
-								enabled = "terminal",
-							},
-						})
-					end
-				end
-
-				sync_opencode_theme()
-
-				local group = vim.api.nvim_create_augroup("ghostty_opencode_theme_sync", { clear = true })
-				vim.api.nvim_create_autocmd("ColorScheme", {
-					group = group,
-					callback = sync_opencode_theme,
-				})
-			end,
-		},
-
-		{
-			"rcarriga/nvim-notify",
-			lazy = false,
-			priority = 950,
-			config = function()
-				local bg = ghostty_base30().black
-				require("notify").setup({
-					background_colour = bg,
+	{
+		"rcarriga/nvim-notify",
+		lazy = false,
+		priority = 950,
+		config = function()
+			local bg = require("base46").get_theme_tb("base_30").black
+			require("notify").setup({
+				background_colour = bg,
 				fps = 165,
 				render = "wrapped-compact",
 				stages = "fade_in_slide_out",
@@ -393,19 +235,19 @@ return {
 				on_open = function(win)
 					vim.api.nvim_win_set_config(win, { border = "rounded" })
 				end,
-				})
-				vim.notify = require("notify")
-			end,
-		},
+			})
+			vim.notify = require("notify")
+		end,
+	},
 
-		{
+	{
 		"parkers0405/hlchunk.nvim",
 		url = "https://github.com/parkers0405/hlchunk.nvim.git",
-			branch = "main",
-			event = "BufReadPost",
-			config = function()
-				local colors = ghostty_base30()
-				require("hlchunk").setup({
+		branch = "main",
+		event = "BufReadPost",
+		config = function()
+			local colors = require("base46").get_theme_tb("base_30")
+			require("hlchunk").setup({
 				chunk = {
 					enable = true,
 					use_treesitter = true,
@@ -549,7 +391,6 @@ return {
 				keymap = vim.tbl_deep_extend("force", existing_cmdline.keymap or { preset = "cmdline" }, {
 					["<Up>"] = { "select_prev", "fallback" },
 					["<Down>"] = { "select_next", "fallback" },
-					["<Tab>"] = { "select_and_accept", "fallback" },
 				}),
 				completion = {
 					menu = {

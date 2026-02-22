@@ -1,11 +1,9 @@
 local M = {}
 
 local uv = vim.uv or vim.loop
-local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v4.done"
+local done_marker = vim.fn.stdpath("state") .. "/ghostty/bootstrap-v3.done"
 local setup_done = vim.g.ghostty_bootstrap_setup_done
 local quiet_state = nil
-local mason_bootstrap_requested = false
-local treesitter_bootstrap_requested = false
 
 local treesitter_languages = {
 	"bash",
@@ -227,73 +225,43 @@ end
 local function run_bootstrap()
 	enable_quiet_mode()
 
-	local has_mason_plugin = false
-	local has_treesitter_plugin = false
-	local ok_lazy_cfg, lazy_cfg = pcall(require, "lazy.core.config")
-	if ok_lazy_cfg and type(lazy_cfg) == "table" and type(lazy_cfg.plugins) == "table" then
-		has_mason_plugin = lazy_cfg.plugins["mason.nvim"] ~= nil
-		has_treesitter_plugin = lazy_cfg.plugins["nvim-treesitter"] ~= nil
-	end
-
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then
-		local preload = {}
-		if has_mason_plugin then
-			table.insert(preload, "mason.nvim")
-		end
-		if has_treesitter_plugin then
-			table.insert(preload, "nvim-treesitter")
-		end
-		if #preload > 0 then
-			lazy.load({ plugins = preload })
-		end
+		lazy.load({
+			plugins = {
+				"mason.nvim",
+				"nvim-treesitter",
+			},
+		})
 	end
 
+	local ran_any = false
 	local ran_mason = false
 	local ran_treesitter = false
 
 	local mason_packages = get_mason_packages()
-	local has_mason = has_mason_plugin and vim.fn.exists(":MasonInstall") == 2
-	if #mason_packages == 0 then
-		ran_mason = true
-	elseif has_mason then
-		if mason_bootstrap_requested then
+	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
+		ran_any = true
+		local ok = pcall(vim.cmd, "silent! noautocmd MasonInstall " .. table.concat(mason_packages, " "))
+		if ok then
 			ran_mason = true
-		else
-			local ok = pcall(vim.cmd, "silent! noautocmd MasonInstall " .. table.concat(mason_packages, " "))
-			if ok then
-				mason_bootstrap_requested = true
-				ran_mason = true
-			end
 		end
 	end
 
-	local has_treesitter = has_treesitter_plugin and vim.fn.exists(":TSInstall") == 2
-	if #treesitter_languages == 0 then
-		ran_treesitter = true
-	elseif has_treesitter then
-		if treesitter_bootstrap_requested then
+	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
+		ran_any = true
+		local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
+		if ok then
 			ran_treesitter = true
-		else
-			local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
-			if ok then
-				treesitter_bootstrap_requested = true
-				ran_treesitter = true
-			end
 		end
 	end
 
-	local mason_done = (#mason_packages == 0) or (has_mason and ran_mason)
-	local treesitter_done = (#treesitter_languages == 0) or (has_treesitter and ran_treesitter)
-	if mason_done and treesitter_done then
+	if ran_any and (ran_mason or ran_treesitter) then
 		write_done_marker()
 		vim.schedule(function()
 			vim.notify("Ghostty first-launch setup started. Running quietly in background.", vim.log.levels.INFO)
 		end)
-		return true
 	end
-
-	return false
 end
 
 local function bootstrap_when_ready(max_attempts, delay_ms)
@@ -304,23 +272,20 @@ local function bootstrap_when_ready(max_attempts, delay_ms)
 		end
 
 		attempts = attempts + 1
-		if run_bootstrap() then
+		local has_mason = vim.fn.exists(":MasonInstall") == 2
+		local has_treesitter = vim.fn.exists(":TSInstall") == 2
+
+		if has_mason or has_treesitter then
+			run_bootstrap()
 			return
 		end
 
-			if attempts < max_attempts then
-				vim.defer_fn(tick, delay_ms)
-			else
-				vim.schedule(function()
-					vim.notify(
-						"Ghostty bootstrap did not finish automatically. Run :GhosttyBootstrap after Lazy/Mason loads.",
-						vim.log.levels.WARN
-					)
-				end)
-			end
+		if attempts < max_attempts then
+			vim.defer_fn(tick, delay_ms)
 		end
+	end
 
-		vim.defer_fn(tick, delay_ms)
+	vim.defer_fn(tick, delay_ms)
 end
 
 function M.setup()
@@ -338,8 +303,8 @@ function M.setup()
 		run_bootstrap()
 	end, { desc = "Re-run Ghostty managed Neovim bootstrap installs" })
 
-	-- Don't rely on VeryLazy timing; keep retrying while Lazy installs plugins.
-	bootstrap_when_ready(180, 500)
+	-- Don't rely on VeryLazy timing; keep retrying briefly until commands exist.
+	bootstrap_when_ready(40, 250)
 end
 
 return M

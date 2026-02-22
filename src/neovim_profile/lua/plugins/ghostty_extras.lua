@@ -333,10 +333,16 @@ return {
 					vim.keymap.set("t", "<C-l>", "<C-l>", vim.tbl_extend("force", map_opts, { desc = "opencode: ctrl-l passthrough" }))
 				end
 
+				local function target_opencode_width()
+					return math.max(48, math.floor(vim.o.columns * 0.4))
+				end
+
 				local function focus_opencode_term()
 					for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
 						local bufnr = vim.api.nvim_win_get_buf(winid)
 						if is_opencode_term(bufnr) then
+							vim.wo[winid].winfixwidth = true
+							pcall(vim.api.nvim_win_set_width, winid, target_opencode_width())
 							vim.api.nvim_set_current_win(winid)
 							vim.cmd("startinsert")
 							return true
@@ -365,7 +371,7 @@ return {
 						cmd = "opencode --port",
 						terminal = {
 							split = "right",
-							width = math.max(48, math.floor(vim.o.columns * 0.4)),
+							width = target_opencode_width(),
 						},
 					},
 					events = {

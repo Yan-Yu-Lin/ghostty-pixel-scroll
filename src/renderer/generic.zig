@@ -2485,6 +2485,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const rh: f32 = @floatFromInt(w.render_height);
                 const px_x = pad_left + w.grid_col * cell_w;
                 const px_y = pad_top + w.grid_row * cell_h;
+                const full_w = rw * cell_w;
+                const full_h = rh * cell_h;
+                // Clamp insets for tiny splits so rect dimensions never go negative.
+                const inset_x = @min(win_pad, full_w * 0.45);
 
                 window_id_map.put(w.id, next_wid) catch {};
 
@@ -2500,20 +2504,23 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     const w_bot_px = pad_top + (w.grid_row + @as(f32, @floatFromInt(w.render_height))) * cell_h;
 
                     if (is_top_level) {
+                        const top_full_h = w_bot_px - pad_top;
+                        const inset_y = @min(win_pad, top_full_h * 0.45);
                         // Top-level: extend up to include tabline, use own bottom
                         self.uniforms.window_rects[next_wid - 1] = .{
-                            px_x + win_pad,
-                            pad_top + win_pad,
-                            rw * cell_w - win_pad * 2.0,
-                            w_bot_px - pad_top - win_pad * 2.0,
+                            px_x + inset_x,
+                            pad_top + inset_y,
+                            @max(@as(f32, 1.0), full_w - inset_x * 2.0),
+                            @max(@as(f32, 1.0), top_full_h - inset_y * 2.0),
                         };
                     } else {
+                        const inset_y = @min(win_pad, full_h * 0.45);
                         // Non-top (e.g. terminal below buffer): own rect
                         self.uniforms.window_rects[next_wid - 1] = .{
-                            px_x + win_pad,
-                            px_y + win_pad,
-                            rw * cell_w - win_pad * 2.0,
-                            rh * cell_h - win_pad * 2.0,
+                            px_x + inset_x,
+                            px_y + inset_y,
+                            @max(@as(f32, 1.0), full_w - inset_x * 2.0),
+                            @max(@as(f32, 1.0), full_h - inset_y * 2.0),
                         };
                     }
                 } else {

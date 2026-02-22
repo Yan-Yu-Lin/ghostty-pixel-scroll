@@ -4641,29 +4641,44 @@ pub fn scrollCallback(
     // In Neovim GUI mode, send scroll events to Neovim using nvim_input_mouse
     // This properly targets the window under the cursor (like Neovide)
     if (self.nvim_gui) |nvim| {
-        if (yoff != 0) {
+        if (xoff != 0 or yoff != 0) {
             // Get cursor position for scroll event
             const pos = try self.rt_surface.getCursorPos();
             const nvim_mouse = self.nvimMousePositionFromSurface(pos.x, pos.y);
+            const cell_w: f64 = @floatFromInt(self.size.cell.width);
             const cell_h: f64 = @floatFromInt(self.size.cell.height);
 
             // Find the window under the cursor and get local grid position
             const window_info = nvim.findWindowAtPosition(nvim_mouse.screen_col, nvim_mouse.screen_row);
 
-            // Normalize yoff to lines. For precision scroll (touchpad), yoff is in pixels,
-            // so divide by cell height to get lines. For discrete scroll (mouse wheel),
-            // yoff is already in line-like units.
-            const yoff_lines: f64 = if (scroll_mods.precision)
-                yoff / cell_h
-            else
-                yoff;
+            // Normalize offsets to line/column units. Precision devices report pixel
+            // deltas; discrete wheels already report tick-like units.
+            var y_units: f64 = if (scroll_mods.precision) yoff / cell_h else yoff;
+            var x_units: f64 = if (scroll_mods.precision) xoff / cell_w else xoff;
 
-            // Accumulate scroll for smoother mouse wheel handling
-            self.mouse.pending_scroll_y += yoff_lines;
+            if (scroll_mods.precision) {
+                // Trackpad horizontal gestures often include tiny vertical noise.
+                // Lock to the dominant axis to prevent accidental line jumps.
+                const abs_x = @abs(x_units);
+                const abs_y = @abs(y_units);
+                const axis_lock = 1.5;
+                if (abs_x > abs_y * axis_lock) {
+                    y_units = 0;
+                } else if (abs_y > abs_x * axis_lock) {
+                    x_units = 0;
+                }
+
+                // Ignore sub-noise accumulation for precision scroll.
+                if (@abs(x_units) < 0.01) x_units = 0;
+                if (@abs(y_units) < 0.01) y_units = 0;
+            }
+
+            self.mouse.pending_scroll_y += y_units;
+            self.mouse.pending_scroll_x += x_units;
 
             // Send scroll events to Neovim using nvim_input_mouse API
             // This targets the specific grid (window) under the cursor
-            // Note: yoff positive = scroll up in Neovim's convention
+            // Note: positive = up/right in Neovim's convention.
             while (self.mouse.pending_scroll_y >= 1.0) {
                 self.mouse.pending_scroll_y -= 1.0;
                 if (window_info) |info| {
@@ -4680,6 +4695,22 @@ pub fn scrollCallback(
                 } else {
                     // Fallback to grid 1 if no window found
                     nvim.sendScroll("down", 1, nvim_mouse.col, nvim_mouse.row) catch {};
+                }
+            }
+            while (self.mouse.pending_scroll_x >= 1.0) {
+                self.mouse.pending_scroll_x -= 1.0;
+                if (window_info) |info| {
+                    nvim.sendScroll("right", info.grid_id, info.col, info.row) catch {};
+                } else {
+                    nvim.sendScroll("right", 1, nvim_mouse.col, nvim_mouse.row) catch {};
+                }
+            }
+            while (self.mouse.pending_scroll_x <= -1.0) {
+                self.mouse.pending_scroll_x += 1.0;
+                if (window_info) |info| {
+                    nvim.sendScroll("left", info.grid_id, info.col, info.row) catch {};
+                } else {
+                    nvim.sendScroll("left", 1, nvim_mouse.col, nvim_mouse.row) catch {};
                 }
             }
         }

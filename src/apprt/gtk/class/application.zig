@@ -1226,6 +1226,96 @@ pub const Application = extern struct {
                 gtk.STYLE_PROVIDER_PRIORITY_USER,
             );
         }
+
+        // Keep compositor-safety overrides loaded after user css so they
+        // cannot be accidentally undone by custom themes.
+        if (isHyprlandSession()) {
+            try self.loadHyprlandSafetyCss(display);
+        }
+    }
+
+    fn loadHyprlandSafetyCss(self: *Self, display: *gdk.Display) Allocator.Error!void {
+        const priv: *Private = self.private();
+        const alloc = self.allocator();
+        const config = priv.config.get();
+        const bg = config.@"window-titlebar-background" orelse config.background;
+        const fg = config.@"window-titlebar-foreground" orelse config.foreground;
+
+        const css = try std.fmt.allocPrint(alloc,
+            \\window headerbar,
+            \\window .titlebar,
+            \\window tabbar,
+            \\window tabbar tabbox,
+            \\window windowcontrols,
+            \\window:backdrop headerbar,
+            \\window:backdrop .titlebar,
+            \\window:backdrop tabbar,
+            \\window:backdrop tabbar tabbox,
+            \\window:backdrop windowcontrols {{
+            \\  background: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d}) !important;
+            \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d}) !important;
+            \\  color: rgb({[fg_r]d},{[fg_g]d},{[fg_b]d}) !important;
+            \\  background-image: none !important;
+            \\  box-shadow: none !important;
+            \\  border-color: transparent !important;
+            \\  opacity: 1 !important;
+            \\  transition: none !important;
+            \\  animation: none !important;
+            \\}}
+            \\
+            \\window tabbar tabbox tab,
+            \\window tabbar tabbox tab:hover,
+            \\window tabbar tabbox tab:focus,
+            \\window tabbar tabbox tab:focus-visible,
+            \\window tabbar tabbox tab:checked,
+            \\window tabbar tabbox tab:selected,
+            \\window tabbar tabbox tab button,
+            \\window tabbar button {{
+            \\  transition: none !important;
+            \\  animation: none !important;
+            \\  outline-style: none !important;
+            \\  outline-width: 0 !important;
+            \\  outline-color: transparent !important;
+            \\}}
+            \\
+        , .{
+            .bg_r = bg.r,
+            .bg_g = bg.g,
+            .bg_b = bg.b,
+            .fg_r = fg.r,
+            .fg_g = fg.g,
+            .fg_b = fg.b,
+        });
+        defer alloc.free(css);
+
+        const bytes = glib.Bytes.new(css.ptr, css.len);
+        defer bytes.unref();
+
+        const css_provider = gtk.CssProvider.new();
+        errdefer css_provider.unref();
+
+        _ = gtk.CssProvider.signals.parsing_error.connect(
+            css_provider,
+            *Self,
+            signalCssParsingError,
+            self,
+            .{},
+        );
+
+        try priv.custom_css_providers.append(alloc, css_provider);
+        css_provider.loadFromBytes(bytes);
+
+        const priority = gtk.STYLE_PROVIDER_PRIORITY_USER + 1;
+        gtk.StyleContext.addProviderForDisplay(
+            display,
+            css_provider.as(gtk.StyleProvider),
+            priority,
+        );
+
+        if (hy3TraceEnabled()) log.info(
+            "hy3-trace event=load-hyprland-safety-css priority={d}",
+            .{priority},
+        );
     }
 
     fn syncActionAccelerators(self: *Self) void {

@@ -893,8 +893,7 @@ pub const Window = extern struct {
 
     fn traceTitle(title_: ?[:0]const u8) []const u8 {
         const raw = title_ orelse return "<null>";
-        const s = std.mem.span(raw);
-        return if (s.len > 0) s else "<empty>";
+        return if (raw.len > 0) raw else "<empty>";
     }
 
     fn setFallbackTitle(self: *Self) void {

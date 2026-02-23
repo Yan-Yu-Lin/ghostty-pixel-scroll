@@ -252,6 +252,10 @@ pub const Window = extern struct {
         /// A weak reference to a command palette.
         command_palette: WeakRef(CommandPalette) = .empty,
 
+        /// Set during dispose so late signal callbacks don't touch template
+        /// children that are being torn down.
+        disposing: bool = false,
+
         // Template bindings
         tab_overview: *adw.TabOverview,
         tab_bar: *adw.TabBar,
@@ -1191,6 +1195,7 @@ pub const Window = extern struct {
 
     fn dispose(self: *Self) callconv(.c) void {
         const priv = self.private();
+        priv.disposing = true;
 
         priv.command_palette.set(null);
 
@@ -1198,6 +1203,18 @@ pub const Window = extern struct {
             v.unref();
             priv.config = null;
         }
+
+        // Disconnect template callbacks that use `self` as user data before
+        // template children are destroyed.
+        _ = gobject.signalHandlersDisconnectMatched(
+            priv.tab_view.as(gobject.Object),
+            .{ .data = true },
+            0,
+            0,
+            null,
+            null,
+            self,
+        );
 
         priv.tab_bindings.setSource(null);
 
@@ -1428,11 +1445,13 @@ pub const Window = extern struct {
         _: *gobject.ParamSpec,
         self: *Self,
     ) callconv(.c) void {
+        if (self.private().disposing) return;
         self.syncSelectedPageState();
     }
 
     fn syncSelectedPageState(self: *Self) void {
         const priv = self.private();
+        if (priv.disposing) return;
         const trace = hy3TraceEnabled();
         if (trace) log.info("hy3-trace event=sync-selected-state begin n-pages={d}", .{
             priv.tab_view.getNPages(),
@@ -1499,8 +1518,10 @@ pub const Window = extern struct {
         _: c_int,
         self: *Self,
     ) callconv(.c) void {
+        const priv = self.private();
+        if (priv.disposing) return;
         if (hy3TraceEnabled()) log.info("hy3-trace event=page-attached n-pages={d}", .{
-            self.private().tab_view.getNPages(),
+            priv.tab_view.getNPages(),
         });
 
         // Get the attached page which must be a Tab object.
@@ -1548,8 +1569,10 @@ pub const Window = extern struct {
         _: c_int,
         self: *Self,
     ) callconv(.c) void {
+        const priv = self.private();
+        if (priv.disposing) return;
         if (hy3TraceEnabled()) log.info("hy3-trace event=page-detached n-pages={d}", .{
-            self.private().tab_view.getNPages(),
+            priv.tab_view.getNPages(),
         });
 
         // We need to get the tab to disconnect the signals.

@@ -1241,6 +1241,8 @@ pub const Application = extern struct {
         const bg = config.@"window-titlebar-background" orelse config.background;
         const fg = config.@"window-titlebar-foreground" orelse config.foreground;
 
+        // GTK CSS doesn't support `!important`; provider priority controls
+        // precedence for us.
         const css = try std.fmt.allocPrint(alloc,
             \\window headerbar,
             \\window .titlebar,
@@ -1252,15 +1254,15 @@ pub const Application = extern struct {
             \\window:backdrop tabbar,
             \\window:backdrop tabbar tabbox,
             \\window:backdrop windowcontrols {{
-            \\  background: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d}) !important;
-            \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d}) !important;
-            \\  color: rgb({[fg_r]d},{[fg_g]d},{[fg_b]d}) !important;
-            \\  background-image: none !important;
-            \\  box-shadow: none !important;
-            \\  border-color: transparent !important;
-            \\  opacity: 1 !important;
-            \\  transition: none !important;
-            \\  animation: none !important;
+            \\  background: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d});
+            \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d});
+            \\  color: rgb({[fg_r]d},{[fg_g]d},{[fg_b]d});
+            \\  background-image: none;
+            \\  box-shadow: none;
+            \\  border-color: transparent;
+            \\  opacity: 1;
+            \\  transition: none;
+            \\  animation: none;
             \\}}
             \\
             \\window tabbar tabbox tab,
@@ -1271,11 +1273,11 @@ pub const Application = extern struct {
             \\window tabbar tabbox tab:selected,
             \\window tabbar tabbox tab button,
             \\window tabbar button {{
-            \\  transition: none !important;
-            \\  animation: none !important;
-            \\  outline-style: none !important;
-            \\  outline-width: 0 !important;
-            \\  outline-color: transparent !important;
+            \\  transition: none;
+            \\  animation: none;
+            \\  outline-style: none;
+            \\  outline-width: 0;
+            \\  outline-color: transparent;
             \\}}
             \\
         , .{

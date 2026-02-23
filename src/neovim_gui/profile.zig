@@ -135,6 +135,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         try migrateManagedOptionsShowbreak(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
+        try migrateManagedFilePermissionsWritable(alloc, target_dir);
         return;
     } else |_| {}
 
@@ -142,6 +143,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     try migrateManagedOptionsShowbreak(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
+    try migrateManagedFilePermissionsWritable(alloc, target_dir);
     log.info("seeded managed nvim profile at: {s}", .{target_dir});
 }
 
@@ -241,6 +243,32 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 try source.copyFile(entry.path, target, entry.path, .{});
             },
             else => {},
+        }
+    }
+}
+
+fn migrateManagedFilePermissionsWritable(alloc: Allocator, target_path: []const u8) !void {
+    if (@import("builtin").os.tag == .windows) return;
+
+    var target = try std.fs.openDirAbsolute(target_path, .{ .iterate = true });
+    defer target.close();
+
+    var walker = try target.walk(alloc);
+    defer walker.deinit();
+
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+
+        var file = target.openFile(entry.path, .{}) catch |err| switch (err) {
+            error.FileNotFound => continue,
+            else => return err,
+        };
+        defer file.close();
+
+        const stat = try file.stat();
+        const desired_mode = stat.mode | 0o200;
+        if (desired_mode != stat.mode) {
+            try file.chmod(desired_mode);
         }
     }
 }

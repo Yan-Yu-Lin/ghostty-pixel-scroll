@@ -883,6 +883,69 @@ pub const Application = extern struct {
             , .{ .font_family = font_family });
         }
 
+        if (isHyprlandSession()) {
+            const titlebar_background = config.@"window-titlebar-background" orelse config.background;
+            const titlebar_foreground = config.@"window-titlebar-foreground" orelse config.foreground;
+
+            try writer.print(
+                \\/*
+                \\ * Hyprland/Hy3 compositor safety overrides.
+                \\ *
+                \\ * - Avoid transient transparent titlebar/tabbar paint on first map.
+                \\ * - Disable problematic outlines that can crash GTK snapshotting in
+                \\ *   adw_tab_view_snapshot on some GTK/Libadwaita combinations.
+                \\ * - Keep window corners square so compositor border rendering stays
+                \\ *   predictable with custom tab bars.
+                \\ */
+                \\window {{
+                \\  border-radius: 0;
+                \\}}
+                \\
+                \\window.background headerbar,
+                \\window.background .titlebar,
+                \\window.background tabbar,
+                \\window.background tabbar tabbox,
+                \\window.background windowcontrols {{
+                \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d});
+                \\  color: rgb({[fg_r]d},{[fg_g]d},{[fg_b]d});
+                \\}}
+                \\
+                \\window tabbar tabbox tab,
+                \\window tabbar tabbox tab:hover,
+                \\window tabbar tabbox tab:focus,
+                \\window tabbar tabbox tab:focus-visible,
+                \\window tabbar tabbox tab:checked,
+                \\window tabbar tabbox tab:selected,
+                \\window tabbar tabbox tab button,
+                \\window tabbar button {{
+                \\  outline-style: none;
+                \\  outline-width: 0;
+                \\  outline-color: transparent;
+                \\}}
+                \\
+                \\label.url-overlay,
+                \\.search-overlay,
+                \\.key-state-overlay,
+                \\label.resize-overlay,
+                \\.surface .readonly_overlay {{
+                \\  outline-style: none;
+                \\  outline-width: 0;
+                \\  outline-color: transparent;
+                \\  border-style: solid;
+                \\  border-width: 1px;
+                \\  border-color: rgba({[fg_r]d},{[fg_g]d},{[fg_b]d},0.45);
+                \\}}
+                \\
+            , .{
+                .bg_r = titlebar_background.r,
+                .bg_g = titlebar_background.g,
+                .bg_b = titlebar_background.b,
+                .fg_r = titlebar_foreground.r,
+                .fg_g = titlebar_foreground.g,
+                .fg_b = titlebar_foreground.b,
+            });
+        }
+
         const contents = buf.written();
 
         log.debug("runtime CSS is {d} bytes", .{contents.len});
@@ -892,6 +955,29 @@ pub const Application = extern struct {
 
         // Clears any previously loaded CSS from this provider
         priv.css_provider.loadFromBytes(bytes);
+    }
+
+    fn isHyprlandSession() bool {
+        inline for (&[_][:0]const u8{
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "HYPRLAND_CMD",
+        }) |env_key| {
+            if (std.posix.getenv(env_key) != null) return true;
+        }
+
+        inline for (&[_][:0]const u8{
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+        }) |env_key| {
+            const raw = std.posix.getenv(env_key) orelse continue;
+            var it = std.mem.splitAny(u8, raw, ":;");
+            while (it.next()) |segment| {
+                if (segment.len == 0) continue;
+                if (std.ascii.eqlIgnoreCase(segment, "hyprland")) return true;
+            }
+        }
+
+        return false;
     }
 
     /// Load runtime CSS for older than GTK 4.16

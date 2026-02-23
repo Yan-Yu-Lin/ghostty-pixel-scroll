@@ -1,5 +1,43 @@
 require("nvchad.options")
 
+-- NvChad's theme picker persists the selected theme by rewriting `lua/chadrc.lua`.
+-- In managed/Nix-style setups that file may be read-only, so guard writes to avoid E5108 crashes.
+pcall(function()
+	local nvutils = require("nvchad.utils")
+	if type(nvutils) ~= "table" or type(nvutils.replace_word) ~= "function" then
+		return
+	end
+
+	nvutils.replace_word = function(old, new, filepath)
+		filepath = filepath or (vim.fn.stdpath("config") .. "/lua/chadrc.lua")
+
+		local read_handle = io.open(filepath, "r")
+		if not read_handle then
+			return
+		end
+
+		local content = read_handle:read("*all")
+		read_handle:close()
+
+		local pattern = tostring(old or ""):gsub("%-", "%%-")
+		local next_content = content:gsub(pattern, tostring(new or ""))
+
+		local write_handle, err = io.open(filepath, "w")
+		if not write_handle then
+			vim.schedule(function()
+				vim.notify(
+					("NvChad theme not persisted (cannot write %s: %s)"):format(filepath, tostring(err or "permission denied")),
+					vim.log.levels.WARN
+				)
+			end)
+			return
+		end
+
+		write_handle:write(next_content)
+		write_handle:close()
+	end
+end)
+
 local border = "rounded"
 
 vim.lsp.handlers["textDocument/hover"] = vim.lsp.with(vim.lsp.handlers.hover, {

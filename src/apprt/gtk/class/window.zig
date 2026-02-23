@@ -312,8 +312,8 @@ pub const Window = extern struct {
             // waiting possibly a few event loop ticks for it to sync from
             // the surface.
             if (config.title) |v| self.as(gtk.Window).setTitle(v);
-            if (config.title == null) self.as(gtk.Window).setTitle("Ghostty");
         }
+        self.setFallbackTitle();
 
         // We always sync our appearance at the end because loading our
         // config and such can affect our bindings which are setup initially
@@ -613,12 +613,10 @@ pub const Window = extern struct {
         // Remainder uses the config
         const config = if (priv.config) |v| v.get() else return;
 
-        // Keep a solid window background until the first surface is initialized.
-        // This avoids startup alpha artifacts with some external Wayland tab bars
-        // (e.g. Hy3) while preserving user-configured transparency afterwards.
+        // Only add a solid background if we're opaque.
         self.toggleCssClass(
             "background",
-            !priv.surface_init or config.@"background-opacity" >= 1,
+            config.@"background-opacity" >= 1,
         );
 
         // Apply class to color headerbar if window-theme is set to `ghostty` and
@@ -883,6 +881,37 @@ pub const Window = extern struct {
         }
 
         return false;
+    }
+
+    fn hy3TraceEnabled() bool {
+        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        return std.ascii.eqlIgnoreCase(raw, "1") or
+            std.ascii.eqlIgnoreCase(raw, "true") or
+            std.ascii.eqlIgnoreCase(raw, "yes") or
+            std.ascii.eqlIgnoreCase(raw, "on");
+    }
+
+    fn traceTitle(title_: ?[:0]const u8) []const u8 {
+        const raw = title_ orelse return "<null>";
+        const s = std.mem.span(raw);
+        return if (s.len > 0) s else "<empty>";
+    }
+
+    fn setFallbackTitle(self: *Self) void {
+        if (self.getConfig()) |config_obj| {
+            if (config_obj.get().title != null) {
+                if (hy3TraceEnabled()) log.info(
+                    "hy3-trace event=set-fallback-title skip=config-title",
+                    .{},
+                );
+                return;
+            }
+        }
+        self.as(gtk.Window).setTitle("Ghostty");
+        if (hy3TraceEnabled()) log.info(
+            "hy3-trace event=set-fallback-title value=Ghostty",
+            .{},
+        );
     }
 
     fn isFullscreen(self: *Window) bool {
@@ -1400,26 +1429,69 @@ pub const Window = extern struct {
         _: *gobject.ParamSpec,
         self: *Self,
     ) callconv(.c) void {
+        self.syncSelectedPageState();
+    }
+
+    fn syncSelectedPageState(self: *Self) void {
         const priv = self.private();
+        const trace = hy3TraceEnabled();
+        if (trace) log.info("hy3-trace event=sync-selected-state begin n-pages={d}", .{
+            priv.tab_view.getNPages(),
+        });
 
         // Get our current page which MUST be a Tab object.
         // Keep a non-empty fallback title when no page is selected so
         // external Wayland tab bars (e.g. Hy3) never observe an empty title.
         const page = priv.tab_view.getSelectedPage() orelse {
             priv.tab_bindings.setSource(null);
-            self.as(gtk.Window).setTitle("Ghostty");
+            self.setFallbackTitle();
+            self.as(gtk.Widget).queueDraw();
+            if (trace) log.info("hy3-trace event=sync-selected-state selected-page=none", .{});
             return;
         };
         const child = page.getChild();
         assert(gobject.ext.isA(child, Tab));
+        const tab = gobject.ext.cast(Tab, child) orelse {
+            priv.tab_bindings.setSource(null);
+            self.setFallbackTitle();
+            self.as(gtk.Widget).queueDraw();
+            if (trace) log.info("hy3-trace event=sync-selected-state selected-page=non-tab", .{});
+            return;
+        };
 
         // Setup our binding group. This ensures things like the title
         // are synced from the active tab.
         priv.tab_bindings.setSource(child.as(gobject.Object));
+        if (trace) log.info("hy3-trace event=sync-selected-state selected-page-pos={d} tab-title={s}", .{
+            priv.tab_view.getPagePosition(page),
+            traceTitle(tab.getTitle()),
+        });
+
+        // Publish the title immediately so external compositor tab bars don't
+        // observe an intermediate empty title while bindings settle.
+        if (tab.getTitle()) |title| {
+            if (title.len > 0) {
+                self.as(gtk.Window).setTitle(title);
+                if (trace) log.info("hy3-trace event=set-window-title source=tab value={s}", .{
+                    title,
+                });
+            } else {
+                self.setFallbackTitle();
+                if (trace) log.info("hy3-trace event=set-window-title source=tab-empty->fallback", .{});
+            }
+        } else {
+            self.setFallbackTitle();
+            if (trace) log.info("hy3-trace event=set-window-title source=tab-null->fallback", .{});
+        }
 
         // If the tab was previously marked as needing attention
         // (e.g. due to a bell character), we now unmark that
         page.setNeedsAttention(@intFromBool(false));
+
+        // Force a redraw in the same loop tick to reduce one-frame stale UI
+        // in external tab compositors (e.g. Hy3).
+        self.as(gtk.Widget).queueDraw();
+        if (trace) log.info("hy3-trace event=sync-selected-state end", .{});
     }
 
     fn tabViewPageAttached(
@@ -1428,6 +1500,10 @@ pub const Window = extern struct {
         _: c_int,
         self: *Self,
     ) callconv(.c) void {
+        if (hy3TraceEnabled()) log.info("hy3-trace event=page-attached n-pages={d}", .{
+            self.private().tab_view.getNPages(),
+        });
+
         // Get the attached page which must be a Tab object.
         const child = page.getChild();
         const tab = gobject.ext.cast(Tab, child) orelse return;
@@ -1463,6 +1539,8 @@ pub const Window = extern struct {
         if (tab.getSurfaceTree()) |tree| {
             self.connectSurfaceHandlers(tree);
         }
+
+        self.syncSelectedPageState();
     }
 
     fn tabViewPageDetached(
@@ -1471,6 +1549,10 @@ pub const Window = extern struct {
         _: c_int,
         self: *Self,
     ) callconv(.c) void {
+        if (hy3TraceEnabled()) log.info("hy3-trace event=page-detached n-pages={d}", .{
+            self.private().tab_view.getNPages(),
+        });
+
         // We need to get the tab to disconnect the signals.
         const child = page.getChild();
         const tab = gobject.ext.cast(Tab, child) orelse return;
@@ -1488,6 +1570,8 @@ pub const Window = extern struct {
         if (tab.getSurfaceTree()) |tree| {
             self.disconnectSurfaceHandlers(tree);
         }
+
+        self.syncSelectedPageState();
     }
 
     fn tabViewCreateWindow(
@@ -1666,10 +1750,6 @@ pub const Window = extern struct {
                 @intCast(size.height),
             );
         }
-
-        // Re-sync appearance now that startup-only background forcing is no
-        // longer needed after the first surface exists.
-        self.syncAppearance();
     }
 
     fn tabSplitTreeChanged(

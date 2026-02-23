@@ -235,6 +235,20 @@ pub const Tab = extern struct {
         return tree.getNeedsConfirmQuit();
     }
 
+    /// Get the current tab title, if any. This does not increase the
+    /// reference count and should be treated as ephemeral.
+    pub fn getTitle(self: *Self) ?[:0]const u8 {
+        return self.private().title;
+    }
+
+    fn hy3TraceEnabled() bool {
+        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        return std.ascii.eqlIgnoreCase(raw, "1") or
+            std.ascii.eqlIgnoreCase(raw, "true") or
+            std.ascii.eqlIgnoreCase(raw, "yes") or
+            std.ascii.eqlIgnoreCase(raw, "on");
+    }
+
     /// Get the tab page holding this tab, if any.
     fn getTabPage(self: *Self) ?*adw.TabPage {
         const tab_view = ext.getAncestor(
@@ -386,18 +400,33 @@ pub const Tab = extern struct {
 
         // Our plain title is the overridden title if it exists, otherwise
         // the terminal title if it exists, otherwise a default string.
+        //
+        // Empty strings are treated as unset. Some compositor integrations
+        // (e.g. Hy3 tab bars) can render poorly when a window briefly reports
+        // an empty title during tab/window transitions.
         const plain = plain: {
             const default = "Ghostty";
-            const config_title: ?[*:0]const u8 = title: {
+            const config_title: ?[]const u8 = title: {
                 const config = config_ orelse break :title null;
-                break :title config.get().title orelse null;
+                const raw = config.get().title orelse break :title null;
+                break :title if (raw.len > 0) raw else null;
+            };
+            const terminal_title: ?[]const u8 = title: {
+                const raw = terminal_ orelse break :title null;
+                const v = std.mem.span(raw);
+                break :title if (v.len > 0) v else null;
+            };
+            const override_title: ?[]const u8 = title: {
+                const raw = override_ orelse break :title null;
+                const v = std.mem.span(raw);
+                break :title if (v.len > 0) v else null;
             };
 
-            const plain = override_ orelse
-                terminal_ orelse
+            const plain = override_title orelse
+                terminal_title orelse
                 config_title orelse
                 break :plain default;
-            break :plain std.mem.span(plain);
+            break :plain plain;
         };
 
         // We don't need a config in every case, but if we don't have a config
@@ -424,6 +453,16 @@ pub const Tab = extern struct {
         }
 
         buf.writer.writeAll(plain) catch return glib.ext.dupeZ(u8, plain);
+        if (hy3TraceEnabled()) log.info(
+            "hy3-trace event=computed-tab-title plain={s} zoomed={} bell={} term={?s} override={?s}",
+            .{
+                plain,
+                zoomed,
+                bell_ringing,
+                terminal_,
+                override_,
+            },
+        );
         return glib.ext.dupeZ(u8, buf.written());
     }
 

@@ -835,6 +835,7 @@ pub const Application = extern struct {
         const alloc = self.allocator();
         const priv: *Private = self.private();
         const config = priv.config.get();
+        const hyprland_session = isHyprlandSession();
 
         var buf: std.Io.Writer.Allocating = try .initCapacity(alloc, 2048);
         defer buf.deinit();
@@ -883,7 +884,15 @@ pub const Application = extern struct {
             , .{ .font_family = font_family });
         }
 
-        if (isHyprlandSession()) {
+        if (hy3TraceEnabled()) log.info(
+            "hy3-trace event=load-runtime-css hyprland-session={} custom-css-count={d}",
+            .{
+                hyprland_session,
+                config.@"gtk-custom-css".value.items.len,
+            },
+        );
+
+        if (hyprland_session) {
             const titlebar_background = config.@"window-titlebar-background" orelse config.background;
             const titlebar_foreground = config.@"window-titlebar-foreground" orelse config.foreground;
 
@@ -899,13 +908,28 @@ pub const Application = extern struct {
                 \\ */
                 \\window {{
                 \\  border-radius: 0;
+                \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d});
                 \\}}
                 \\
+                \\window headerbar,
+                \\window .titlebar,
+                \\window tabbar,
+                \\window tabbar tabbox,
+                \\window windowcontrols,
+                \\window:backdrop headerbar,
+                \\window:backdrop .titlebar,
+                \\window:backdrop tabbar,
+                \\window:backdrop tabbar tabbox,
+                \\window:backdrop windowcontrols,
                 \\window.background headerbar,
                 \\window.background .titlebar,
                 \\window.background tabbar,
                 \\window.background tabbar tabbox,
                 \\window.background windowcontrols {{
+                \\  background-image: none;
+                \\  box-shadow: none;
+                \\  border-color: transparent;
+                \\  transition: none;
                 \\  background-color: rgb({[bg_r]d},{[bg_g]d},{[bg_b]d});
                 \\  color: rgb({[fg_r]d},{[fg_g]d},{[fg_b]d});
                 \\}}
@@ -921,6 +945,8 @@ pub const Application = extern struct {
                 \\  outline-style: none;
                 \\  outline-width: 0;
                 \\  outline-color: transparent;
+                \\  transition: none;
+                \\  animation: none;
                 \\}}
                 \\
                 \\label.url-overlay,
@@ -958,18 +984,20 @@ pub const Application = extern struct {
     }
 
     fn isHyprlandSession() bool {
-        inline for (&[_][:0]const u8{
+        for (&[_][:0]const u8{
             "HYPRLAND_INSTANCE_SIGNATURE",
             "HYPRLAND_CMD",
         }) |env_key| {
             if (std.posix.getenv(env_key) != null) return true;
         }
 
-        inline for (&[_][:0]const u8{
+        for (&[_][:0]const u8{
             "XDG_CURRENT_DESKTOP",
             "XDG_SESSION_DESKTOP",
         }) |env_key| {
-            const raw = std.posix.getenv(env_key) orelse continue;
+            const raw = std.posix.getenv(env_key) orelse {
+                continue;
+            };
             var it = std.mem.splitAny(u8, raw, ":;");
             while (it.next()) |segment| {
                 if (segment.len == 0) continue;
@@ -978,6 +1006,14 @@ pub const Application = extern struct {
         }
 
         return false;
+    }
+
+    fn hy3TraceEnabled() bool {
+        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        return std.ascii.eqlIgnoreCase(raw, "1") or
+            std.ascii.eqlIgnoreCase(raw, "true") or
+            std.ascii.eqlIgnoreCase(raw, "yes") or
+            std.ascii.eqlIgnoreCase(raw, "on");
     }
 
     /// Load runtime CSS for older than GTK 4.16

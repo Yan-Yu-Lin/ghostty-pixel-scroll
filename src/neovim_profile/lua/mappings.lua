@@ -24,10 +24,8 @@ map("i", "<Down>", function()
 	return "<C-o>gj<C-o>g^"
 end, { expr = true, noremap = true, silent = true })
 
-map("i", "<CR>", function()
-	local virtcol = vim.fn.virtcol(".")
-	return "<CR>" .. string.rep(" ", math.max(virtcol - 1, 0))
-end, { expr = true, noremap = true, silent = true })
+-- NOTE: The default <CR> in insert mode is used (no virtual-column
+-- preservation) so the cursor lands at column 1 of the new line.
 
 map("t", "<C-h>", "<C-\\><C-N><C-w>h", { desc = "Terminal left window" })
 map("t", "<C-l>", "<C-\\><C-N><C-w>l", { desc = "Terminal right window" })

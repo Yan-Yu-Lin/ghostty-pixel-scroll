@@ -51,36 +51,17 @@ pub fn userConfigExists() bool {
 /// - data:   ~/.local/share/ghostty/nvim
 /// - state:  ~/.local/state/ghostty/nvim
 /// - cache:  ~/.cache/ghostty/nvim
-pub fn applyManagedEnv(alloc: Allocator, env: *std.process.EnvMap) !void {
-    var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = internal_os.home(&home_buf) catch |err| {
-        log.warn("failed to determine home directory for managed nvim env: {}", .{err});
-        return;
-    } orelse {
-        log.warn("home directory unavailable for managed nvim env", .{});
-        return;
-    };
-
-    const xdg_config_home = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty", .{home});
-    defer alloc.free(xdg_config_home);
-
-    const xdg_data_home = try std.fmt.allocPrint(alloc, "{s}/.local/share/ghostty", .{home});
-    defer alloc.free(xdg_data_home);
-
-    const xdg_state_home = try std.fmt.allocPrint(alloc, "{s}/.local/state/ghostty", .{home});
-    defer alloc.free(xdg_state_home);
-
-    const xdg_cache_home = try std.fmt.allocPrint(alloc, "{s}/.cache/ghostty", .{home});
-    defer alloc.free(xdg_cache_home);
-
-    try env.put("XDG_CONFIG_HOME", xdg_config_home);
-    try env.put("XDG_DATA_HOME", xdg_data_home);
-    try env.put("XDG_STATE_HOME", xdg_state_home);
-    try env.put("XDG_CACHE_HOME", xdg_cache_home);
-
-    // NVIM_APPNAME = nvim so stdpaths resolve under the XDG roots above.
-    // Example: config => ~/.config/ghostty/nvim
-    try env.put("NVIM_APPNAME", "nvim");
+///
+/// Only NVIM_APPNAME is set (to "ghostty/nvim") so that Neovim's stdpath()
+/// resolves under the standard XDG roots (e.g. config => ~/.config/ghostty/nvim).
+/// Global XDG variables are intentionally *not* overridden — this keeps tools
+/// spawned from within Neovim (git, opencode, terminal shells, etc.) using
+/// the user's normal system configuration.
+pub fn applyManagedEnv(_: Allocator, env: *std.process.EnvMap) !void {
+    // NVIM_APPNAME supports path separators.  Setting it to "ghostty/nvim"
+    // makes Neovim resolve stdpath('config') to $XDG_CONFIG_HOME/ghostty/nvim
+    // (i.e. ~/.config/ghostty/nvim) without altering XDG_CONFIG_HOME itself.
+    try env.put("NVIM_APPNAME", "ghostty/nvim");
 }
 
 /// Get the absolute init.lua path for Ghostty-managed profile.
@@ -133,6 +114,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
+        try migrateManagedOptionsVirtualedit(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
         try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -141,6 +123,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
 
     try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
+    try migrateManagedOptionsVirtualedit(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
     try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -306,6 +289,41 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     });
 
     log.info("migrated managed nvim options showbreak marker", .{});
+}
+
+fn migrateManagedOptionsVirtualedit(alloc: Allocator, target_path: []const u8) !void {
+    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
+    defer alloc.free(options_path);
+
+    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const old_virtualedit = "o.virtualedit = \"all\"";
+    if (std.mem.indexOf(u8, data, old_virtualedit) == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        old_virtualedit,
+        "o.virtualedit = \"block\"",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/options.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim options virtualedit mode", .{});
 }
 
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {

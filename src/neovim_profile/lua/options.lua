@@ -74,7 +74,7 @@ o.showbreak = "↪ "
 o.number = true
 o.relativenumber = false
 
-o.virtualedit = "all"
+o.virtualedit = "block"
 
 o.sidescrolloff = 50
 o.sidescroll = 1

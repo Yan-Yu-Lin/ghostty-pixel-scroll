@@ -1027,7 +1027,16 @@ pub const IoThread = struct {
     /// Send nvim_paste RPC to Neovim. This is the correct way to paste
     /// clipboard data — it handles insert mode, cmdline, bracketed paste, etc.
     pub fn sendPaste(self: *Self, data: []const u8) !void {
-        const str_val = try msgpack.string(self.alloc, data);
+        // Strip trailing newlines so that pasting a yanked word/line doesn't
+        // create an unwanted blank line below the cursor.  Internal newlines
+        // (multi-line paste) are preserved.
+        var trimmed = data;
+        while (trimmed.len > 0 and (trimmed[trimmed.len - 1] == '\n' or trimmed[trimmed.len - 1] == '\r')) {
+            trimmed = trimmed[0 .. trimmed.len - 1];
+        }
+        if (trimmed.len == 0) return;
+
+        const str_val = try msgpack.string(self.alloc, trimmed);
         // nvim_paste(data, crlf, phase) — crlf=false, phase=-1 (one-shot)
         const params = try msgpack.array(self.alloc, .{
             str_val,

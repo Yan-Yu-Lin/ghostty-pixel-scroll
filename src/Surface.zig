@@ -6731,6 +6731,16 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 .esc => try std.fmt.bufPrint(&buf, "\x1b{s}", .{data}),
                 else => unreachable,
             };
+
+            // In nvim-gui mode, send directly to Neovim input. The PTY owned
+            // by Ghostty isn't connected to interactive input in this mode.
+            if (self.nvim_gui) |nvim| {
+                if (nvim.io) |io| {
+                    io.sendInputDirect(full_data) catch {};
+                    return true;
+                }
+            }
+
             self.queueIo(try termio.Message.writeReq(
                 self.alloc,
                 full_data,
@@ -6758,6 +6768,16 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                 );
                 return true;
             };
+
+            // In nvim-gui mode, send directly to Neovim input. The PTY owned
+            // by Ghostty isn't connected to interactive input in this mode.
+            if (self.nvim_gui) |nvim| {
+                if (nvim.io) |io| {
+                    io.sendInputDirect(text) catch {};
+                    return true;
+                }
+            }
+
             self.queueIo(try termio.Message.writeReq(
                 self.alloc,
                 text,

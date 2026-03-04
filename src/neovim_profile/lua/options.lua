@@ -120,4 +120,25 @@ vim.api.nvim_create_autocmd({ "BufEnter", "WinEnter", "TermOpen" }, {
 	end,
 })
 
+-- Keep terminal-buffer TUIs (like opencode/crush) in fixed-grid mode.
+-- Global wrap/linebreak settings are great for prose buffers, but they can
+-- visually corrupt full-screen terminal UIs by wrapping control-drawn lines.
+local terminal_wrap_group = vim.api.nvim_create_augroup("ghostty_terminal_wrap", { clear = true })
+vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter" }, {
+	group = terminal_wrap_group,
+	callback = function(args)
+		if not vim.api.nvim_buf_is_valid(args.buf) then
+			return
+		end
+		if vim.bo[args.buf].buftype ~= "terminal" then
+			return
+		end
+
+		vim.wo.wrap = false
+		vim.wo.linebreak = false
+		vim.wo.breakindent = false
+		vim.wo.showbreak = ""
+	end,
+})
+
 refresh_line_numbers(vim.api.nvim_get_current_buf())

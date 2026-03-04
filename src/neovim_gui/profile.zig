@@ -115,6 +115,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
         try migrateManagedOptionsVirtualedit(alloc, target_dir);
+        try migrateManagedOptionsTerminalWrap(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
         try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -124,6 +125,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     try copyDirRecursive(alloc, source_dir, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
     try migrateManagedOptionsVirtualedit(alloc, target_dir);
+    try migrateManagedOptionsTerminalWrap(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
     try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -324,6 +326,60 @@ fn migrateManagedOptionsVirtualedit(alloc: Allocator, target_path: []const u8) !
     });
 
     log.info("migrated managed nvim options virtualedit mode", .{});
+}
+
+fn migrateManagedOptionsTerminalWrap(alloc: Allocator, target_path: []const u8) !void {
+    const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
+    defer alloc.free(options_path);
+
+    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const marker = "ghostty_terminal_wrap";
+    if (std.mem.indexOf(u8, data, marker) != null) return;
+
+    const snippet =
+        \\
+        \\-- Keep terminal-buffer TUIs (like opencode/crush) in fixed-grid mode.
+        \\-- Global wrap/linebreak settings are great for prose buffers, but they can
+        \\-- visually corrupt full-screen terminal UIs by wrapping control-drawn lines.
+        \\local terminal_wrap_group = vim.api.nvim_create_augroup("ghostty_terminal_wrap", { clear = true })
+        \\vim.api.nvim_create_autocmd({ "TermOpen", "BufEnter", "WinEnter" }, {
+        \\    group = terminal_wrap_group,
+        \\    callback = function(args)
+        \\        if not vim.api.nvim_buf_is_valid(args.buf) then
+        \\            return
+        \\        end
+        \\        if vim.bo[args.buf].buftype ~= "terminal" then
+        \\            return
+        \\        end
+        \\
+        \\        vim.wo.wrap = false
+        \\        vim.wo.linebreak = false
+        \\        vim.wo.breakindent = false
+        \\        vim.wo.showbreak = ""
+        \\    end,
+        \\})
+        \\
+    ;
+
+    const updated = try std.mem.concat(alloc, u8, &.{ data, snippet });
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/options.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim terminal wrap settings", .{});
 }
 
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {

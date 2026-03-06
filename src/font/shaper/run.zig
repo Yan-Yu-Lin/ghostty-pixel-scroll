@@ -160,12 +160,17 @@ pub const RunIterator = struct {
 
             // Determine the presentation format for this glyph.
             const presentation: ?font.Presentation = if (cell.hasGrapheme()) p: {
-                // We only check the FIRST codepoint because I believe the
-                // presentation format must be directly adjacent to the codepoint.
                 const cps = graphemes[j];
                 assert(cps.len > 0);
-                if (cps[0] == 0xFE0E) break :p .text;
-                if (cps[0] == 0xFE0F) break :p .emoji;
+
+                // Scan the full grapheme so explicit emoji/text presentation
+                // selectors (VS15/VS16) attached to the base codepoint are
+                // respected for sequences like ❤️, ☀️, or ✨.
+                for (cps) |cp| {
+                    if (cp == 0xFE0E) break :p .text;
+                    if (cp == 0xFE0F) break :p .emoji;
+                }
+
                 break :p null;
             } else emoji: {
                 // If we're not a grapheme, our individual char could be

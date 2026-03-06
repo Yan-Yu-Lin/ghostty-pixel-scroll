@@ -37,7 +37,7 @@ const i18n = @import("../../../os/i18n.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
 const common_refresh_rates_hz = [_]u16{
-    360, 300, 280, 240, 200, 180, 175, 170, 165, 160, 155, 150, 144, 120, 100, 96, 90, 85, 75, 72, 60, 59, 50, 48, 40, 30,
+    360, 300, 280, 270, 266, 265, 260, 250, 240, 200, 180, 175, 170, 165, 160, 155, 150, 144, 120, 100, 96, 90, 85, 75, 72, 60, 59, 50, 48, 40, 30,
 };
 
 pub const Surface = extern struct {
@@ -3259,6 +3259,10 @@ pub const Surface = extern struct {
         return std.time.ns_per_s / @as(u64, common_refresh_rates_hz[idx]);
     }
 
+    fn clampRefreshPeriodNs(period_ns: u64) u64 {
+        return std.math.clamp(period_ns, std.time.ns_per_ms, 33 * std.time.ns_per_ms);
+    }
+
     /// Use the backend-reported monitor refresh rate when available.
     /// This is more stable than inferring from render callback jitter.
     fn updateRefreshRateHintFromMonitor(self: *Self) bool {
@@ -3274,7 +3278,7 @@ pub const Surface = extern struct {
 
         const refresh_mhz_u64: u64 = @intCast(refresh_mhz);
         const period_ns = (std.time.ns_per_s * 1_000) / refresh_mhz_u64;
-        const hint_ns = quantizeRefreshPeriodNs(period_ns);
+        const hint_ns = clampRefreshPeriodNs(period_ns);
 
         // If GTK provides monitor refresh, treat it as authoritative and
         // bypass callback-based inference to avoid startup false positives.
@@ -3334,7 +3338,7 @@ pub const Surface = extern struct {
 
             if (best_hits == 0) return;
 
-            const hint_ns = std.time.ns_per_s / @as(u64, common_refresh_rates_hz[best_bucket]);
+            const hint_ns = clampRefreshPeriodNs(std.time.ns_per_s / @as(u64, common_refresh_rates_hz[best_bucket]));
             priv.frame_timing_last_sent_ns = hint_ns;
             priv.frame_timing_locked = true;
             priv.frame_timing_faster_hits = 0;
@@ -3363,7 +3367,7 @@ pub const Surface = extern struct {
 
         if (priv.frame_timing_faster_hits < 12) return;
 
-        const hint_ns = quantizeRefreshPeriodNs(clamped_dt);
+        const hint_ns = clampRefreshPeriodNs(quantizeRefreshPeriodNs(clamped_dt));
         if (hint_ns >= last_sent) return;
 
         priv.frame_timing_last_sent_ns = hint_ns;

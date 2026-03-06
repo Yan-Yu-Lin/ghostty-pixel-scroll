@@ -49,16 +49,18 @@ map("n", "<leader>fd", builtin.lsp_definitions, { desc = "Find definitions" })
 map("n", "<leader>fi", builtin.lsp_implementations, { desc = "Find implementations" })
 
 map("n", "<Tab>", function()
-	require("nvchad.tabufline").next()
+	require("configs.bufferline").cycle_next()
 end, { desc = "Next buffer" })
 
 map("n", "<C-Tab>", function()
-	require("nvchad.tabufline").prev()
+	require("configs.bufferline").cycle_prev()
 end, { desc = "Previous buffer" })
 
 map("n", "<leader>x", function()
-	require("nvchad.tabufline").close_buffer()
+	require("configs.bufferline").close_current()
 end, { desc = "Close buffer" })
+
+map("n", "<leader>bp", "<cmd>BufferLinePick<CR>", { desc = "Pick buffer" })
 
 map("n", "<C-j>", function()
 	local current_ft = vim.bo.filetype

@@ -113,9 +113,11 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         // Existing managed profile: only backfill missing bundled files so users
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
+        try migrateManagedChadrcBufferline(alloc, target_dir);
         try migrateManagedOptionsShowbreak(alloc, target_dir);
         try migrateManagedOptionsVirtualedit(alloc, target_dir);
         try migrateManagedOptionsTerminalWrap(alloc, target_dir);
+        try migrateManagedMappingsBufferline(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
         try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -123,9 +125,11 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     } else |_| {}
 
     try copyDirRecursive(alloc, source_dir, target_dir);
+    try migrateManagedChadrcBufferline(alloc, target_dir);
     try migrateManagedOptionsShowbreak(alloc, target_dir);
     try migrateManagedOptionsVirtualedit(alloc, target_dir);
     try migrateManagedOptionsTerminalWrap(alloc, target_dir);
+    try migrateManagedMappingsBufferline(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
     try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -201,6 +205,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
                 const is_managed_bootstrap = std.mem.eql(u8, entry.path, "lua/bootstrap.lua");
                 const is_managed_bootstrap_plugin = std.mem.eql(u8, entry.path, "plugin/ghostty_bootstrap.lua");
+                const is_managed_bufferline_config = std.mem.eql(u8, entry.path, "lua/configs/bufferline.lua");
                 if (init_has_managed_extras and is_managed_extras) {
                     continue;
                 }
@@ -212,7 +217,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 // Keep managed defaults current for all users:
                 // refresh ghostty_extras.lua every launch unless we're preserving
                 // legacy profiles that already inlined those extras in init.lua.
-                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin) {
+                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin or is_managed_bufferline_config) {
                     target.deleteFile(entry.path) catch |err| switch (err) {
                         error.FileNotFound => {},
                         else => return err,
@@ -380,6 +385,79 @@ fn migrateManagedOptionsTerminalWrap(alloc: Allocator, target_path: []const u8) 
     });
 
     log.info("migrated managed nvim terminal wrap settings", .{});
+}
+
+fn migrateManagedChadrcBufferline(alloc: Allocator, target_path: []const u8) !void {
+    const chadrc_path = try std.fmt.allocPrint(alloc, "{s}/lua/chadrc.lua", .{target_path});
+    defer alloc.free(chadrc_path);
+
+    var file = std.fs.openFileAbsolute(chadrc_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const old_block = "\ttabufline = {\n\t\tenabled = true,\n\t},\n";
+
+    if (std.mem.indexOf(u8, data, old_block) == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        old_block,
+        "\ttabufline = {\n\t\tenabled = false,\n\t},\n",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/chadrc.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim chadrc tabufline toggle", .{});
+}
+
+fn migrateManagedMappingsBufferline(alloc: Allocator, target_path: []const u8) !void {
+    const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
+    defer alloc.free(mappings_path);
+
+    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const old_block =
+        "map(\"n\", \"<Tab>\", function()\n" ++ "\trequire(\"nvchad.tabufline\").next()\n" ++ "end, { desc = \"Next buffer\" })\n\n" ++ "map(\"n\", \"<C-Tab>\", function()\n" ++ "\trequire(\"nvchad.tabufline\").prev()\n" ++ "end, { desc = \"Previous buffer\" })\n\n" ++ "map(\"n\", \"<leader>x\", function()\n" ++ "\trequire(\"nvchad.tabufline\").close_buffer()\n" ++ "end, { desc = \"Close buffer\" })\n";
+
+    if (std.mem.indexOf(u8, data, old_block) == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        old_block,
+        "map(\"n\", \"<Tab>\", function()\n" ++ "\trequire(\"configs.bufferline\").cycle_next()\n" ++ "end, { desc = \"Next buffer\" })\n\n" ++ "map(\"n\", \"<C-Tab>\", function()\n" ++ "\trequire(\"configs.bufferline\").cycle_prev()\n" ++ "end, { desc = \"Previous buffer\" })\n\n" ++ "map(\"n\", \"<leader>x\", function()\n" ++ "\trequire(\"configs.bufferline\").close_current()\n" ++ "end, { desc = \"Close buffer\" })\n\n" ++ "map(\"n\", \"<leader>bp\", \"<cmd>BufferLinePick<CR>\", { desc = \"Pick buffer\" })\n",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/mappings.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim bufferline mappings", .{});
 }
 
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {

@@ -464,6 +464,63 @@ test getIndex {
     }
 }
 
+test "getIndex prefers color emoji for emoji-default codepoints" {
+    if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const testFont = font.embedded.regular;
+    const testEmoji = font.embedded.emoji;
+    const testEmojiText = font.embedded.emoji_text;
+
+    var lib = try Library.init(alloc);
+    defer lib.deinit();
+
+    var c = Collection.init();
+    c.load_options = .{ .library = lib };
+    defer c.deinit(alloc);
+
+    _ = try c.add(alloc, try .init(
+        lib,
+        testFont,
+        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
+    ), .{
+        .style = .regular,
+        .fallback = false,
+        .size_adjustment = .none,
+    });
+
+    const text_idx = try c.add(alloc, try .init(
+        lib,
+        testEmojiText,
+        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
+    ), .{
+        .style = .regular,
+        .fallback = false,
+        .size_adjustment = .none,
+    });
+
+    const color_idx = try c.add(alloc, try .init(
+        lib,
+        testEmoji,
+        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
+    ), .{
+        .style = .regular,
+        .fallback = true,
+        .size_adjustment = .none,
+    });
+
+    var r: CodepointResolver = .{ .collection = c };
+    defer r.deinit(alloc);
+
+    const idx = r.getIndex(alloc, '🥸', .regular, null).?;
+    try testing.expectEqual(color_idx, idx);
+
+    // The monochrome emoji font is still available for explicit text presentation.
+    const text_presentation_idx = r.getIndex(alloc, '🥸', .regular, .text).?;
+    try testing.expectEqual(text_idx, text_presentation_idx);
+}
+
 test "getIndex disabled font style" {
     const testing = std.testing;
     const alloc = testing.allocator;

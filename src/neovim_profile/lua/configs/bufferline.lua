@@ -179,9 +179,11 @@ local function close_buffer(bufnr)
 end
 
 local function highlights(colors)
+	local header_bg = colors.black2
+
 	return {
-		fill = { bg = colors.darker_black },
-		background = { fg = colors.grey_fg, bg = colors.darker_black },
+		fill = { bg = header_bg },
+		background = { fg = colors.grey_fg, bg = header_bg },
 		buffer = { fg = colors.light_grey, bg = colors.one_bg2 },
 		buffer_visible = { fg = colors.white, bg = colors.one_bg2 },
 		buffer_selected = { fg = colors.white, bg = colors.one_bg, bold = true },
@@ -194,12 +196,12 @@ local function highlights(colors)
 		duplicate = { fg = colors.grey, bg = colors.one_bg2, italic = false },
 		duplicate_visible = { fg = colors.grey_fg, bg = colors.one_bg2, italic = false },
 		duplicate_selected = { fg = colors.grey_fg2, bg = colors.one_bg, italic = false },
-		separator = { fg = colors.one_bg2, bg = colors.darker_black },
-		separator_visible = { fg = colors.one_bg2, bg = colors.darker_black },
-		separator_selected = { fg = colors.one_bg, bg = colors.darker_black },
+		separator = { fg = colors.one_bg2, bg = header_bg },
+		separator_visible = { fg = colors.one_bg2, bg = header_bg },
+		separator_selected = { fg = colors.one_bg, bg = header_bg },
 		indicator_selected = { fg = colors.blue, bg = colors.one_bg },
-		trunc_marker = { fg = colors.blue, bg = colors.darker_black },
-		offset_separator = { fg = colors.line, bg = colors.darker_black },
+		trunc_marker = { fg = colors.blue, bg = header_bg },
+		offset_separator = { fg = colors.line, bg = header_bg },
 	}
 end
 

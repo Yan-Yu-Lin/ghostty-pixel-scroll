@@ -3819,7 +3819,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     const base_offset = cell_h - clamped;
                     // base_offset is in [0, 2*cell_h]. Must stay > 0 so the bg shader
                     // knows pixel scroll is active and applies the extra-row adjustment.
-                    self.uniforms.pixel_scroll_offset_y = @max(base_offset, @as(f32, 1.0));
+                    self.uniforms.pixel_scroll_offset_y = @max(@round(base_offset), @as(f32, 1.0));
 
                     self.uniforms.tui_scroll_offset_y = 0;
                 }

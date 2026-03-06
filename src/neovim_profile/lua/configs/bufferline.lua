@@ -179,29 +179,90 @@ local function close_buffer(bufnr)
 end
 
 local function highlights(colors)
-	local header_bg = colors.black2
-
 	return {
-		fill = { bg = header_bg },
-		background = { fg = colors.grey_fg, bg = header_bg },
-		buffer = { fg = colors.light_grey, bg = colors.one_bg2 },
-		buffer_visible = { fg = colors.white, bg = colors.one_bg2 },
-		buffer_selected = { fg = colors.white, bg = colors.one_bg, bold = true },
-		close_button = { fg = colors.grey_fg, bg = colors.one_bg2 },
-		close_button_visible = { fg = colors.light_grey, bg = colors.one_bg2 },
-		close_button_selected = { fg = colors.red, bg = colors.one_bg },
-		modified = { fg = colors.sun, bg = colors.one_bg2 },
-		modified_visible = { fg = colors.sun, bg = colors.one_bg2 },
-		modified_selected = { fg = colors.sun, bg = colors.one_bg },
-		duplicate = { fg = colors.grey, bg = colors.one_bg2, italic = false },
-		duplicate_visible = { fg = colors.grey_fg, bg = colors.one_bg2, italic = false },
-		duplicate_selected = { fg = colors.grey_fg2, bg = colors.one_bg, italic = false },
-		separator = { fg = colors.one_bg2, bg = header_bg },
-		separator_visible = { fg = colors.one_bg2, bg = header_bg },
-		separator_selected = { fg = colors.one_bg, bg = header_bg },
-		indicator_selected = { fg = colors.blue, bg = colors.one_bg },
-		trunc_marker = { fg = colors.blue, bg = header_bg },
-		offset_separator = { fg = colors.line, bg = header_bg },
+		fill = {
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		background = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		buffer = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		buffer_visible = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		buffer_selected = {
+			fg = { attribute = "fg", highlight = "TabLineSel" },
+			bg = { attribute = "bg", highlight = "TabLineSel" },
+			bold = true,
+		},
+		close_button = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		close_button_visible = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		close_button_selected = {
+			fg = colors.red,
+			bg = { attribute = "bg", highlight = "TabLineSel" },
+		},
+		modified = {
+			fg = colors.sun,
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		modified_visible = {
+			fg = colors.sun,
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		modified_selected = {
+			fg = colors.sun,
+			bg = { attribute = "bg", highlight = "TabLineSel" },
+		},
+		duplicate = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+			italic = false,
+		},
+		duplicate_visible = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+			italic = false,
+		},
+		duplicate_selected = {
+			fg = { attribute = "fg", highlight = "TabLineSel" },
+			bg = { attribute = "bg", highlight = "TabLineSel" },
+			italic = false,
+		},
+		separator = {
+			fg = { attribute = "bg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		separator_visible = {
+			fg = { attribute = "bg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		separator_selected = {
+			fg = { attribute = "bg", highlight = "TabLineSel" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		indicator_selected = {
+			fg = { attribute = "fg", highlight = "TabLineSel" },
+			bg = { attribute = "bg", highlight = "TabLineSel" },
+		},
+		trunc_marker = {
+			fg = { attribute = "fg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
+		offset_separator = {
+			fg = { attribute = "bg", highlight = "TabLine" },
+			bg = { attribute = "bg", highlight = "TabLine" },
+		},
 	}
 end
 

@@ -41,26 +41,35 @@ map("n", "<C-h>", "<C-w>h", { desc = "Focus left window" })
 map("n", "<C-k>", "<C-w>k", { desc = "Focus upper window" })
 map("n", "<C-l>", "<C-w>l", { desc = "Focus right window" })
 
-local builtin = require("telescope.builtin")
-map("n", "<leader>fs", builtin.lsp_document_symbols, { desc = "Search document symbols" })
-map("n", "<leader>fS", builtin.lsp_dynamic_workspace_symbols, { desc = "Search workspace symbols" })
-map("n", "<leader>fr", builtin.lsp_references, { desc = "Find references" })
-map("n", "<leader>fd", builtin.lsp_definitions, { desc = "Find definitions" })
-map("n", "<leader>fi", builtin.lsp_implementations, { desc = "Find implementations" })
+local function telescope_builtin(name)
+	return function()
+		require("telescope.builtin")[name]()
+	end
+end
+
+map("n", "<leader>fs", telescope_builtin("lsp_document_symbols"), { desc = "Search document symbols" })
+map("n", "<leader>fS", telescope_builtin("lsp_dynamic_workspace_symbols"), { desc = "Search workspace symbols" })
+map("n", "<leader>fr", telescope_builtin("lsp_references"), { desc = "Find references" })
+map("n", "<leader>fd", telescope_builtin("lsp_definitions"), { desc = "Find definitions" })
+map("n", "<leader>fi", telescope_builtin("lsp_implementations"), { desc = "Find implementations" })
 
 map("n", "<Tab>", function()
-	require("configs.bufferline").cycle_next()
+	require("nvchad.tabufline").next()
 end, { desc = "Next buffer" })
 
 map("n", "<C-Tab>", function()
-	require("configs.bufferline").cycle_prev()
+	require("nvchad.tabufline").prev()
+end, { desc = "Previous buffer" })
+
+map("n", "<S-Tab>", function()
+	require("nvchad.tabufline").prev()
 end, { desc = "Previous buffer" })
 
 map("n", "<leader>x", function()
-	require("configs.bufferline").close_current()
+	require("nvchad.tabufline").close_buffer()
 end, { desc = "Close buffer" })
 
-map("n", "<leader>bp", "<cmd>BufferLinePick<CR>", { desc = "Pick buffer" })
+map("n", "<leader>bp", "<cmd>Telescope buffers<CR>", { desc = "Pick buffer" })
 
 map("n", "<C-j>", function()
 	local current_ft = vim.bo.filetype

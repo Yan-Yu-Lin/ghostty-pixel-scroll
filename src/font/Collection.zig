@@ -791,12 +791,6 @@ pub const Entry = struct {
         };
     }
 
-    fn deferredLooksLikeEmojiFace(v: DeferredFace) bool {
-        var buf: [256]u8 = undefined;
-        const name = v.name(&buf) catch return false;
-        return std.ascii.indexOfIgnoreCase(name, "emoji") != null;
-    }
-
     /// True if the entry is deferred.
     fn isDeferred(self: Entry) bool {
         return switch (self.face) {
@@ -815,30 +809,18 @@ pub const Entry = struct {
             .default => |p| if (self.fallback)
                 // Fallback fonts require explicit presentation matching.
                 continue :mode .{ .explicit = p }
-            else switch (p) {
-                // Emoji-default codepoints should still prefer emoji glyphs,
-                // even in explicitly chosen fonts. This lets the bundled/system
-                // emoji fallback win over monochrome glyphs from coding fonts,
-                // while leaving text-default symbols alone.
-                .emoji => continue :mode .{ .explicit = .emoji },
-
-                // Text-default codepoints can use any glyph in the explicitly
-                // chosen font.
-                .text => continue :mode .any,
-            },
+            else
+                // Non-fallback fonts do not.
+                continue :mode .any,
 
             .explicit => |p| switch (self.face) {
-                .deferred => |v| switch (p) {
-                    .emoji => deferredLooksLikeEmojiFace(v) and v.hasCodepoint(cp, p),
-                    .text => v.hasCodepoint(cp, p),
-                },
+                .deferred => |v| v.hasCodepoint(cp, p),
 
                 .loaded => |face| explicit: {
                     const index = face.glyphIndex(cp) orelse break :explicit false;
                     break :explicit switch (p) {
                         .text => !face.isColorGlyph(index),
-                        .emoji => face.isColorGlyph(index) or
-                            (self.fallback and face.hasColor()),
+                        .emoji => face.isColorGlyph(index),
                     };
                 },
             },

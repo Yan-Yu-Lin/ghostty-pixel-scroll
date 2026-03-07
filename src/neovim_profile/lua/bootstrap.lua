@@ -21,7 +21,6 @@ local default_mason_packages = {
 	"typescript-language-server",
 	"clangd",
 	"rust-analyzer",
-	"nixd",
 	"stylua",
 	"shfmt",
 	"prettier",

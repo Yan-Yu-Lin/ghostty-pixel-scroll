@@ -118,6 +118,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         try migrateManagedOptionsVirtualedit(alloc, target_dir);
         try migrateManagedOptionsTerminalWrap(alloc, target_dir);
         try migrateManagedMappingsBufferline(alloc, target_dir);
+        try migrateManagedMappingsLazyTelescope(alloc, target_dir);
         try migrateManagedMappingsCleanup(alloc, target_dir);
         try migrateManagedMappingsDiffview(alloc, target_dir);
         try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -130,6 +131,7 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     try migrateManagedOptionsVirtualedit(alloc, target_dir);
     try migrateManagedOptionsTerminalWrap(alloc, target_dir);
     try migrateManagedMappingsBufferline(alloc, target_dir);
+    try migrateManagedMappingsLazyTelescope(alloc, target_dir);
     try migrateManagedMappingsCleanup(alloc, target_dir);
     try migrateManagedMappingsDiffview(alloc, target_dir);
     try migrateManagedFilePermissionsWritable(alloc, target_dir);
@@ -193,6 +195,11 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
         init_has_managed_extras = false;
     }
 
+    target.deleteFile("lua/configs/bufferline.lua") catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+
     var walker = try source.walk(alloc);
     defer walker.deinit();
 
@@ -205,7 +212,6 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
                 const is_managed_bootstrap = std.mem.eql(u8, entry.path, "lua/bootstrap.lua");
                 const is_managed_bootstrap_plugin = std.mem.eql(u8, entry.path, "plugin/ghostty_bootstrap.lua");
-                const is_managed_bufferline_config = std.mem.eql(u8, entry.path, "lua/configs/bufferline.lua");
                 if (init_has_managed_extras and is_managed_extras) {
                     continue;
                 }
@@ -217,7 +223,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 // Keep managed defaults current for all users:
                 // refresh ghostty_extras.lua every launch unless we're preserving
                 // legacy profiles that already inlined those extras in init.lua.
-                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin or is_managed_bufferline_config) {
+                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin) {
                     target.deleteFile(entry.path) catch |err| switch (err) {
                         error.FileNotFound => {},
                         else => return err,
@@ -416,29 +422,30 @@ fn migrateManagedChadrcBufferline(alloc: Allocator, target_path: []const u8) !vo
         updated = replaced;
     }
 
-    const base46_block =
-        "M.base46 = {\n" ++
-        "\ttheme = \"catppuccin\",\n" ++
-        "\ttransparency = false,\n" ++
-        "}\n";
-    const base46_with_integrations =
-        "M.base46 = {\n" ++
-        "\ttheme = \"catppuccin\",\n" ++
-        "\ttransparency = false,\n" ++
-        "\tintegrations = { \"bufferline\" },\n" ++
-        "}\n";
-    if (std.mem.indexOf(u8, updated, "integrations =") == null) {
-        if (std.mem.indexOf(u8, updated, base46_block)) |_| {
-            const replaced = try std.mem.replaceOwned(
-                u8,
-                alloc,
-                updated,
-                base46_block,
-                base46_with_integrations,
-            );
-            alloc.free(updated);
-            updated = replaced;
-        }
+    const bufferline_integration = "\tintegrations = { \"bufferline\" },\n";
+    if (std.mem.indexOf(u8, updated, bufferline_integration)) |_| {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            bufferline_integration,
+            "",
+        );
+        alloc.free(updated);
+        updated = replaced;
+    }
+
+    const nixd_pkg = "\t\t\"nixd\",\n";
+    if (std.mem.indexOf(u8, updated, nixd_pkg)) |_| {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            nixd_pkg,
+            "",
+        );
+        alloc.free(updated);
+        updated = replaced;
     }
 
     var target_dir = try std.fs.openDirAbsolute(target_path, .{});
@@ -486,6 +493,57 @@ fn migrateManagedMappingsBufferline(alloc: Allocator, target_path: []const u8) !
     });
 
     log.info("migrated managed nvim bufferline mappings", .{});
+}
+
+fn migrateManagedMappingsLazyTelescope(alloc: Allocator, target_path: []const u8) !void {
+    const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
+    defer alloc.free(mappings_path);
+
+    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer file.close();
+
+    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    defer alloc.free(data);
+
+    const old_block =
+        "local builtin = require(\"telescope.builtin\")\n" ++
+        "map(\"n\", \"<leader>fs\", builtin.lsp_document_symbols, { desc = \"Search document symbols\" })\n" ++
+        "map(\"n\", \"<leader>fS\", builtin.lsp_dynamic_workspace_symbols, { desc = \"Search workspace symbols\" })\n" ++
+        "map(\"n\", \"<leader>fr\", builtin.lsp_references, { desc = \"Find references\" })\n" ++
+        "map(\"n\", \"<leader>fd\", builtin.lsp_definitions, { desc = \"Find definitions\" })\n" ++
+        "map(\"n\", \"<leader>fi\", builtin.lsp_implementations, { desc = \"Find implementations\" })\n";
+
+    if (std.mem.indexOf(u8, data, old_block) == null) return;
+
+    const updated = try std.mem.replaceOwned(
+        u8,
+        alloc,
+        data,
+        old_block,
+        "local function telescope_builtin(name)\n" ++
+            "\treturn function()\n" ++
+            "\t\trequire(\"telescope.builtin\")[name]()\n" ++
+            "\tend\n" ++
+            "end\n\n" ++
+            "map(\"n\", \"<leader>fs\", telescope_builtin(\"lsp_document_symbols\"), { desc = \"Search document symbols\" })\n" ++
+            "map(\"n\", \"<leader>fS\", telescope_builtin(\"lsp_dynamic_workspace_symbols\"), { desc = \"Search workspace symbols\" })\n" ++
+            "map(\"n\", \"<leader>fr\", telescope_builtin(\"lsp_references\"), { desc = \"Find references\" })\n" ++
+            "map(\"n\", \"<leader>fd\", telescope_builtin(\"lsp_definitions\"), { desc = \"Find definitions\" })\n" ++
+            "map(\"n\", \"<leader>fi\", telescope_builtin(\"lsp_implementations\"), { desc = \"Find implementations\" })\n",
+    );
+    defer alloc.free(updated);
+
+    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
+    defer target_dir.close();
+    try target_dir.writeFile(.{
+        .sub_path = "lua/mappings.lua",
+        .data = updated,
+    });
+
+    log.info("migrated managed nvim telescope mappings to lazy requires", .{});
 }
 
 fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !void {

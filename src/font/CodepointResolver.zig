@@ -15,7 +15,6 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const uucode = @import("uucode");
 const font = @import("main.zig");
-const unicode = @import("../unicode/main.zig");
 const Atlas = font.Atlas;
 const CodepointMap = font.CodepointMap;
 const Collection = font.Collection;
@@ -30,17 +29,6 @@ const SpriteFace = font.SpriteFace;
 const Style = font.Style;
 
 const log = std.log.scoped(.font_codepoint_resolver);
-
-fn defaultPresentation(cp: u32) Presentation {
-    const cp_u21 = std.math.cast(u21, cp) orelse return .text;
-    const props = unicode.table.get(cp_u21);
-
-    if (uucode.get(.is_emoji_presentation, cp_u21) or props.emoji_vs_base or props.grapheme_break == .extended_pictographic) {
-        return .emoji;
-    }
-
-    return .text;
-}
 
 /// The underlying collection of fonts. This will be modified as
 /// new fonts are found via the resolver. The resolver takes ownership
@@ -162,7 +150,10 @@ pub fn getIndex(
     // we'll do this multiple times if we recurse, but this is a cached function
     // call higher up (GroupCache) so this should be rare.
     const p_mode: Collection.PresentationMode = if (p) |v| .{ .explicit = v } else .{
-        .default = defaultPresentation(cp),
+        .default = if (uucode.get(.is_emoji_presentation, @intCast(cp)))
+            .emoji
+        else
+            .text,
     };
 
     // If we can find the exact value, then return that.
@@ -471,168 +462,6 @@ test getIndex {
     {
         try testing.expect(r.getIndex(alloc, 0x1FB00, .regular, null) == null);
     }
-}
-
-test "getIndex prefers emoji fallback for emoji-presentation codepoints" {
-    if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
-
-    const testing = std.testing;
-    const alloc = testing.allocator;
-    const testFont = font.embedded.regular;
-    const testEmoji = font.embedded.emoji;
-    const testEmojiText = font.embedded.emoji_text;
-
-    var lib = try Library.init(alloc);
-    defer lib.deinit();
-
-    var c = Collection.init();
-    c.load_options = .{ .library = lib };
-
-    _ = try c.add(alloc, try .init(
-        lib,
-        testFont,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    const text_idx = try c.add(alloc, try .init(
-        lib,
-        testEmojiText,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    const color_idx = try c.add(alloc, try .init(
-        lib,
-        testEmoji,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = true,
-        .size_adjustment = .none,
-    });
-
-    var r: CodepointResolver = .{ .collection = c };
-    defer r.deinit(alloc);
-
-    const idx = r.getIndex(alloc, '🥸', .regular, null).?;
-    try testing.expectEqual(color_idx, idx);
-
-    const text_presentation_idx = r.getIndex(alloc, '🥸', .regular, .text).?;
-    try testing.expectEqual(text_idx, text_presentation_idx);
-}
-
-test "getIndex prefers emoji fallback for emoji variation bases" {
-    if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
-
-    const testing = std.testing;
-    const alloc = testing.allocator;
-    const testFont = font.embedded.regular;
-    const testEmoji = font.embedded.emoji;
-    const testEmojiText = font.embedded.emoji_text;
-
-    var lib = try Library.init(alloc);
-    defer lib.deinit();
-
-    var c = Collection.init();
-    c.load_options = .{ .library = lib };
-
-    _ = try c.add(alloc, try .init(
-        lib,
-        testFont,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    const text_idx = try c.add(alloc, try .init(
-        lib,
-        testEmojiText,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    const color_idx = try c.add(alloc, try .init(
-        lib,
-        testEmoji,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = true,
-        .size_adjustment = .none,
-    });
-
-    var r: CodepointResolver = .{ .collection = c };
-    defer r.deinit(alloc);
-
-    const idx = r.getIndex(alloc, 0x2764, .regular, null).?;
-    try testing.expectEqual(color_idx, idx);
-
-    const text_presentation_idx = r.getIndex(alloc, 0x2764, .regular, .text).?;
-    try testing.expectEqual(text_idx, text_presentation_idx);
-}
-
-test "getIndex prefers emoji fallback for regional indicators" {
-    if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
-
-    const testing = std.testing;
-    const alloc = testing.allocator;
-    const testFont = font.embedded.regular;
-    const testEmoji = font.embedded.emoji;
-    const testEmojiText = font.embedded.emoji_text;
-
-    var lib = try Library.init(alloc);
-    defer lib.deinit();
-
-    var c = Collection.init();
-    c.load_options = .{ .library = lib };
-
-    _ = try c.add(alloc, try .init(
-        lib,
-        testFont,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    _ = try c.add(alloc, try .init(
-        lib,
-        testEmojiText,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = false,
-        .size_adjustment = .none,
-    });
-
-    const color_idx = try c.add(alloc, try .init(
-        lib,
-        testEmoji,
-        .{ .size = .{ .points = 12, .xdpi = 96, .ydpi = 96 } },
-    ), .{
-        .style = .regular,
-        .fallback = true,
-        .size_adjustment = .none,
-    });
-
-    var r: CodepointResolver = .{ .collection = c };
-    defer r.deinit(alloc);
-
-    const idx = r.getIndex(alloc, 0x1F1FA, .regular, null).?;
-    try testing.expectEqual(color_idx, idx);
 }
 
 test "getIndex disabled font style" {

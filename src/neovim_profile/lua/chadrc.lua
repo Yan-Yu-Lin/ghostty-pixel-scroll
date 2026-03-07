@@ -4,7 +4,6 @@ local M = {}
 M.base46 = {
 	theme = "catppuccin",
 	transparency = false,
-	integrations = { "bufferline" },
 }
 
 M.ui = {
@@ -22,7 +21,10 @@ M.ui = {
 	},
 
 	tabufline = {
-		enabled = false,
+		enabled = true,
+		lazyload = false,
+		bufwidth = 16,
+		order = { "treeOffset", "buffers" },
 	},
 }
 
@@ -46,7 +48,6 @@ M.mason = {
 		"typescript-language-server",
 		"clangd",
 		"rust-analyzer",
-		"nixd",
 		"stylua",
 		"shfmt",
 		"prettier",

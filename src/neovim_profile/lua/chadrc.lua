@@ -25,6 +25,14 @@ M.ui = {
 		lazyload = false,
 		bufwidth = 16,
 		order = { "treeOffset", "buffers" },
+		modules = {
+			treeOffset = function()
+				return require("configs.tabufline").modules.treeOffset()
+			end,
+			buffers = function()
+				return require("configs.tabufline").modules.buffers()
+			end,
+		},
 	},
 }
 

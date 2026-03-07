@@ -54,19 +54,19 @@ map("n", "<leader>fd", telescope_builtin("lsp_definitions"), { desc = "Find defi
 map("n", "<leader>fi", telescope_builtin("lsp_implementations"), { desc = "Find implementations" })
 
 map("n", "<Tab>", function()
-	require("nvchad.tabufline").next()
+	require("configs.tabufline").next()
 end, { desc = "Next buffer" })
 
 map("n", "<C-Tab>", function()
-	require("nvchad.tabufline").prev()
+	require("configs.tabufline").prev()
 end, { desc = "Previous buffer" })
 
 map("n", "<S-Tab>", function()
-	require("nvchad.tabufline").prev()
+	require("configs.tabufline").prev()
 end, { desc = "Previous buffer" })
 
 map("n", "<leader>x", function()
-	require("nvchad.tabufline").close_buffer()
+	require("configs.tabufline").close_buffer()
 end, { desc = "Close buffer" })
 
 map("n", "<leader>bp", "<cmd>Telescope buffers<CR>", { desc = "Pick buffer" })

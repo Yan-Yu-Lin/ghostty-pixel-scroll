@@ -173,12 +173,33 @@ end
 
 local function apply_highlights()
 	local normal = get_hl(0, { name = "Normal", link = false })
+	local normal_nc = get_hl(0, { name = "NormalNC", link = false })
+	local end_of_buffer = get_hl(0, { name = "EndOfBuffer", link = false })
+	local sign_column = get_hl(0, { name = "SignColumn", link = false })
+	local fold_column = get_hl(0, { name = "FoldColumn", link = false })
+	local line_nr = get_hl(0, { name = "LineNr", link = false })
+	local win_separator = get_hl(0, { name = "WinSeparator", link = false })
 	local tree = get_hl(0, { name = "NvimTreeNormal", link = false })
+	local tree_nc = get_hl(0, { name = "NvimTreeNormalNC", link = false })
+	local tree_end = get_hl(0, { name = "NvimTreeEndOfBuffer", link = false })
+	local tree_separator = get_hl(0, { name = "NvimTreeWinSeparator", link = false })
 	local base_bg = normal.bg or get_hl(0, { name = "TbFill", link = false }).bg
 	local tree_bg = tree.bg or base_bg
 	local tree_fg = tree.fg or normal.fg
+	local separator_fg = tree_separator.fg or win_separator.fg or base_bg
 
+	set_hl(0, "NormalNC", { fg = normal_nc.fg or normal.fg, bg = base_bg })
+	set_hl(0, "EndOfBuffer", { fg = end_of_buffer.fg or base_bg, bg = base_bg })
+	set_hl(0, "SignColumn", { fg = sign_column.fg or line_nr.fg or normal.fg, bg = base_bg })
+	set_hl(0, "FoldColumn", { fg = fold_column.fg or line_nr.fg or normal.fg, bg = base_bg })
+	set_hl(0, "LineNr", { fg = line_nr.fg or normal.fg, bg = base_bg })
+	set_hl(0, "WinSeparator", { fg = win_separator.fg or base_bg, bg = base_bg })
+	set_hl(0, "VertSplit", { fg = win_separator.fg or base_bg, bg = base_bg })
+	set_hl(0, "NvimTreeNormalNC", { fg = tree_nc.fg or tree_fg, bg = tree_bg })
+	set_hl(0, "NvimTreeEndOfBuffer", { fg = tree_end.fg or tree_bg, bg = tree_bg })
+	set_hl(0, "NvimTreeWinSeparator", { fg = separator_fg, bg = base_bg })
 	set_hl(0, "GhosttyTabTreeOffset", { fg = tree_fg, bg = tree_bg })
+	set_hl(0, "GhosttyTabTreeSeparator", { fg = separator_fg, bg = base_bg })
 	set_hl(0, "GhosttyTabTreeGap", { fg = base_bg, bg = base_bg })
 	set_hl(0, "GhosttyTabTreeGapEdge", { fg = base_bg, bg = tree_bg })
 	pcall(vim.cmd, "redrawtabline")
@@ -192,7 +213,7 @@ M.modules.treeOffset = function()
 		return ""
 	end
 
-	return "%#GhosttyTabTreeOffset#" .. strep(" ", width) .. "%#GhosttyTabTreeGapEdge#│%#GhosttyTabTreeGap# "
+	return "%#GhosttyTabTreeOffset#" .. strep(" ", width) .. "%#GhosttyTabTreeSeparator#│"
 end
 
 M.modules.buffers = function()

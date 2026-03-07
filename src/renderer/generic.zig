@@ -2544,6 +2544,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             defer self.alloc.free(occlusion_map);
             @memset(occlusion_map, 0);
 
+            var separator_cols = try self.alloc.alloc(bool, cols);
+            defer self.alloc.free(separator_cols);
+            @memset(separator_cols, false);
+
             // Claim cells highest-z first. Margin cells are skipped (they only carry bg).
             // Message windows only claim cells with actual content.
             var i: usize = windows.len;
@@ -2636,6 +2640,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
+                            if (window.window_type == .root and isVerticalSeparatorCell(cell.getText())) {
+                                separator_cols[@as(usize, sx)] = true;
+                            }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
@@ -2694,6 +2701,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
 
                             const cell_text = c.getText();
+                            if (window.window_type == .root and isVerticalSeparatorCell(cell_text)) {
+                                separator_cols[@as(usize, sx)] = true;
+                            }
 
                             // Background — skip the extra animation row (would corrupt statusline).
                             if (!is_extra) {
@@ -2764,6 +2774,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 const t = fg;
                                 fg = bg;
                                 bg = t;
+                            }
+                            if (window.window_type == .root and isVerticalSeparatorCell(cell.getText())) {
+                                separator_cols[@as(usize, sx)] = true;
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
@@ -2849,6 +2862,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 bg_cell.window_id = bar_sentinel;
                             }
                         }
+                    }
+                }
+
+                var row_idx: u32 = split_top_row;
+                while (row_idx < rows) : (row_idx += 1) {
+                    for (0..cols) |x| {
+                        if (!separator_cols[x]) continue;
+                        self.cells.bgCell(row_idx, x).* = .{
+                            .color = .{ bg_r, bg_g, bg_b, 255 },
+                            .offset_y_fixed = 0,
+                            .window_id = 0,
+                        };
                     }
                 }
             }
@@ -3064,6 +3089,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (list_idx < self.cells.fg_rows.lists.len) {
                 self.cells.fg_rows.lists[list_idx].append(self.alloc, ghost_cell) catch return;
             }
+        }
+
+        fn isVerticalSeparatorCell(text: []const u8) bool {
+            return std.mem.eql(u8, text, "\xe2\x94\x82") or
+                std.mem.eql(u8, text, "\xe2\x94\x83") or
+                std.mem.eql(u8, text, "\xe2\x95\x91") or
+                std.mem.eql(u8, text, "\xe2\x96\x95");
         }
 
         /// Render a floating name label above a peer's ghost cursor.

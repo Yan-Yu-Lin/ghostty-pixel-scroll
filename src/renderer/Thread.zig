@@ -16,6 +16,25 @@ const App = @import("../App.zig");
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.renderer_thread);
 
+fn cadenceLoggingEnabled() bool {
+    return std.posix.getenv("GHOSTTY_ANIMATION_LOG") != null;
+}
+
+fn resetDrawDeadline(self: *Thread) void {
+    self.draw_deadline_origin = null;
+    self.draw_deadline_offset_ns = 0;
+    self.draw_interval_remainder_ns = 0;
+}
+
+fn advanceDrawDeadline(self: *Thread) void {
+    if (self.draw_deadline_origin == null) return;
+    if (self.draw_deadline_offset_ns == 0) {
+        self.draw_deadline_offset_ns = self.draw_interval_ns;
+        return;
+    }
+    self.draw_deadline_offset_ns += self.draw_interval_ns;
+}
+
 /// Default draw interval in nanoseconds when we can't determine the monitor
 /// refresh rate. 6_060_606ns ≈ 165 Hz.
 const DEFAULT_DRAW_INTERVAL_NS: u64 = 6_060_606;
@@ -73,6 +92,11 @@ draw_interval_ns: u64 = DEFAULT_DRAW_INTERVAL_NS,
 /// integer-millisecond timer API. This lets us approximate rates like 165 Hz
 /// (6.06ms) by alternating timer delays (6ms/7ms) instead of hard-clamping.
 draw_interval_remainder_ns: u64 = 0,
+
+/// Absolute draw deadline tracking so frame pacing stays tied to the target
+/// cadence instead of adding render work on top of every frame.
+draw_deadline_origin: ?std.time.Instant = null,
+draw_deadline_offset_ns: u64 = 0,
 
 /// Set on wakeup when GUI backends may have new events waiting.
 /// The draw timer consumes this to force one full updateFrame pass
@@ -317,6 +341,7 @@ fn syncDrawTimer(self: *Thread) void {
         (self.renderer.nvim_gui != null or self.renderer.panel != null))
     {
         self.draw_active = false;
+        self.resetDrawDeadline();
         return;
     }
 
@@ -344,6 +369,7 @@ fn syncDrawTimer(self: *Thread) void {
 
         // We're skipping the draw timer. Stop it on the next iteration.
         self.draw_active = false;
+        self.resetDrawDeadline();
         return;
     }
 
@@ -579,20 +605,70 @@ fn updateDrawInterval(self: *Thread) void {
     next_ns = std.math.clamp(next_ns, min_ns, max_ns);
     if (next_ns != self.draw_interval_ns) {
         self.draw_interval_ns = next_ns;
-        self.draw_interval_remainder_ns = 0;
+        self.resetDrawDeadline();
+        const message = "draw interval updated: {}ns ({d:.1} Hz)";
+        const args = .{
+            next_ns,
+            @as(f64, @floatFromInt(std.time.ns_per_s)) / @as(f64, @floatFromInt(next_ns)),
+        };
+        if (cadenceLoggingEnabled()) {
+            log.info(message, args);
+        } else {
+            log.debug(message, args);
+        }
     }
+}
+
+fn refreshDrawDeadline(self: *Thread, now: std.time.Instant) u64 {
+    const origin = self.draw_deadline_origin orelse blk: {
+        self.draw_deadline_origin = now;
+        self.draw_deadline_offset_ns = self.draw_interval_ns;
+        break :blk now;
+    };
+
+    if (now.order(origin) == .lt) {
+        self.draw_deadline_origin = now;
+        self.draw_deadline_offset_ns = self.draw_interval_ns;
+        return self.draw_interval_ns;
+    }
+
+    const elapsed_ns = now.since(origin);
+    if (elapsed_ns >= self.draw_deadline_offset_ns) {
+        const behind_ns = elapsed_ns - self.draw_deadline_offset_ns;
+        const skipped = behind_ns / self.draw_interval_ns;
+        self.draw_deadline_offset_ns += self.draw_interval_ns * (skipped + 1);
+    }
+
+    return self.draw_deadline_offset_ns - elapsed_ns;
 }
 
 /// Convert a nanosecond draw interval to a one-shot timer delay in whole
 /// milliseconds while preserving fractional precision over time.
 fn nextDrawDelayMs(self: *Thread) u64 {
-    const total_ns = self.draw_interval_ns + self.draw_interval_remainder_ns;
-    var delay_ms = total_ns / std.time.ns_per_ms;
-    self.draw_interval_remainder_ns = total_ns % std.time.ns_per_ms;
+    const now = std.time.Instant.now() catch {
+        return @max(1, @min(self.draw_interval_ns / std.time.ns_per_ms, 33));
+    };
+    const remaining_ns = self.refreshDrawDeadline(now);
+    var delay_ms = remaining_ns / std.time.ns_per_ms;
 
     // xev timer delay is integer ms; never schedule zero.
     if (delay_ms == 0) delay_ms = 1;
     return @min(delay_ms, 33);
+}
+
+fn waitForDrawDeadline(self: *Thread) void {
+    const origin = self.draw_deadline_origin orelse return;
+    const now = std.time.Instant.now() catch return;
+    if (now.order(origin) == .lt) {
+        self.draw_deadline_origin = now;
+        self.draw_deadline_offset_ns = self.draw_interval_ns;
+        return;
+    }
+
+    const elapsed_ns = now.since(origin);
+    if (elapsed_ns >= self.draw_deadline_offset_ns) return;
+
+    std.Thread.sleep(self.draw_deadline_offset_ns - elapsed_ns);
 }
 
 /// Trigger a draw. This will not update frame data or anything, it will
@@ -706,6 +782,8 @@ fn drawCallback(
         return .disarm;
     }
 
+    t.waitForDrawDeadline();
+
     if (t.renderer.nvim_gui != null or t.renderer.panel != null) {
         // For Neovim GUI mode, we need a full updateFrame + draw when
         // there are content-affecting animations (cursor slide, scroll,
@@ -723,6 +801,8 @@ fn drawCallback(
         // Terminal mode: just draw
         t.drawFrame(false);
     }
+
+    t.advanceDrawDeadline();
 
     // Re-evaluate whether we still need the draw timer.
     // syncDrawTimer checks hasAnimations() and will disarm the timer

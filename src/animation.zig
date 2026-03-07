@@ -591,3 +591,22 @@ test "scroll animation momentum" {
     try std.testing.expect(result.animating);
     try std.testing.expect(scroll.velocity < 1000); // Should have decayed
 }
+
+test "spring is approximately frame-rate independent" {
+    const Sim = struct {
+        fn run(dt: f32) f32 {
+            var spring = Spring{};
+            spring.position = 1.0;
+            var elapsed: f32 = 0;
+            while (elapsed < 0.08) : (elapsed += dt) {
+                const step = @min(dt, 0.08 - elapsed);
+                _ = spring.update(step, 0.15, 1.0);
+            }
+            return spring.position;
+        }
+    };
+
+    const pos_60 = Sim.run(1.0 / 60.0);
+    const pos_240 = Sim.run(1.0 / 240.0);
+    try std.testing.expectApproxEqAbs(pos_60, pos_240, 0.02);
+}

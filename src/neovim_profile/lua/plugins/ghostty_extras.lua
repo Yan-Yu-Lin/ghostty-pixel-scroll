@@ -4,6 +4,20 @@ end)
 
 return {
 	{
+		"nvim-treesitter/nvim-treesitter",
+		init = function()
+			require("configs.treesitter").ensure_runtimepath()
+		end,
+		opts = function(_, opts)
+			return require("configs.treesitter").opts(opts)
+		end,
+		config = function(_, opts)
+			require("configs.treesitter").ensure_runtimepath()
+			require("nvim-treesitter.configs").setup(opts)
+		end,
+	},
+
+	{
 		"folke/noice.nvim",
 		lazy = false,
 		priority = 1000,

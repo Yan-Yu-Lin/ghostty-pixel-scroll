@@ -1,4 +1,10 @@
 pcall(function()
+	local treesitter = require("configs.treesitter")
+	treesitter.ensure_runtimepath()
+	treesitter.ensure_tool_path()
+end)
+
+pcall(function()
 	require("bootstrap").setup()
 end)
 

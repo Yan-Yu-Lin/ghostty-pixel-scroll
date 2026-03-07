@@ -273,6 +273,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// comes from CVDisplayLink; elsewhere we fall back to a default.
         display_refresh_ns: u64 = 6_060_606, // ~165 Hz default
 
+        /// Debug cadence sampling. These are used only for throttled debug logs
+        /// so we can verify the renderer is pacing itself near the monitor's
+        /// actual refresh rate while animations are active.
+        cadence_sample_start: ?std.time.Instant = null,
+        cadence_last_present: ?std.time.Instant = null,
+        cadence_frame_count: u32 = 0,
+        cadence_anim_frame_count: u32 = 0,
+        cadence_total_dt_ns: u64 = 0,
+        cadence_max_dt_ns: u64 = 0,
+        cadence_substep_samples: u32 = 0,
+        cadence_total_substeps: u64 = 0,
+        cadence_max_substeps: u32 = 0,
+        cadence_pending_substeps: u32 = 0,
+
         /// Accumulated scroll offset in pixels (for sub-line input)
         scroll_pixel_offset: f32 = 0,
 
@@ -1840,6 +1854,104 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// 1. Events arrive → handle_draw_commands() → flush()
         /// 2. prepare_and_animate() → animate()
         /// 3. redraw_requested() → render()
+        fn advanceSonicboom(self: *Self, dt: f32) void {
+            if (!self.sonicboom_active) return;
+
+            self.sonicboom_time += dt;
+            const t = self.sonicboom_time / self.sonicboom_duration;
+            if (t >= 1.0) {
+                self.sonicboom_active = false;
+                self.sonicboom_time = 0;
+                self.uniforms.sonicboom_color = .{ 0, 0, 0, 0 };
+                return;
+            }
+
+            const ease_t = 1.0 - std.math.pow(f32, 1.0 - t, 3.0);
+            self.uniforms.sonicboom_center = .{ self.sonicboom_center_x, self.sonicboom_center_y };
+            self.uniforms.sonicboom_radius = ease_t * self.sonicboom_max_radius;
+            self.uniforms.sonicboom_thickness = 12.0 * (1.0 - t);
+            const alpha: u8 = @intFromFloat(@max(0, std.math.pow(f32, 1.0 - t, 2.0) * 220.0));
+            self.uniforms.sonicboom_color = .{ 255, 255, 255, alpha };
+        }
+
+        fn cadenceLoggingEnabled() bool {
+            return std.posix.getenv("GHOSTTY_ANIMATION_LOG") != null;
+        }
+
+        fn recordCadenceSample(self: *Self, now: std.time.Instant, animating: bool, substeps: u32) void {
+            const start = self.cadence_sample_start orelse blk: {
+                self.cadence_sample_start = now;
+                self.cadence_last_present = now;
+                break :blk now;
+            };
+
+            const last = self.cadence_last_present orelse now;
+            self.cadence_last_present = now;
+            if (now.order(last) == .lt) {
+                self.cadence_sample_start = now;
+                self.cadence_frame_count = 0;
+                self.cadence_anim_frame_count = 0;
+                self.cadence_total_dt_ns = 0;
+                self.cadence_max_dt_ns = 0;
+                self.cadence_substep_samples = 0;
+                self.cadence_total_substeps = 0;
+                self.cadence_max_substeps = 0;
+                return;
+            }
+
+            const dt_ns = now.since(last);
+            self.cadence_frame_count += 1;
+            if (animating) self.cadence_anim_frame_count += 1;
+            self.cadence_total_dt_ns += dt_ns;
+            self.cadence_max_dt_ns = @max(self.cadence_max_dt_ns, dt_ns);
+            if (substeps > 0) {
+                self.cadence_substep_samples += 1;
+                self.cadence_total_substeps += substeps;
+                self.cadence_max_substeps = @max(self.cadence_max_substeps, substeps);
+            }
+
+            const elapsed_ns = now.since(start);
+            if (elapsed_ns < std.time.ns_per_s or self.cadence_frame_count == 0) return;
+
+            const frames_f: f64 = @floatFromInt(self.cadence_frame_count);
+            const elapsed_f: f64 = @floatFromInt(elapsed_ns);
+            const avg_dt_ns: f64 = @as(f64, @floatFromInt(self.cadence_total_dt_ns)) / frames_f;
+            const target_hz: f64 = @as(f64, @floatFromInt(std.time.ns_per_s)) / @as(f64, @floatFromInt(self.display_refresh_ns));
+            const actual_hz: f64 = frames_f * @as(f64, @floatFromInt(std.time.ns_per_s)) / elapsed_f;
+            const avg_substeps: f64 = if (self.cadence_substep_samples > 0)
+                @as(f64, @floatFromInt(self.cadence_total_substeps)) / @as(f64, @floatFromInt(self.cadence_substep_samples))
+            else
+                0;
+
+            const message = "cadence mode={s} target={d:.1}Hz actual={d:.1}Hz avg={d:.2}ms max={d:.2}ms anim_frames={}/{} avg_substeps={d:.2} max_substeps={} vsync={}";
+            const args = .{
+                if (self.nvim_gui != null) "nvim-gui" else "terminal",
+                target_hz,
+                actual_hz,
+                avg_dt_ns / @as(f64, @floatFromInt(std.time.ns_per_ms)),
+                @as(f64, @floatFromInt(self.cadence_max_dt_ns)) / @as(f64, @floatFromInt(std.time.ns_per_ms)),
+                self.cadence_anim_frame_count,
+                self.cadence_frame_count,
+                avg_substeps,
+                self.cadence_max_substeps,
+                self.hasVsync(),
+            };
+            if (cadenceLoggingEnabled()) {
+                log.info(message, args);
+            } else {
+                log.debug(message, args);
+            }
+
+            self.cadence_sample_start = now;
+            self.cadence_frame_count = 0;
+            self.cadence_anim_frame_count = 0;
+            self.cadence_total_dt_ns = 0;
+            self.cadence_max_dt_ns = 0;
+            self.cadence_substep_samples = 0;
+            self.cadence_total_substeps = 0;
+            self.cadence_max_substeps = 0;
+        }
+
         fn updateFrameNeovim(self: *Self, nvim: *neovim_gui.NeovimGui) !void {
             // --- Neovide-style frame timing with catchup ---
             //
@@ -1903,9 +2015,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Step 2: Animate with subdivision approach
             // Subdivide large dt values to prevent animation jumps from inconsistent frame timing
-            const MAX_ANIMATION_DT: f32 = 1.0 / 120.0; // 8.33ms max per animation step
+            const MAX_ANIMATION_DT: f32 = 1.0 / 240.0; // 4.17ms max per animation step for high-Hz cursor detail
             const num_steps: u32 = @max(1, @as(u32, @intFromFloat(@ceil(frame_dt / MAX_ANIMATION_DT))));
             const dt: f32 = frame_dt / @as(f32, @floatFromInt(num_steps));
+            self.cadence_pending_substeps = num_steps;
 
             // Run animation steps
             // Neovim GUI always uses scroll animation (Neovide default 0.3s).
@@ -2013,6 +2126,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         break;
                     }
                 }
+
+                self.advanceSonicboom(dt);
             }
 
             // Also check if collab peers have updated (triggers ghost cursor rendering)
@@ -3875,6 +3990,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.last_frame_time = null;
             }
 
+            var cadence_substeps: u32 = if (self.nvim_gui != null and any_anim)
+                self.cadence_pending_substeps
+            else
+                0;
+
             // Sub-step animations to keep spring simulation stable at any frame rate.
             // For Neovim GUI mode, cursor/scroll were already updated in updateFrameNeovim --
             // we only handle sonicboom here.  For terminal mode, all animations are updated.
@@ -3883,6 +4003,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 const num_steps: u32 = @max(1, @as(u32, @intFromFloat(@ceil(raw_dt / MAX_ANIMATION_DT))));
                 const dt: f32 = raw_dt / @as(f32, @floatFromInt(num_steps));
                 const is_terminal = self.nvim_gui == null;
+                if (is_terminal) cadence_substeps = num_steps;
 
                 var step_i: u32 = 0;
                 while (step_i < num_steps) : (step_i += 1) {
@@ -3916,25 +4037,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         }
                     }
 
-                    // Sonicboom VFX (both modes)
-                    if (self.sonicboom_active) {
-                        self.sonicboom_time += dt;
-                        const t = self.sonicboom_time / self.sonicboom_duration;
-                        if (t >= 1.0) {
-                            self.sonicboom_active = false;
-                            self.sonicboom_time = 0;
-                            self.uniforms.sonicboom_color = .{ 0, 0, 0, 0 };
-                        } else {
-                            const ease_t = 1.0 - std.math.pow(f32, 1.0 - t, 3.0);
-                            self.uniforms.sonicboom_center = .{ self.sonicboom_center_x, self.sonicboom_center_y };
-                            self.uniforms.sonicboom_radius = ease_t * self.sonicboom_max_radius;
-                            self.uniforms.sonicboom_thickness = 12.0 * (1.0 - t);
-                            const alpha: u8 = @intFromFloat(@max(0, std.math.pow(f32, 1.0 - t, 2.0) * 220.0));
-                            self.uniforms.sonicboom_color = .{ 255, 255, 255, alpha };
-                        }
+                    // Sonicboom VFX is stepped in nvim-gui's virtual clock and
+                    // here in terminal mode so it tracks the actual frame cadence.
+                    if (is_terminal and self.sonicboom_active) {
+                        self.advanceSonicboom(dt);
                     }
                 }
             }
+
+            self.recordCadenceSample(now, any_anim, cadence_substeps);
+            self.cadence_pending_substeps = 0;
 
             // Smooth blink opacity transition with independent timing.
             // Uses its own last_blink_time so the lerp works correctly even
@@ -3954,7 +4066,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         self.cursor_blink_opacity = self.cursor_blink_target;
                         self.cursor_blink_animating = false;
                     } else {
-                        self.cursor_blink_opacity += diff * blink_speed * blink_dt;
+                        const blink_alpha = 1.0 - @exp(-blink_speed * blink_dt);
+                        self.cursor_blink_opacity += diff * blink_alpha;
                         self.cursor_blink_opacity = std.math.clamp(self.cursor_blink_opacity, 0.0, 1.0);
                         self.cursor_blink_animating = true;
                     }

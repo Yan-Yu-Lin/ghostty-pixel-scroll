@@ -33,6 +33,37 @@ local default_mason_packages = {
 	"alejandra",
 }
 
+local default_treesitter_languages = {
+	"bash",
+	"c",
+	"cpp",
+	"css",
+	"go",
+	"html",
+	"javascript",
+	"json",
+	"jsonc",
+	"lua",
+	"luadoc",
+	"markdown",
+	"markdown_inline",
+	"nix",
+	"printf",
+	"python",
+	"query",
+	"regex",
+	"rust",
+	"toml",
+	"tsx",
+	"typescript",
+	"vim",
+	"vimdoc",
+	"yaml",
+	"zig",
+}
+
+local treesitter_cli_version = { 0, 26, 1 }
+
 local function path_exists(path)
 	return uv.fs_stat(path) ~= nil
 end
@@ -198,6 +229,121 @@ local function get_mason_packages()
 	return merged
 end
 
+local function ensure_treesitter_runtimepath()
+	local dir = vim.fn.stdpath("data") .. "/site"
+	local rtp = vim.opt.runtimepath:get()
+	if not vim.tbl_contains(rtp, dir) then
+		vim.opt.runtimepath:prepend(dir)
+	end
+	return dir
+end
+
+local function treesitter_tools_root()
+	return vim.fn.stdpath("data") .. "/tools/tree-sitter"
+end
+
+local function ensure_treesitter_tool_path()
+	local ok, treesitter = pcall(require, "configs.treesitter")
+	if ok and type(treesitter.ensure_tool_path) == "function" then
+		treesitter.ensure_tool_path()
+	end
+end
+
+local function treesitter_cli_ok()
+	ensure_treesitter_tool_path()
+	local ok, treesitter = pcall(require, "configs.treesitter")
+	if ok and type(treesitter.cli_ok) == "function" then
+		return treesitter.cli_ok()
+	end
+
+	if vim.fn.executable("tree-sitter") ~= 1 then
+		return false
+	end
+
+	local output = vim.trim(vim.fn.system({ "tree-sitter", "--version" }))
+	if vim.v.shell_error ~= 0 then
+		return false
+	end
+
+	local version = vim.version.parse(output)
+	return vim.version.ge(version, treesitter_cli_version)
+end
+
+local function ensure_treesitter_cli()
+	if treesitter_cli_ok() then
+		return true
+	end
+
+	local root = treesitter_tools_root()
+	vim.fn.mkdir(root, "p")
+
+	local installers = {}
+	if vim.fn.executable("npm") == 1 then
+		table.insert(installers, {
+			label = "npm",
+			cmd = {
+				"npm",
+				"install",
+				"--no-save",
+				"--prefix",
+				root,
+				"tree-sitter-cli@0.26.1",
+			},
+		})
+	end
+	if vim.fn.executable("cargo") == 1 then
+		table.insert(installers, {
+			label = "cargo",
+			cmd = {
+				"cargo",
+				"install",
+				"tree-sitter-cli",
+				"--root",
+				root,
+				"--version",
+				"0.26.1",
+				"--locked",
+			},
+		})
+	end
+
+	for _, installer in ipairs(installers) do
+		vim.fn.system(installer.cmd)
+		ensure_treesitter_tool_path()
+		if vim.v.shell_error == 0 and treesitter_cli_ok() then
+			return true
+		end
+	end
+
+	return treesitter_cli_ok()
+end
+
+local function get_treesitter_languages()
+	local merged = {}
+	local seen = {}
+
+	local function add_many(pkgs)
+		if type(pkgs) ~= "table" then
+			return
+		end
+		for _, pkg in ipairs(pkgs) do
+			if type(pkg) == "string" and pkg ~= "" and not seen[pkg] then
+				seen[pkg] = true
+				table.insert(merged, pkg)
+			end
+		end
+	end
+
+	add_many(default_treesitter_languages)
+
+	local ok, chadrc = pcall(require, "chadrc")
+	if ok and type(chadrc) == "table" and type(chadrc.treesitter) == "table" then
+		add_many(chadrc.treesitter.ensure_installed)
+	end
+
+	return merged
+end
+
 local function is_install_noise(msg)
 	local text = type(msg) == "string" and msg or tostring(msg or "")
 	local patterns = {
@@ -353,12 +499,15 @@ local function run_bootstrap()
 		lazy.load({
 			plugins = {
 				"mason.nvim",
+				"nvim-treesitter",
 			},
 		})
 	end
 
 	local ran_any = false
 	local ran_mason = false
+	local ran_treesitter = false
+	local ran_treesitter_cli = false
 
 	local mason_packages = get_mason_packages()
 	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
@@ -369,7 +518,22 @@ local function run_bootstrap()
 		end
 	end
 
-	if ran_any and ran_mason then
+	if ensure_treesitter_cli() then
+		ran_any = true
+		ran_treesitter_cli = true
+	end
+
+	ensure_treesitter_runtimepath()
+	local treesitter_languages = get_treesitter_languages()
+	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
+		ran_any = true
+		local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
+		if ok then
+			ran_treesitter = true
+		end
+	end
+
+	if ran_any and (ran_mason or ran_treesitter or ran_treesitter_cli) then
 		write_done_marker()
 		vim.defer_fn(function()
 			close_startup_overlays()

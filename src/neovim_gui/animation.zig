@@ -76,3 +76,22 @@ test "CriticallyDampedSpring no oscillation" {
 
     try std.testing.expect(!crossed_zero);
 }
+
+test "CriticallyDampedSpring is approximately frame-rate independent" {
+    const Sim = struct {
+        fn run(dt: f32) f32 {
+            var spring = CriticallyDampedSpring{};
+            spring.position = -1.0;
+            var elapsed: f32 = 0;
+            while (elapsed < 0.08) : (elapsed += dt) {
+                const step = @min(dt, 0.08 - elapsed);
+                _ = spring.update(step, 0.3, 0.0);
+            }
+            return spring.position;
+        }
+    };
+
+    const pos_60 = Sim.run(1.0 / 60.0);
+    const pos_240 = Sim.run(1.0 / 240.0);
+    try std.testing.expectApproxEqAbs(pos_60, pos_240, 0.02);
+}

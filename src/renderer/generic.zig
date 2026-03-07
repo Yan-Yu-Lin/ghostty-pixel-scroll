@@ -2361,6 +2361,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Grid size comes from the first root window (grid 1 equivalent).
             // The adapter guarantees roots come first.
             const grid1 = windows[0];
+            const root_window_id = grid1.id;
             const rows: u16 = @intCast(grid1.render_height);
             const cols: u16 = @intCast(grid1.render_width);
             if (rows == 0 or cols == 0) return;
@@ -2554,9 +2555,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             defer self.alloc.free(separator_cols);
             @memset(separator_cols, false);
 
-            var separator_fgs = try self.alloc.alloc(u32, cols);
+            const separator_fgs = try self.alloc.alloc(u32, cols);
             defer self.alloc.free(separator_fgs);
-            @memset(separator_fgs, blendRgb(state.config.default_fg, default_bg, 0.18));
+            @memset(separator_fgs, blendRgb(state.config.default_fg, default_bg, 0.14));
 
             // Claim cells highest-z first. Margin cells are skipped (they only carry bg).
             // Message windows only claim cells with actual content.
@@ -2652,7 +2653,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
                             if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText())) {
                                 separator_cols[@as(usize, sx)] = true;
-                                separator_fgs[@as(usize, sx)] = fg;
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
@@ -2715,7 +2715,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             const cell_text = c.getText();
                             if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell_text)) {
                                 separator_cols[@as(usize, sx)] = true;
-                                separator_fgs[@as(usize, sx)] = fg;
                             }
 
                             // Background — skip the extra animation row (would corrupt statusline).
@@ -2791,7 +2790,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
                             if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText())) {
                                 separator_cols[@as(usize, sx)] = true;
-                                separator_fgs[@as(usize, sx)] = fg;
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
@@ -2885,6 +2883,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 while (row_idx < separator_draw_end) : (row_idx += 1) {
                     for (0..cols) |x| {
                         if (!separator_cols[x]) continue;
+                        const owner = occlusion_map[row_idx * cols + x];
+                        if (owner != 0 and owner != root_window_id) continue;
                         self.cells.bgCell(row_idx, x).* = .{
                             .color = .{ bg_r, bg_g, bg_b, 255 },
                             .offset_y_fixed = 0,

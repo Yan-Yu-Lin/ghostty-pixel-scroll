@@ -27,6 +27,16 @@ local function tabufline_opts()
 	return require("nvconfig").ui.tabufline
 end
 
+local function blend(fg, bg, alpha)
+	local function channel(shift)
+		local a = bit.rshift(fg, shift) % 256
+		local b = bit.rshift(bg, shift) % 256
+		return math.floor(a * alpha + b * (1 - alpha) + 0.5)
+	end
+
+	return channel(16) * 0x10000 + channel(8) * 0x100 + channel(0)
+end
+
 local function filename(str)
 	return str:match("([^/\\]+)[/\\]*$")
 end
@@ -186,7 +196,7 @@ local function apply_highlights()
 	local base_bg = normal.bg or get_hl(0, { name = "TbFill", link = false }).bg
 	local tree_bg = tree.bg or base_bg
 	local tree_fg = tree.fg or normal.fg
-	local separator_fg = tree_separator.fg or win_separator.fg or base_bg
+	local separator_fg = blend(normal.fg or tree_fg or 0xFFFFFF, base_bg, 0.14)
 
 	set_hl(0, "NormalNC", { fg = normal_nc.fg or normal.fg, bg = base_bg })
 	set_hl(0, "EndOfBuffer", { fg = end_of_buffer.fg or base_bg, bg = base_bg })
@@ -284,6 +294,7 @@ function M.setup()
 	end
 
 	vim.g.ghostty_tabufline_setup = 1
+	vim.opt.showtabline = 2
 	local group = api.nvim_create_augroup("ghostty_tabufline_focus", { clear = true })
 
 	api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "TermOpen", "WinEnter" }, {

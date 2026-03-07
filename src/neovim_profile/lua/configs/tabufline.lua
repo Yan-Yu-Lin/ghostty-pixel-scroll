@@ -67,6 +67,17 @@ local function listed_buffers()
 			table.insert(bufs, bufnr)
 		end
 	end
+
+	if #bufs == 0 then
+		for _, bufnr in ipairs(api.nvim_list_bufs()) do
+			if is_real_buffer(bufnr) then
+				table.insert(bufs, bufnr)
+			end
+		end
+		if #bufs > 0 then
+			vim.t.bufs = bufs
+		end
+	end
 	return bufs
 end
 
@@ -168,6 +179,16 @@ local function style_buf(nr, i, w, active_buf, bufs)
 	return txt(name .. close_btn, "BufO" .. (is_curbuf and "n" or "ff"))
 end
 
+local function style_empty_buf(w)
+	local icon_hl = new_hl("DevIconDefault", "BufOn")
+	local name = txt(" No Name ", "BufOn")
+	local icon = icon_hl .. " 󰈚 "
+	local total_len = 10
+	local pad = math.floor((w - total_len) / 2)
+	pad = pad <= 0 and 1 or pad
+	return txt(strep(" ", pad - 1) .. icon .. name .. strep(" ", pad - 1), "BufOn")
+end
+
 local function available_space()
 	local opts = tabufline_opts()
 	local pieces = {}
@@ -230,7 +251,7 @@ M.modules.buffers = function()
 	local opts = tabufline_opts()
 	local bufs = listed_buffers()
 	if #bufs == 0 then
-		return txt("%=", "Fill")
+		return style_empty_buf(opts.bufwidth) .. txt("%=", "Fill")
 	end
 
 	local active_buf = displayed_buffer()

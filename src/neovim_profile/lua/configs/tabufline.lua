@@ -60,17 +60,34 @@ local function is_real_buffer(bufnr)
 	return buftype ~= "nofile" and buftype ~= "prompt" and buftype ~= "quickfix"
 end
 
+local function is_tab_buffer(bufnr)
+	if not is_real_buffer(bufnr) then
+		return false
+	end
+
+	if api.nvim_buf_get_name(bufnr) ~= "" then
+		return true
+	end
+
+	local buftype = get_opt("buftype", { buf = bufnr })
+	if buftype == "terminal" then
+		return true
+	end
+
+	return get_opt("modified", { buf = bufnr })
+end
+
 local function listed_buffers()
 	local bufs = {}
 	for _, bufnr in ipairs(vim.t.bufs or {}) do
-		if type(bufnr) == "number" and api.nvim_buf_is_valid(bufnr) and get_opt("buflisted", { buf = bufnr }) then
+		if type(bufnr) == "number" and api.nvim_buf_is_valid(bufnr) and get_opt("buflisted", { buf = bufnr }) and is_tab_buffer(bufnr) then
 			table.insert(bufs, bufnr)
 		end
 	end
 
 	if #bufs == 0 then
 		for _, bufnr in ipairs(api.nvim_list_bufs()) do
-			if is_real_buffer(bufnr) then
+			if is_tab_buffer(bufnr) then
 				table.insert(bufs, bufnr)
 			end
 		end
@@ -81,19 +98,23 @@ local function listed_buffers()
 	return bufs
 end
 
+local function refresh_tabline_visibility()
+	vim.opt.showtabline = #listed_buffers() > 0 and 2 or 0
+end
+
 local function displayed_buffer()
 	local current = api.nvim_get_current_buf()
-	if is_real_buffer(current) then
+	if is_tab_buffer(current) then
 		state.active_buf = current
 		return current
 	end
 
-	if is_real_buffer(state.active_buf) then
+	if is_tab_buffer(state.active_buf) then
 		return state.active_buf
 	end
 
 	for _, bufnr in ipairs(listed_buffers()) do
-		if is_real_buffer(bufnr) then
+		if is_tab_buffer(bufnr) then
 			state.active_buf = bufnr
 			return bufnr
 		end
@@ -105,9 +126,10 @@ end
 
 local function track_active_buffer()
 	local current = api.nvim_get_current_buf()
-	if is_real_buffer(current) then
+	if is_tab_buffer(current) then
 		state.active_buf = current
 	end
+	refresh_tabline_visibility()
 	pcall(vim.cmd, "redrawtabline")
 end
 
@@ -179,16 +201,6 @@ local function style_buf(nr, i, w, active_buf, bufs)
 	return txt(name .. close_btn, "BufO" .. (is_curbuf and "n" or "ff"))
 end
 
-local function style_empty_buf(w)
-	local icon_hl = new_hl("DevIconDefault", "BufOn")
-	local name = txt(" No Name ", "BufOn")
-	local icon = icon_hl .. " 󰈚 "
-	local total_len = 10
-	local pad = math.floor((w - total_len) / 2)
-	pad = pad <= 0 and 1 or pad
-	return txt(strep(" ", pad - 1) .. icon .. name .. strep(" ", pad - 1), "BufOn")
-end
-
 local function available_space()
 	local opts = tabufline_opts()
 	local pieces = {}
@@ -244,15 +256,15 @@ M.modules.treeOffset = function()
 		return ""
 	end
 
-	return "%#GhosttyTabTreeOffset#" .. strep(" ", width) .. "%#GhosttyTabTreeSeparator#│"
+	return "%#GhosttyTabTreeOffset#" .. strep(" ", width) .. "%#GhosttyTabTreeSeparator#│%#GhosttyTabTreeGap# "
 end
 
 M.modules.buffers = function()
-	local opts = tabufline_opts()
 	local bufs = listed_buffers()
 	if #bufs == 0 then
-		return style_empty_buf(opts.bufwidth) .. txt("%=", "Fill")
+		return txt("%=", "Fill")
 	end
+	local opts = tabufline_opts()
 
 	local active_buf = displayed_buffer()
 	local buffers = {}
@@ -315,10 +327,9 @@ function M.setup()
 	end
 
 	vim.g.ghostty_tabufline_setup = 1
-	vim.opt.showtabline = 2
 	local group = api.nvim_create_augroup("ghostty_tabufline_focus", { clear = true })
 
-	api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "TermOpen", "WinEnter" }, {
+	api.nvim_create_autocmd({ "BufAdd", "BufEnter", "BufFilePost", "BufModifiedSet", "BufWinEnter", "TermOpen", "WinEnter" }, {
 		group = group,
 		callback = track_active_buffer,
 	})

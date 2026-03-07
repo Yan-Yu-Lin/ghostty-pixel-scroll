@@ -84,9 +84,11 @@ pub const CellStyle = struct {
 /// GridCell, but everything is pre-resolved so the renderer never touches
 /// backend internals.
 pub const GuiCell = struct {
-    text: [16]u8 = .{0} ** 16,
+    text: [64]u8 = .{0} ** 64,
     text_len: u8 = 0,
     style: CellStyle,
+    double_width: bool = false,
+    is_continuation: bool = false,
 
     pub fn getText(self: *const GuiCell) []const u8 {
         return self.text[0..self.text_len];

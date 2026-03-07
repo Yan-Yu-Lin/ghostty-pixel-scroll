@@ -34,7 +34,7 @@ pub const ScrollCommand = struct {
 /// A cell in the grid - stores text and highlight info
 pub const GridCell = struct {
     /// UTF-8 text content (can be empty, single char, or multi-byte grapheme)
-    text: [16]u8 = .{0} ** 16,
+    text: [64]u8 = .{0} ** 64,
     text_len: u8 = 0,
     /// Highlight group ID
     hl_id: u64 = 0,
@@ -44,9 +44,15 @@ pub const GridCell = struct {
     is_continuation: bool = false,
 
     pub fn setText(self: *GridCell, str: []const u8) void {
-        const len = @min(str.len, 16);
+        const len = @min(str.len, self.text.len);
         @memcpy(self.text[0..len], str[0..len]);
         self.text_len = @intCast(len);
+    }
+
+    pub fn setContent(self: *GridCell, str: []const u8, double_width: bool, is_continuation: bool) void {
+        self.setText(str);
+        self.double_width = double_width;
+        self.is_continuation = is_continuation;
     }
 
     pub fn getText(self: *const GridCell) []const u8 {
@@ -552,15 +558,35 @@ pub const RenderedWindow = struct {
     }
 
     /// Set a cell in actual_lines (used by grid_line events)
-    pub fn setCell(self: *Self, row: u32, col: u32, text: []const u8, hl_id: u64) void {
+    pub fn setCell(
+        self: *Self,
+        row: u32,
+        col: u32,
+        text: []const u8,
+        hl_id: u64,
+        double_width: bool,
+        is_continuation: bool,
+    ) void {
         if (self.actual_lines == null) return;
         if (row >= self.grid_height or col >= self.grid_width) return;
 
         const line = self.actual_lines.?.getConst(@intCast(row)) orelse return;
         if (col >= line.cells.len) return;
 
-        line.cells[col].setText(text);
+        if (line.cells[col].is_continuation and col > 0) {
+            line.cells[col - 1].double_width = false;
+        }
+        if (line.cells[col].double_width and col + 1 < line.cells.len and line.cells[col + 1].is_continuation) {
+            line.cells[col + 1].is_continuation = false;
+        }
+
+        line.cells[col].setContent(text, double_width, is_continuation);
         line.cells[col].hl_id = hl_id;
+
+        if (is_continuation and col > 0) {
+            line.cells[col - 1].double_width = true;
+        }
+
         self.dirty = true;
         // Content received - safe to render this window now
         self.needs_content = false;
@@ -767,7 +793,6 @@ pub const RenderedWindow = struct {
                 }
             }
         }
-
     }
 
     /// Get the width to use for rendering.

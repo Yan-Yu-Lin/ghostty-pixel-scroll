@@ -400,18 +400,46 @@ fn migrateManagedChadrcBufferline(alloc: Allocator, target_path: []const u8) !vo
     const data = try file.readToEndAlloc(alloc, 1024 * 1024);
     defer alloc.free(data);
 
-    const old_block = "\ttabufline = {\n\t\tenabled = true,\n\t},\n";
-
-    if (std.mem.indexOf(u8, data, old_block) == null) return;
-
-    const updated = try std.mem.replaceOwned(
-        u8,
-        alloc,
-        data,
-        old_block,
-        "\ttabufline = {\n\t\tenabled = false,\n\t},\n",
-    );
+    var updated = try alloc.dupe(u8, data);
     defer alloc.free(updated);
+
+    const old_block = "\ttabufline = {\n\t\tenabled = true,\n\t},\n";
+    if (std.mem.indexOf(u8, updated, old_block)) |_| {
+        const replaced = try std.mem.replaceOwned(
+            u8,
+            alloc,
+            updated,
+            old_block,
+            "\ttabufline = {\n\t\tenabled = false,\n\t},\n",
+        );
+        alloc.free(updated);
+        updated = replaced;
+    }
+
+    const base46_block =
+        "M.base46 = {\n" ++
+        "\ttheme = \"catppuccin\",\n" ++
+        "\ttransparency = false,\n" ++
+        "}\n";
+    const base46_with_integrations =
+        "M.base46 = {\n" ++
+        "\ttheme = \"catppuccin\",\n" ++
+        "\ttransparency = false,\n" ++
+        "\tintegrations = { \"bufferline\" },\n" ++
+        "}\n";
+    if (std.mem.indexOf(u8, updated, "integrations =") == null) {
+        if (std.mem.indexOf(u8, updated, base46_block)) |_| {
+            const replaced = try std.mem.replaceOwned(
+                u8,
+                alloc,
+                updated,
+                base46_block,
+                base46_with_integrations,
+            );
+            alloc.free(updated);
+            updated = replaced;
+        }
+    }
 
     var target_dir = try std.fs.openDirAbsolute(target_path, .{});
     defer target_dir.close();

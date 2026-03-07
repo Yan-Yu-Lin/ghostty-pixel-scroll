@@ -35,10 +35,7 @@ fn defaultPresentation(cp: u32) Presentation {
     const cp_u21 = std.math.cast(u21, cp) orelse return .text;
     const props = unicode.table.get(cp_u21);
 
-    if (uucode.get(.is_emoji_presentation, cp_u21) or
-        props.emoji_vs_base or
-        props.grapheme_break == .extended_pictographic)
-    {
+    if (uucode.get(.is_emoji_presentation, cp_u21) or props.emoji_vs_base or props.grapheme_break == .extended_pictographic) {
         return .emoji;
     }
 
@@ -476,7 +473,7 @@ test getIndex {
     }
 }
 
-test "getIndex prefers color emoji for emoji-default codepoints" {
+test "getIndex prefers emoji fallback for emoji-presentation codepoints" {
     if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
 
     const testing = std.testing;
@@ -528,12 +525,11 @@ test "getIndex prefers color emoji for emoji-default codepoints" {
     const idx = r.getIndex(alloc, '🥸', .regular, null).?;
     try testing.expectEqual(color_idx, idx);
 
-    // The monochrome emoji font is still available for explicit text presentation.
     const text_presentation_idx = r.getIndex(alloc, '🥸', .regular, .text).?;
     try testing.expectEqual(text_idx, text_presentation_idx);
 }
 
-test "getIndex treats emoji variation bases as emoji by default" {
+test "getIndex prefers emoji fallback for emoji variation bases" {
     if (font.options.backend != .fontconfig_freetype) return error.SkipZigTest;
 
     const testing = std.testing;

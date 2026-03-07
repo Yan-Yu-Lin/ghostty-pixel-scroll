@@ -738,12 +738,16 @@ pub const LoadOptions = struct {
 /// fallback and non-fallback (or "explicit") faces: the handling
 /// of emoji presentation.
 ///
-/// For explicit faces, text-default codepoints are allowed to use any
-/// matching glyph in the chosen font. However, emoji-default codepoints
-/// still honor emoji presentation so that a user-selected monospace font
-/// with monochrome symbol coverage doesn't block the color emoji fallback.
-/// Explicit presentation requests (via either VS15/V16) are always honored.
-/// Fallback fonts always prefer exact presentation matching.
+/// For explicit faces, when an explicit emoji presentation is
+/// not requested, we will use any glyph for that codepoint found
+/// even if the font presentation does not match the UCD
+/// (Unicode Character Database) value. When an explicit presentation
+/// is requested (via either VS15/V16), that is always honored.
+/// The reason we do this is because we assume that if a user
+/// explicitly chosen a font face (hence it is "explicit" and
+/// not "fallback"), they want to use any glyphs possible within that
+/// font face. Fallback fonts on the other hand are picked as a
+/// last resort, so we should prefer exactness if possible.
 pub const Entry = struct {
     const AnyFace = union(enum) {
         /// Not yet loaded.
@@ -787,6 +791,12 @@ pub const Entry = struct {
         };
     }
 
+    fn deferredLooksLikeEmojiFace(v: DeferredFace) bool {
+        var buf: [256]u8 = undefined;
+        const name = v.name(&buf) catch return false;
+        return std.ascii.indexOfIgnoreCase(name, "emoji") != null;
+    }
+
     /// True if the entry is deferred.
     fn isDeferred(self: Entry) bool {
         return switch (self.face) {
@@ -808,8 +818,8 @@ pub const Entry = struct {
             else switch (p) {
                 // Emoji-default codepoints should still prefer emoji glyphs,
                 // even in explicitly chosen fonts. This lets the bundled/system
-                // emoji fallback win over monochrome symbol glyphs from patched
-                // coding fonts.
+                // emoji fallback win over monochrome glyphs from coding fonts,
+                // while leaving text-default symbols alone.
                 .emoji => continue :mode .{ .explicit = .emoji },
 
                 // Text-default codepoints can use any glyph in the explicitly
@@ -818,7 +828,10 @@ pub const Entry = struct {
             },
 
             .explicit => |p| switch (self.face) {
-                .deferred => |v| v.hasCodepoint(cp, p),
+                .deferred => |v| switch (p) {
+                    .emoji => deferredLooksLikeEmojiFace(v) and v.hasCodepoint(cp, p),
+                    .text => v.hasCodepoint(cp, p),
+                },
 
                 .loaded => |face| explicit: {
                     const index = face.glyphIndex(cp) orelse break :explicit false;

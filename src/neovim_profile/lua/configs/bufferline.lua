@@ -178,92 +178,53 @@ local function close_buffer(bufnr)
 	end
 end
 
-local function highlights(colors)
-	return {
-		fill = {
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		background = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		buffer = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		buffer_visible = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		buffer_selected = {
-			fg = { attribute = "fg", highlight = "TabLineSel" },
-			bg = { attribute = "bg", highlight = "TabLineSel" },
-			bold = true,
-		},
-		close_button = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		close_button_visible = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		close_button_selected = {
-			fg = colors.red,
-			bg = { attribute = "bg", highlight = "TabLineSel" },
-		},
-		modified = {
-			fg = colors.sun,
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		modified_visible = {
-			fg = colors.sun,
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		modified_selected = {
-			fg = colors.sun,
-			bg = { attribute = "bg", highlight = "TabLineSel" },
-		},
-		duplicate = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-			italic = false,
-		},
-		duplicate_visible = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-			italic = false,
-		},
-		duplicate_selected = {
-			fg = { attribute = "fg", highlight = "TabLineSel" },
-			bg = { attribute = "bg", highlight = "TabLineSel" },
-			italic = false,
-		},
-		separator = {
-			fg = { attribute = "bg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		separator_visible = {
-			fg = { attribute = "bg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		separator_selected = {
-			fg = { attribute = "bg", highlight = "TabLineSel" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		indicator_selected = {
-			fg = { attribute = "fg", highlight = "TabLineSel" },
-			bg = { attribute = "bg", highlight = "TabLineSel" },
-		},
-		trunc_marker = {
-			fg = { attribute = "fg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-		offset_separator = {
-			fg = { attribute = "bg", highlight = "TabLine" },
-			bg = { attribute = "bg", highlight = "TabLine" },
-		},
-	}
+local function hl(name)
+	local ok, value = pcall(vim.api.nvim_get_hl, 0, { name = name, link = false })
+	if not ok then
+		return {}
+	end
+
+	return value or {}
+end
+
+local function sync_bufferline_backgrounds()
+	local normal = hl("Normal")
+	local selected = hl("TabLineSel")
+	local string = hl("String")
+
+	local normal_bg = normal.bg
+	local normal_fg = normal.fg
+	local selected_bg = selected.bg or normal_bg
+	local selected_fg = selected.fg or normal_fg
+	local accent_fg = string.fg or selected_fg or normal_fg
+
+	local function set(name, opts)
+		pcall(vim.api.nvim_set_hl, 0, name, opts)
+	end
+
+	set("BufferLineFill", { bg = normal_bg })
+	set("BufferLineBackground", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineBuffer", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineBufferVisible", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineCloseButton", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineCloseButtonVisible", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineModified", { fg = accent_fg, bg = normal_bg })
+	set("BufferLineModifiedVisible", { fg = accent_fg, bg = normal_bg })
+	set("BufferLineDuplicate", { fg = normal_fg, bg = normal_bg, italic = false })
+	set("BufferLineDuplicateVisible", { fg = normal_fg, bg = normal_bg, italic = false })
+	set("BufferLineTruncMarker", { fg = normal_fg, bg = normal_bg })
+	set("BufferLineOffsetSeparator", { fg = normal_bg, bg = normal_bg })
+	set("BufferLineSeparator", { fg = normal_bg, bg = normal_bg })
+	set("BufferLineSeparatorVisible", { fg = normal_bg, bg = normal_bg })
+
+	if selected_bg ~= nil then
+		set("BufferLineBufferSelected", { fg = selected_fg, bg = selected_bg, bold = true })
+		set("BufferLineCloseButtonSelected", { fg = selected_fg, bg = selected_bg })
+		set("BufferLineModifiedSelected", { fg = accent_fg, bg = selected_bg })
+		set("BufferLineDuplicateSelected", { fg = selected_fg, bg = selected_bg, italic = false })
+		set("BufferLineIndicatorSelected", { fg = selected_fg, bg = selected_bg })
+		set("BufferLineSeparatorSelected", { fg = selected_bg, bg = normal_bg })
+	end
 end
 
 local function apply()
@@ -272,18 +233,16 @@ local function apply()
 		return
 	end
 
-	local colors = require("base46").get_theme_tb("base_30")
-
 	vim.opt.showtabline = 2
 
 	bufferline.setup({
-		highlights = highlights(colors),
 		options = {
 			always_show_bufferline = true,
 			auto_toggle_bufferline = false,
 			close_command = close_buffer,
 			right_mouse_command = close_buffer,
 			diagnostics = "nvim_lsp",
+			themable = true,
 			diagnostics_indicator = diagnostics_indicator,
 			hover = {
 				delay = 120,
@@ -328,6 +287,12 @@ local function apply()
 			custom_filter = custom_filter,
 		},
 	})
+
+	pcall(function()
+		require("nvchad.base46").load({ "bufferline" })
+	end)
+
+	sync_bufferline_backgrounds()
 end
 
 function M.setup()

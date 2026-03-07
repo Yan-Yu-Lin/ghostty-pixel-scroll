@@ -163,9 +163,8 @@ pub const RunIterator = struct {
                 const cps = graphemes[j];
                 assert(cps.len > 0);
 
-                // Scan the full grapheme so explicit emoji/text presentation
-                // selectors (VS15/VS16) attached to the base codepoint are
-                // respected for sequences like ❤️, ☀️, or ✨.
+                // Scan the whole grapheme tail so VS15/VS16 selectors attached
+                // to the base codepoint are honored for sequences like ❤️ or ☀️.
                 for (cps) |cp| {
                     if (cp == 0xFE0E) break :p .text;
                     if (cp == 0xFE0F) break :p .emoji;

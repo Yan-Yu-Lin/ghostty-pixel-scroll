@@ -2641,9 +2641,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (!skip_text) {
+                            if (!skip_text and !cell.is_continuation) {
                                 const text = cell.getText();
-                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                if (text.len > 0) {
+                                    self.addGuiGlyph(sx, sy, text, fg, cell.style, if (cell.double_width) 2 else 1, 0) catch {};
+                                }
                             }
                         } else {
                             // Null cell: write default bg with window_id for SDF rounding.
@@ -2722,10 +2724,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             // scroll_offset != 0. At offset 0 the shader clipping
                             // gate (pixel_offset_y != 0) won't fire, so the glyph
                             // would render on top of the statusline.
-                            if (!skip_text and (owns_cell or (is_extra and scroll_offset != 0))) {
+                            if (!skip_text and !c.is_continuation and (owns_cell or (is_extra and scroll_offset != 0))) {
                                 if (cell_text.len > 0) {
                                     const eff_offset: f32 = if (is_scrolling) scroll_offset else 0;
-                                    self.addGuiGlyph(sx, sy, cell_text, fg, c.style, eff_offset) catch {};
+                                    self.addGuiGlyph(sx, sy, cell_text, fg, c.style, if (c.double_width) 2 else 1, eff_offset) catch {};
                                 }
                             }
                         } else if (!is_extra) {
@@ -2768,9 +2770,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (owns_cell and !skip_text) {
+                            if (owns_cell and !skip_text and !cell.is_continuation) {
                                 const text = cell.getText();
-                                if (text.len > 0) self.addGuiGlyph(sx, sy, text, fg, cell.style, 0) catch {};
+                                if (text.len > 0) {
+                                    self.addGuiGlyph(sx, sy, text, fg, cell.style, if (cell.double_width) 2 else 1, 0) catch {};
+                                }
                             }
                         } else {
                             self.cells.bgCell(sy, sx).* = .{
@@ -3112,12 +3116,35 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             text: []const u8,
             fg_color: u32,
             style: gui_protocol.CellStyle,
+            cell_width: u2,
             pixel_offset_y: f32,
         ) !void {
             if (text.len == 0) return;
 
             const seq_len = std.unicode.utf8ByteSequenceLength(text[0]) catch return;
             if (text.len < seq_len) return;
+
+            var cps_buf: [16]u21 = undefined;
+            var cps_len: usize = 0;
+            var decode_off: usize = 0;
+            while (decode_off < text.len) {
+                const next_len = std.unicode.utf8ByteSequenceLength(text[decode_off]) catch return;
+                if (decode_off + next_len > text.len) return;
+                const cp = std.unicode.utf8Decode(text[decode_off .. decode_off + next_len]) catch return;
+                if (cps_len >= cps_buf.len) return;
+                cps_buf[cps_len] = @intCast(cp);
+                cps_len += 1;
+                decode_off += next_len;
+            }
+            if (cps_len == 0) return;
+            const cps = cps_buf[0..cps_len];
+
+            if (cell_width == 2 or cps.len > 1) {
+                if (try self.addGuiShapedGlyph(x, y, cps, fg_color, style, cell_width, pixel_offset_y)) {
+                    return;
+                }
+            }
+
             const codepoint = std.unicode.utf8Decode(text[0..seq_len]) catch return;
             if (codepoint == ' ' or codepoint == 0) return;
 
@@ -3144,13 +3171,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             else
                 .regular;
 
-            const cell_width: u2 = 1; // TODO: wide char detection
             const render_result = self.font_grid.renderCodepoint(
                 self.alloc,
                 codepoint,
                 font_style,
                 explicit_presentation,
-                .{ .cell_width = cell_width, .grid_metrics = self.grid_metrics },
+                .{
+                    .cell_width = if (cell_width == 2 and isPrivateUseCodepoint(codepoint)) 1 else cell_width,
+                    .grid_metrics = self.grid_metrics,
+                },
             ) catch return;
             const render = render_result orelse return;
             if (render.glyph.width == 0 or render.glyph.height == 0) return;
@@ -3196,6 +3225,102 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 };
                 self.addStrikethrough(x, y, fg_rgb, 255, pixel_offset_y) catch {};
             }
+        }
+
+        fn addGuiShapedGlyph(
+            self: *Self,
+            x: u16,
+            y: u16,
+            cps: []const u21,
+            fg_color: u32,
+            style: gui_protocol.CellStyle,
+            cell_width: u2,
+            pixel_offset_y: f32,
+        ) !bool {
+            if (cps.len == 0) return false;
+
+            var cells = std.MultiArrayList(terminal.RenderState.Cell){};
+            defer cells.deinit(self.alloc);
+
+            const cols: usize = if (cell_width == 2) 2 else 1;
+            try cells.resize(self.alloc, cols);
+            const slice = cells.slice();
+            const raws = slice.items(.raw);
+            const graphemes = slice.items(.grapheme);
+            const styles = slice.items(.style);
+
+            raws[0] = .{
+                .content_tag = if (cps.len > 1) .codepoint_grapheme else .codepoint,
+                .content = .{ .codepoint = cps[0] },
+                .wide = if (cell_width == 2) .wide else .narrow,
+            };
+            graphemes[0] = if (cps.len > 1) cps[1..] else &.{};
+            styles[0] = .{ .flags = .{ .bold = style.bold, .italic = style.italic } };
+
+            if (cols == 2) {
+                raws[1] = .{ .content = .{ .codepoint = 0 }, .wide = .spacer_tail };
+                graphemes[1] = &.{};
+                styles[1] = .{};
+            }
+
+            var run_iter = self.font_shaper.runIterator(.{
+                .grid = self.font_grid,
+                .cells = slice,
+            });
+            const run = (try run_iter.next(self.alloc)) orelse return false;
+            const shaped_cells = try self.font_shaper.shape(run);
+            if (shaped_cells.len == 0) return false;
+
+            const cp = raws[0].codepoint();
+            const color = terminal.color.RGB{
+                .r = @intCast((fg_color >> 16) & 0xFF),
+                .g = @intCast((fg_color >> 8) & 0xFF),
+                .b = @intCast(fg_color & 0xFF),
+            };
+            const fixed_offset: i16 = @intFromFloat(std.math.clamp(pixel_offset_y * 256.0, -32768.0, 32767.0));
+
+            for (shaped_cells) |shaper_cell| {
+                const grid_x: u16 = x + shaper_cell.x;
+                const render = try self.font_grid.renderGlyph(
+                    self.alloc,
+                    run.font_index,
+                    shaper_cell.glyph_index,
+                    .{
+                        .grid_metrics = self.grid_metrics,
+                        .cell_width = raws[0].gridWidth(),
+                        .constraint = getConstraint(cp) orelse
+                            if (cellpkg.isSymbol(cp)) .{ .size = .fit } else .none,
+                        .constraint_width = constraintWidth(raws, 0, cols),
+                    },
+                );
+
+                if (render.glyph.width == 0 or render.glyph.height == 0) continue;
+
+                try self.cells.add(self.alloc, .text, .{
+                    .atlas = switch (render.presentation) {
+                        .emoji => .color,
+                        .text => .grayscale,
+                    },
+                    .bools = .{ .no_min_contrast = noMinContrast(cp) },
+                    .grid_pos = .{ grid_x, y },
+                    .color = .{ color.r, color.g, color.b, 255 },
+                    .glyph_pos = .{ render.glyph.atlas_x, render.glyph.atlas_y },
+                    .glyph_size = .{ render.glyph.width, render.glyph.height },
+                    .bearings = .{
+                        @intCast(render.glyph.offset_x + shaper_cell.x_offset),
+                        @intCast(render.glyph.offset_y + shaper_cell.y_offset),
+                    },
+                    .pixel_offset_y = fixed_offset,
+                });
+            }
+
+            return true;
+        }
+
+        fn isPrivateUseCodepoint(cp: u32) bool {
+            return (cp >= 0xE000 and cp <= 0xF8FF) or
+                (cp >= 0xF0000 and cp <= 0xFFFFD) or
+                (cp >= 0x100000 and cp <= 0x10FFFD);
         }
 
         /// Render panel GUI content into the extended cell buffer columns.

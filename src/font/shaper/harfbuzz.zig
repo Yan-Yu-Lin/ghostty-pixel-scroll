@@ -926,6 +926,7 @@ test "shape variation selector VS16" {
     var count: usize = 0;
     while (try it.next(alloc)) |run| {
         count += 1;
+        try testing.expectEqual(@as(font.Collection.Index.IndexInt, 1), run.font_index.idx);
         try testing.expectEqual(@as(u32, 1), shaper.hb_buf.getLength());
 
         const cells = try shaper.shape(run);

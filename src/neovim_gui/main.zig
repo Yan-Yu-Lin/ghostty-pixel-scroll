@@ -1274,7 +1274,15 @@ pub const NeovimGui = struct {
             var i: u64 = 0;
             while (i < cell.repeat) : (i += 1) {
                 if (col < window.grid_width) {
-                    window.setCell(@intCast(row), @intCast(col), cell.text, cell.hl_id);
+                    const is_continuation = cell.text.len == 0;
+                    window.setCell(
+                        @intCast(row),
+                        @intCast(col),
+                        cell.text,
+                        cell.hl_id,
+                        false,
+                        is_continuation,
+                    );
                     col += 1;
                 }
             }

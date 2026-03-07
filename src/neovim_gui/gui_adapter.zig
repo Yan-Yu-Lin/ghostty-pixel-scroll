@@ -241,10 +241,12 @@ fn gridCellToGui(gc: *const GridCell, w: *const RenderedWindow, nvim: *const Neo
             .reverse = attr.reverse,
             .blend = attr.blend,
         },
+        .double_width = gc.double_width,
+        .is_continuation = gc.is_continuation,
     };
 
     const text = gc.getText();
-    const len = @min(text.len, 16);
+    const len = @min(text.len, cell.text.len);
     @memcpy(cell.text[0..len], text[0..len]);
     cell.text_len = @intCast(len);
     return cell;

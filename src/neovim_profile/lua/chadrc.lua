@@ -4,6 +4,7 @@ local M = {}
 M.base46 = {
 	theme = "catppuccin",
 	transparency = false,
+	integrations = { "bufferline" },
 }
 
 M.ui = {

@@ -1444,6 +1444,7 @@ test "shape variation selector VS16" {
     var count: usize = 0;
     while (try it.next(alloc)) |run| {
         count += 1;
+        try testing.expectEqual(@as(font.Collection.Index.IndexInt, 1), run.font_index.idx);
         const cells = try shaper.shape(run);
         try testing.expectEqual(@as(usize, 1), cells.len);
     }

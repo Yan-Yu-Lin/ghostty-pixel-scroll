@@ -212,6 +212,8 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
                 const is_managed_bootstrap = std.mem.eql(u8, entry.path, "lua/bootstrap.lua");
                 const is_managed_bootstrap_plugin = std.mem.eql(u8, entry.path, "plugin/ghostty_bootstrap.lua");
+                const is_managed_tabufline_config = std.mem.eql(u8, entry.path, "lua/configs/tabufline.lua");
+                const is_managed_treesitter_config = std.mem.eql(u8, entry.path, "lua/configs/treesitter.lua");
                 if (init_has_managed_extras and is_managed_extras) {
                     continue;
                 }
@@ -223,7 +225,12 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 // Keep managed defaults current for all users:
                 // refresh ghostty_extras.lua every launch unless we're preserving
                 // legacy profiles that already inlined those extras in init.lua.
-                if (is_managed_extras or is_managed_bootstrap or is_managed_bootstrap_plugin) {
+                if (is_managed_extras or
+                    is_managed_bootstrap or
+                    is_managed_bootstrap_plugin or
+                    is_managed_tabufline_config or
+                    is_managed_treesitter_config)
+                {
                     target.deleteFile(entry.path) catch |err| switch (err) {
                         error.FileNotFound => {},
                         else => return err,

@@ -227,6 +227,22 @@ local function sync_bufferline_backgrounds()
 	end
 end
 
+local configured = false
+
+local function sync_bufferline_theme()
+	pcall(function()
+		require("nvchad.base46").load({ "bufferline" })
+	end)
+
+	sync_bufferline_backgrounds()
+end
+
+local function reapply_bufferline_theme()
+	sync_bufferline_theme()
+	vim.defer_fn(sync_bufferline_theme, 20)
+	vim.defer_fn(sync_bufferline_theme, 120)
+end
+
 local function apply()
 	local ok, bufferline = pcall(require, "bufferline")
 	if not ok then
@@ -235,64 +251,64 @@ local function apply()
 
 	vim.opt.showtabline = 2
 
-	bufferline.setup({
-		options = {
-			always_show_bufferline = true,
-			auto_toggle_bufferline = false,
-			close_command = close_buffer,
-			right_mouse_command = close_buffer,
-			diagnostics = "nvim_lsp",
-			themable = true,
-			diagnostics_indicator = diagnostics_indicator,
-			hover = {
-				delay = 120,
-				enabled = true,
-				reveal = { "close" },
-			},
-			indicator = {
-				style = "none",
-			},
-			max_name_length = 28,
-			max_prefix_length = 20,
-			mode = "buffers",
-			name_formatter = function(buf)
-				if vim.bo[buf.bufnr].buftype == "terminal" then
-					return terminal_label(buf)
-				end
-
-				if buf.name == "" or buf.name == "[No Name]" then
-					return "Scratch"
-				end
-
-				return buf.name
-			end,
-			offsets = {
-				{
-					filetype = "NvimTree",
-					separator = true,
-					text = " Explorer ",
-					text_align = "left",
+	if not configured then
+		bufferline.setup({
+			options = {
+				always_show_bufferline = true,
+				auto_toggle_bufferline = false,
+				close_command = close_buffer,
+				right_mouse_command = close_buffer,
+				diagnostics = "nvim_lsp",
+				themable = true,
+				diagnostics_indicator = diagnostics_indicator,
+				hover = {
+					delay = 120,
+					enabled = true,
+					reveal = { "close" },
 				},
-			},
-			separator_style = { "", "" },
-			show_buffer_close_icons = true,
-			show_close_icon = false,
-			sort_by = "insert_after_current",
-			style_preset = {
-				bufferline.style_preset.no_italic,
-				bufferline.style_preset.no_bold,
-			},
-			tab_size = 24,
-			truncate_names = true,
-			custom_filter = custom_filter,
-		},
-	})
+				indicator = {
+					style = "none",
+				},
+				max_name_length = 28,
+				max_prefix_length = 20,
+				mode = "buffers",
+				name_formatter = function(buf)
+					if vim.bo[buf.bufnr].buftype == "terminal" then
+						return terminal_label(buf)
+					end
 
-	pcall(function()
-		require("nvchad.base46").load({ "bufferline" })
-	end)
+					if buf.name == "" or buf.name == "[No Name]" then
+						return "Scratch"
+					end
 
-	sync_bufferline_backgrounds()
+					return buf.name
+				end,
+				offsets = {
+					{
+						filetype = "NvimTree",
+						separator = true,
+						text = " Explorer ",
+						text_align = "left",
+					},
+				},
+				separator_style = { "", "" },
+				show_buffer_close_icons = true,
+				show_close_icon = false,
+				sort_by = "insert_after_current",
+				style_preset = {
+					bufferline.style_preset.no_italic,
+					bufferline.style_preset.no_bold,
+				},
+				tab_size = 24,
+				truncate_names = true,
+				custom_filter = custom_filter,
+			},
+		})
+
+		configured = true
+	end
+
+	sync_bufferline_theme()
 end
 
 function M.setup()
@@ -300,11 +316,27 @@ function M.setup()
 	vim.api.nvim_create_autocmd("ColorScheme", {
 		group = group,
 		callback = function()
-			vim.schedule(apply)
+			vim.schedule(reapply_bufferline_theme)
+		end,
+	})
+
+	vim.api.nvim_create_autocmd("VimEnter", {
+		group = group,
+		callback = function()
+			vim.schedule(reapply_bufferline_theme)
+		end,
+	})
+
+	vim.api.nvim_create_autocmd("User", {
+		group = group,
+		pattern = { "BufferLineLoaded", "LazyDone", "NvThemeReload" },
+		callback = function()
+			vim.schedule(reapply_bufferline_theme)
 		end,
 	})
 
 	apply()
+	vim.schedule(reapply_bufferline_theme)
 end
 
 function M.cycle_next()

@@ -336,13 +336,17 @@ pub const RenderState = struct {
         const cells: *std.MultiArrayList(Cell) = &row_cells[y];
         try cells.resize(alloc, self.cols);
         const cells_slice = cells.slice();
+        const cells_grapheme = cells_slice.items(.grapheme);
+        const cells_style = cells_slice.items(.style);
+        for (cells_grapheme, cells_style) |*cell_grapheme, *cell_style| {
+            cell_grapheme.* = &.{};
+            cell_style.* = .{};
+        }
         fastmem.copy(page.Cell, cells_slice.items(.raw), page_cells);
 
         if (!page_rac.row.managedMemory()) return true;
 
         const arena_alloc = arena.allocator();
-        const cells_grapheme = cells_slice.items(.grapheme);
-        const cells_style = cells_slice.items(.style);
         for (page_cells, 0..) |*page_cell, x| {
             if (page_cell.style_id > 0) cells_style[x] = p.styles.get(p.memory, page_cell.style_id).*;
             switch (page_cell.content_tag) {

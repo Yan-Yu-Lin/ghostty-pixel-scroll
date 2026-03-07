@@ -785,17 +785,15 @@ pub const NeovimGui = struct {
         }
 
         // 2) Island highlight unification:
-        //    - Active buffer tab bg -> Normal bg (seamless with editor content)
-        //    - TabLineFill -> Normal bg (tab bar is part of the buffer island)
+        //    - Bufferline/tabline bg -> Normal bg (seamless with editor content)
         //    - BufferLineOffset* -> NvimTree bg (tab bar above tree matches tree)
         //    - NvimTree title/endofbuffer -> NvimTree bg
-        //    - DO NOT touch inactive tab colors
         {
             var cmd_buf: [4096]u8 = undefined;
             const cmd = std.fmt.bufPrint(
                 &cmd_buf,
                 "lua " ++
-                    "local function ghostty_island_hl() " ++
+                    "ghostty_island_hl = function() " ++
                     "local norm = vim.api.nvim_get_hl(0, {{name='Normal', link=false}}) " ++
                     "local nbg = norm.bg " ++
                     "if not nbg then return end " ++
@@ -805,11 +803,29 @@ pub const NeovimGui = struct {
                     // TabLineFill + TabLineSel -> Normal bg
                     "vim.api.nvim_set_hl(0, 'TabLineFill', {{bg=nbg}}) " ++
                     "vim.api.nvim_set_hl(0, 'TabLineSel', {{bg=nbg, fg=norm.fg, bold=true}}) " ++
-                    // bufferline.nvim: active tab + fill -> Normal bg
+                    // bufferline.nvim: keep inactive + active tabs on Normal bg
                     "pcall(function() " ++
+                    "local inactive = vim.api.nvim_get_hl(0, {{name='BufferLineBackground', link=false}}) " ++
+                    "local visible = vim.api.nvim_get_hl(0, {{name='BufferLineBufferVisible', link=false}}) " ++
                     "local sel = vim.api.nvim_get_hl(0, {{name='BufferLineBufferSelected', link=false}}) " ++
-                    "vim.api.nvim_set_hl(0, 'BufferLineBufferSelected', {{bg=nbg, fg=sel.fg or norm.fg, bold=true, italic=sel.italic}}) " ++
                     "vim.api.nvim_set_hl(0, 'BufferLineFill', {{bg=nbg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineBackground', {{bg=nbg, fg=inactive.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineBuffer', {{bg=nbg, fg=inactive.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineBufferVisible', {{bg=nbg, fg=visible.fg or inactive.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineCloseButton', {{bg=nbg, fg=inactive.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineCloseButtonVisible', {{bg=nbg, fg=visible.fg or inactive.fg or norm.fg}}) " ++
+                    "local modi = vim.api.nvim_get_hl(0, {{name='BufferLineModified', link=false}}) " ++
+                    "local modv = vim.api.nvim_get_hl(0, {{name='BufferLineModifiedVisible', link=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineModified', {{bg=nbg, fg=modi.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineModifiedVisible', {{bg=nbg, fg=modv.fg or modi.fg or norm.fg}}) " ++
+                    "local dup = vim.api.nvim_get_hl(0, {{name='BufferLineDuplicate', link=false}}) " ++
+                    "local dupv = vim.api.nvim_get_hl(0, {{name='BufferLineDuplicateVisible', link=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineDuplicate', {{bg=nbg, fg=dup.fg or norm.fg, italic=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineDuplicateVisible', {{bg=nbg, fg=dupv.fg or dup.fg or norm.fg, italic=false}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineTruncMarker', {{bg=nbg, fg=inactive.fg or norm.fg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineSeparator', {{bg=nbg, fg=nbg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineSeparatorVisible', {{bg=nbg, fg=nbg}}) " ++
+                    "vim.api.nvim_set_hl(0, 'BufferLineBufferSelected', {{bg=nbg, fg=sel.fg or norm.fg, bold=true, italic=sel.italic}}) " ++
                     // Active tab accessories
                     "local cls = vim.api.nvim_get_hl(0, {{name='BufferLineCloseButtonSelected', link=false}}) " ++
                     "vim.api.nvim_set_hl(0, 'BufferLineCloseButtonSelected', {{bg=nbg, fg=cls.fg or norm.fg}}) " ++

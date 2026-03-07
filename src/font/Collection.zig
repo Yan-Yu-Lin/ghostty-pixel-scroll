@@ -837,7 +837,8 @@ pub const Entry = struct {
                     const index = face.glyphIndex(cp) orelse break :explicit false;
                     break :explicit switch (p) {
                         .text => !face.isColorGlyph(index),
-                        .emoji => face.isColorGlyph(index),
+                        .emoji => face.isColorGlyph(index) or
+                            (self.fallback and face.hasColor()),
                     };
                 },
             },

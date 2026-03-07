@@ -158,9 +158,11 @@ pub const RunIterator = struct {
                 break :style .regular;
             };
 
+            const cell_graphemes: []const u21 = if (cell.hasGrapheme()) graphemes[j] else &.{};
+
             // Determine the presentation format for this glyph.
             const presentation: ?font.Presentation = if (cell.hasGrapheme()) p: {
-                const cps = graphemes[j];
+                const cps = cell_graphemes;
                 assert(cps.len > 0);
 
                 // Scan the whole grapheme tail so VS15/VS16 selectors attached
@@ -225,7 +227,7 @@ pub const RunIterator = struct {
                 if (try self.indexForCell(
                     alloc,
                     cell,
-                    graphemes[j],
+                    cell_graphemes,
                     font_style,
                     presentation,
                 )) |idx| break :font_info .{ .idx = idx };
@@ -278,7 +280,7 @@ pub const RunIterator = struct {
                 @intCast(cluster),
             );
             if (cell.hasGrapheme()) {
-                for (graphemes[j]) |cp| {
+                for (cell_graphemes) |cp| {
                     // Do not send presentation modifiers
                     if (cp == 0xFE0E or cp == 0xFE0F) continue;
                     try self.addCodepoint(&hasher, cp, @intCast(cluster));

@@ -2453,14 +2453,20 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             //   cut short when another column has horizontal sub-splits.
             var split_top_row_f: f32 = @floatFromInt(rows);
             var split_bot_px: f32 = 0;
+            var split_bottom_row_u: u32 = 0;
             for (windows) |sw| {
                 if (sw.window_type != .split) continue;
                 if (sw.grid_row < split_top_row_f) split_top_row_f = sw.grid_row;
                 const sb_px = pad_top + (sw.grid_row + @as(f32, @floatFromInt(sw.render_height))) * cell_h;
                 if (sb_px > split_bot_px) split_bot_px = sb_px;
+                const sb_row = @as(u32, @intFromFloat(sw.grid_row)) + sw.render_height;
+                if (sb_row > split_bottom_row_u) split_bottom_row_u = sb_row;
             }
             // Fallback if no splits found
             if (split_bot_px == 0) split_bot_px = pad_top + @as(f32, @floatFromInt(rows)) * cell_h;
+            if (split_bottom_row_u == 0) split_bottom_row_u = rows;
+            const separator_draw_start: u16 = @intFromFloat(split_top_row_f);
+            const separator_draw_end: u16 = @intCast(@min(@as(u32, rows), split_bottom_row_u));
 
             for (windows) |w| {
                 if (next_wid > 16) break;
@@ -2547,6 +2553,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             var separator_cols = try self.alloc.alloc(bool, cols);
             defer self.alloc.free(separator_cols);
             @memset(separator_cols, false);
+
+            var separator_fgs = try self.alloc.alloc(u32, cols);
+            defer self.alloc.free(separator_fgs);
+            @memset(separator_fgs, blendRgb(state.config.default_fg, default_bg, 0.18));
 
             // Claim cells highest-z first. Margin cells are skipped (they only carry bg).
             // Message windows only claim cells with actual content.
@@ -2640,15 +2650,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            if (window.window_type == .root and isVerticalSeparatorCell(cell.getText())) {
+                            if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText())) {
                                 separator_cols[@as(usize, sx)] = true;
+                                separator_fgs[@as(usize, sx)] = fg;
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (!skip_text and !cell.is_continuation) {
+                            const is_separator = window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText());
+                            if (!skip_text and !cell.is_continuation and !is_separator) {
                                 const text = cell.getText();
                                 if (text.len > 0) {
                                     self.addGuiGlyph(sx, sy, text, fg, cell.style, if (cell.double_width) 2 else 1, 0) catch {};
@@ -2701,8 +2713,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             }
 
                             const cell_text = c.getText();
-                            if (window.window_type == .root and isVerticalSeparatorCell(cell_text)) {
+                            if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell_text)) {
                                 separator_cols[@as(usize, sx)] = true;
+                                separator_fgs[@as(usize, sx)] = fg;
                             }
 
                             // Background — skip the extra animation row (would corrupt statusline).
@@ -2734,7 +2747,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             // scroll_offset != 0. At offset 0 the shader clipping
                             // gate (pixel_offset_y != 0) won't fire, so the glyph
                             // would render on top of the statusline.
-                            if (!skip_text and !c.is_continuation and (owns_cell or (is_extra and scroll_offset != 0))) {
+                            const is_separator = window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell_text);
+                            if (!skip_text and !c.is_continuation and !is_separator and (owns_cell or (is_extra and scroll_offset != 0))) {
                                 if (cell_text.len > 0) {
                                     const eff_offset: f32 = if (is_scrolling) scroll_offset else 0;
                                     self.addGuiGlyph(sx, sy, cell_text, fg, c.style, if (c.double_width) 2 else 1, eff_offset) catch {};
@@ -2775,15 +2789,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                 fg = bg;
                                 bg = t;
                             }
-                            if (window.window_type == .root and isVerticalSeparatorCell(cell.getText())) {
+                            if (window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText())) {
                                 separator_cols[@as(usize, sx)] = true;
+                                separator_fgs[@as(usize, sx)] = fg;
                             }
                             self.cells.bgCell(sy, sx).* = .{
                                 .color = .{ @intCast((bg >> 16) & 0xFF), @intCast((bg >> 8) & 0xFF), @intCast(bg & 0xFF), win_opacity },
                                 .offset_y_fixed = 0,
                                 .window_id = cur_wid,
                             };
-                            if (owns_cell and !skip_text and !cell.is_continuation) {
+                            const is_separator = window.window_type == .root and sy >= separator_draw_start and sy < separator_draw_end and isVerticalSeparatorCell(cell.getText());
+                            if (owns_cell and !skip_text and !cell.is_continuation and !is_separator) {
                                 const text = cell.getText();
                                 if (text.len > 0) {
                                     self.addGuiGlyph(sx, sy, text, fg, cell.style, if (cell.double_width) 2 else 1, 0) catch {};
@@ -2866,7 +2882,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 }
 
                 var row_idx: u32 = split_top_row;
-                while (row_idx < rows) : (row_idx += 1) {
+                while (row_idx < separator_draw_end) : (row_idx += 1) {
                     for (0..cols) |x| {
                         if (!separator_cols[x]) continue;
                         self.cells.bgCell(row_idx, x).* = .{
@@ -2874,6 +2890,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                             .offset_y_fixed = 0,
                             .window_id = 0,
                         };
+                        self.addGuiGlyph(
+                            @intCast(x),
+                            @intCast(row_idx),
+                            "\xe2\x94\x82",
+                            separator_fgs[x],
+                            .{ .fg = separator_fgs[x], .bg = default_bg },
+                            1,
+                            0,
+                        ) catch {};
                     }
                 }
             }
@@ -3096,6 +3121,25 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 std.mem.eql(u8, text, "\xe2\x94\x83") or
                 std.mem.eql(u8, text, "\xe2\x95\x91") or
                 std.mem.eql(u8, text, "\xe2\x96\x95");
+        }
+
+        fn blendRgb(fg: u32, bg: u32, alpha: f32) u32 {
+            const fr: f32 = @floatFromInt((fg >> 16) & 0xFF);
+            const fg_g: f32 = @floatFromInt((fg >> 8) & 0xFF);
+            const fb: f32 = @floatFromInt(fg & 0xFF);
+            const br: f32 = @floatFromInt((bg >> 16) & 0xFF);
+            const bg_g: f32 = @floatFromInt((bg >> 8) & 0xFF);
+            const bb: f32 = @floatFromInt(bg & 0xFF);
+
+            const mix = struct {
+                fn channel(a: f32, b: f32, t: f32) u32 {
+                    return @intFromFloat(std.math.clamp(a * t + b * (1.0 - t), 0.0, 255.0));
+                }
+            }.channel;
+
+            return (mix(fr, br, alpha) << 16) |
+                (mix(fg_g, bg_g, alpha) << 8) |
+                mix(fb, bb, alpha);
         }
 
         /// Render a floating name label above a peer's ghost cursor.

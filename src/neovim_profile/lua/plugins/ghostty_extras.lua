@@ -5,15 +5,17 @@ end)
 return {
 	{
 		"nvim-treesitter/nvim-treesitter",
+		lazy = false,
 		init = function()
-			require("configs.treesitter").ensure_runtimepath()
+			local treesitter = require("configs.treesitter")
+			treesitter.ensure_runtimepath()
+			treesitter.ensure_tool_path()
 		end,
 		opts = function(_, opts)
 			return require("configs.treesitter").opts(opts)
 		end,
 		config = function(_, opts)
-			require("configs.treesitter").ensure_runtimepath()
-			require("nvim-treesitter.configs").setup(opts)
+			require("configs.treesitter").setup(opts)
 		end,
 	},
 

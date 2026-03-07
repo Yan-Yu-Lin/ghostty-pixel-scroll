@@ -84,7 +84,7 @@ function M.cli_info()
 		path = vim.fn.exepath("tree-sitter"),
 		version = vim.version.parse(output),
 	}
-	end
+end
 
 function M.cli_ok()
 	local info = M.cli_info()
@@ -128,15 +128,50 @@ end
 
 function M.opts(existing)
 	M.ensure_runtimepath()
+	M.ensure_tool_path()
 	local opts = existing or {}
-	opts.ensure_installed = M.languages()
-	opts.auto_install = true
-	opts.highlight = vim.tbl_deep_extend("force", opts.highlight or {}, {
-		enable = true,
-		additional_vim_regex_highlighting = false,
-	})
-	opts.parser_install_dir = parser_dir()
+	opts.install_dir = parser_dir()
 	return opts
+end
+
+local function start_for_buffer(bufnr)
+	if not bufnr or bufnr == 0 then
+		bufnr = vim.api.nvim_get_current_buf()
+	end
+	if not vim.api.nvim_buf_is_valid(bufnr) then
+		return
+	end
+	pcall(vim.treesitter.start, bufnr)
+end
+
+function M.setup(opts)
+	M.ensure_runtimepath()
+	M.ensure_tool_path()
+
+	local ok, treesitter = pcall(require, "nvim-treesitter")
+	if ok then
+		treesitter.setup(M.opts(opts))
+	end
+
+	if vim.g.ghostty_treesitter_setup == 1 then
+		for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+			start_for_buffer(bufnr)
+		end
+		return
+	end
+
+	vim.g.ghostty_treesitter_setup = 1
+	local group = vim.api.nvim_create_augroup("ghostty_treesitter_attach", { clear = true })
+	vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "FileType", "TermOpen" }, {
+		group = group,
+		callback = function(args)
+			start_for_buffer(args.buf)
+		end,
+	})
+
+	for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+		start_for_buffer(bufnr)
+	end
 end
 
 return M

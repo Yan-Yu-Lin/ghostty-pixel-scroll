@@ -524,10 +524,20 @@ local function run_bootstrap()
 	end
 
 	ensure_treesitter_runtimepath()
+	ensure_treesitter_tool_path()
 	local treesitter_languages = get_treesitter_languages()
-	if vim.fn.exists(":TSInstall") == 2 and #treesitter_languages > 0 then
+	local ok_treesitter, treesitter = pcall(require, "nvim-treesitter")
+	if ok_treesitter then
+		pcall(treesitter.setup, { install_dir = ensure_treesitter_runtimepath() })
+	end
+	if ok_treesitter and #treesitter_languages > 0 then
 		ran_any = true
-		local ok = pcall(vim.cmd, "silent! noautocmd TSInstall " .. table.concat(treesitter_languages, " "))
+		local ok = pcall(function()
+			local task = treesitter.install(treesitter_languages)
+			if task and task.wait then
+				task:wait(300000)
+			end
+		end)
 		if ok then
 			ran_treesitter = true
 		end

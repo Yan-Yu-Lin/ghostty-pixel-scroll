@@ -9,6 +9,7 @@ local bootstrap_start_scheduled = false
 local startup_overlay_filetypes = {
 	lazy = true,
 	mason = true,
+	ghosttybootstrap = true,
 }
 
 local default_mason_packages = {
@@ -87,6 +88,8 @@ end
 
 local welcome_ns = vim.api.nvim_create_namespace("ghostty_welcome")
 local welcome_win = nil
+local bootstrap_win = nil
+local bootstrap_buf = nil
 
 local function close_startup_overlays(filetypes)
 	local targets = filetypes or startup_overlay_filetypes
@@ -106,6 +109,77 @@ local function close_welcome_modal()
 		pcall(vim.api.nvim_win_close, welcome_win, true)
 	end
 	welcome_win = nil
+end
+
+local function close_bootstrap_modal()
+	if bootstrap_win and vim.api.nvim_win_is_valid(bootstrap_win) then
+		pcall(vim.api.nvim_win_close, bootstrap_win, true)
+	end
+	bootstrap_win = nil
+	bootstrap_buf = nil
+end
+
+local function show_bootstrap_modal(title, lines)
+	lines = lines or { "Working..." }
+	local width = 52
+	for _, line in ipairs(lines) do
+		width = math.max(width, vim.fn.strdisplaywidth(line) + 4)
+	end
+	width = math.max(44, math.min(width, math.max(44, vim.o.columns - 6)))
+	local height = math.max(6, math.min(#lines, math.max(6, vim.o.lines - 6)))
+	local row = math.max(1, math.floor((vim.o.lines - height) * 0.5) - 1)
+	local col = math.max(0, math.floor((vim.o.columns - width) * 0.5))
+
+	if not (bootstrap_buf and vim.api.nvim_buf_is_valid(bootstrap_buf)) then
+		bootstrap_buf = vim.api.nvim_create_buf(false, true)
+		vim.bo[bootstrap_buf].bufhidden = "wipe"
+		vim.bo[bootstrap_buf].buftype = "nofile"
+		vim.bo[bootstrap_buf].swapfile = false
+		vim.bo[bootstrap_buf].modifiable = true
+		vim.bo[bootstrap_buf].filetype = "ghosttybootstrap"
+	end
+
+	vim.bo[bootstrap_buf].modifiable = true
+	vim.api.nvim_buf_set_lines(bootstrap_buf, 0, -1, false, lines)
+	vim.bo[bootstrap_buf].modifiable = false
+
+	if bootstrap_win and vim.api.nvim_win_is_valid(bootstrap_win) then
+		pcall(vim.api.nvim_win_set_config, bootstrap_win, {
+			relative = "editor",
+			style = "minimal",
+			border = "rounded",
+			width = width,
+			height = height,
+			row = row,
+			col = col,
+			zindex = 245,
+			title = " " .. (title or "Ghostty Bootstrap") .. " ",
+			title_pos = "center",
+			noautocmd = true,
+		})
+	else
+		bootstrap_win = vim.api.nvim_open_win(bootstrap_buf, false, {
+			relative = "editor",
+			style = "minimal",
+			border = "rounded",
+			width = width,
+			height = height,
+			row = row,
+			col = col,
+			zindex = 245,
+			title = " " .. (title or "Ghostty Bootstrap") .. " ",
+			title_pos = "center",
+			noautocmd = true,
+		})
+	end
+
+	vim.wo[bootstrap_win].number = false
+	vim.wo[bootstrap_win].relativenumber = false
+	vim.wo[bootstrap_win].signcolumn = "no"
+	vim.wo[bootstrap_win].wrap = false
+	vim.wo[bootstrap_win].cursorline = false
+	vim.wo[bootstrap_win].winhighlight = "Normal:NormalFloat,FloatBorder:FloatBorder,FloatTitle:Title"
+	vim.cmd("redraw")
 end
 
 local function show_welcome(opts)
@@ -493,9 +567,22 @@ end
 local function run_bootstrap()
 	enable_quiet_mode()
 	close_startup_overlays({ lazy = true })
+	show_bootstrap_modal("Ghostty Bootstrap", {
+		"Preparing managed Neovim tools...",
+		"",
+		"- waiting for Lazy extras",
+		"- Mason tools pending",
+		"- tree-sitter pending",
+	})
 
 	local ok_lazy, lazy = pcall(require, "lazy")
 	if ok_lazy then
+		show_bootstrap_modal("Ghostty Bootstrap", {
+			"Preparing managed Neovim tools...",
+			"",
+			"- loading Mason",
+			"- loading nvim-treesitter",
+		})
 		lazy.load({
 			plugins = {
 				"mason.nvim",
@@ -512,12 +599,24 @@ local function run_bootstrap()
 	local mason_packages = get_mason_packages()
 	if vim.fn.exists(":MasonInstall") == 2 and #mason_packages > 0 then
 		ran_any = true
+		show_bootstrap_modal("Ghostty Bootstrap", {
+			"Installing Mason packages...",
+			"",
+			string.format("Packages: %d", #mason_packages),
+			"This can take a minute on first launch.",
+			"Logs: :MasonLog",
+		})
 		local ok = pcall(vim.cmd, "silent! noautocmd MasonInstall " .. table.concat(mason_packages, " "))
 		if ok then
 			ran_mason = true
 		end
 	end
 
+	show_bootstrap_modal("Ghostty Bootstrap", {
+		"Preparing tree-sitter CLI...",
+		"",
+		"Checking/installing local tree-sitter toolchain.",
+	})
 	if ensure_treesitter_cli() then
 		ran_any = true
 		ran_treesitter_cli = true
@@ -532,6 +631,13 @@ local function run_bootstrap()
 	end
 	if ok_treesitter and #treesitter_languages > 0 then
 		ran_any = true
+		show_bootstrap_modal("Ghostty Bootstrap", {
+			"Installing tree-sitter parsers...",
+			"",
+			string.format("Languages: %d", #treesitter_languages),
+			"Queries/parsers install into Ghostty's local site dir.",
+			"Check with: :TSInstallInfo",
+		})
 		local ok = pcall(function()
 			local task = treesitter.install(treesitter_languages)
 			if task and task.wait then
@@ -544,10 +650,22 @@ local function run_bootstrap()
 	end
 
 	if ran_any and (ran_mason or ran_treesitter or ran_treesitter_cli) then
+		show_bootstrap_modal("Ghostty Bootstrap", {
+			"Finishing setup...",
+			"",
+			string.format("Mason: %s", ran_mason and "done" or "skipped"),
+			string.format("tree-sitter CLI: %s", ran_treesitter_cli and "done" or "skipped"),
+			string.format("tree-sitter parsers: %s", ran_treesitter and "done" or "skipped"),
+		})
 		write_done_marker()
 		vim.defer_fn(function()
 			close_startup_overlays()
+			close_bootstrap_modal()
 			show_welcome()
+		end, 700)
+	else
+		vim.defer_fn(function()
+			close_bootstrap_modal()
 		end, 700)
 	end
 end

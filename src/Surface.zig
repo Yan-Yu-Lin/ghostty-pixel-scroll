@@ -4790,13 +4790,15 @@ pub fn scrollCallback(
     // We use cell height to determine if we have accumulated enough to trigger a scroll
     const cell_height: f64 = @floatFromInt(self.size.cell.height);
 
-    // Track if we should use pixel scrolling. Enabled when the config option is on
-    // and we're not in mouse reporting mode. This applies to both precision devices
-    // (touchpads) and discrete wheels, for smooth scrolling in terminal mode.
-    // When mouse reporting is active (TUI apps), we need line-based scroll events.
     const mouse_reporting_active = self.config.mouse_reporting and
         self.io.terminal.flags.mouse_event != .none;
-    const use_pixel_scroll = self.config.pixel_scroll and !mouse_reporting_active;
+
+    // Precision devices provide pixel deltas directly. Discrete wheels use
+    // line scrolling plus a renderer spring so each wheel notch glides instead
+    // of jumping. Mouse reporting remains line/event based for applications.
+    const use_pixel_scroll = self.config.pixel_scroll and
+        scroll_mods.precision and
+        !mouse_reporting_active;
 
     const y: ScrollAmount = if (yoff == 0) .{} else y: {
         // If we have precision scroll, yoff is the number of pixels to scroll. In non-precision
@@ -5031,10 +5033,11 @@ pub fn scrollCallback(
                 self.renderer_state.mouse.pixel_scroll_offset_y = 0;
             }
         } else if (y.delta != 0) {
-            // Line-based scrolling mode
-            // Modify our viewport, this requires a lock since it affects
-            // rendering. We have to switch signs here because our delta
-            // is negative down but our viewport is positive down.
+            // Line-based scrolling. Discrete wheel input gets a one-shot marker
+            // so the renderer can animate the actual viewport jump.
+            if (!scroll_mods.precision) {
+                self.renderer_state.mouse.wheel_glide_kick = 1;
+            }
             self.io.terminal.scrollViewport(.{ .delta = y.delta * -1 });
 
             // Line-based scrolling invalidates any sub-line renderer offset.

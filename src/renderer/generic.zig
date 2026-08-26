@@ -1825,53 +1825,53 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 self.draw_mutex.lockUncancelable(global.io());
                 defer self.draw_mutex.unlock(global.io());
 
-                // Smooth scroll animations using CriticallyDampedSpring.
-                //
-                // Spring animation is ONLY used for the alternate screen (TUI apps
-                // like Neovim) where scroll regions need animated transitions.
-                // The primary screen (terminal scrollback) uses direct pixel offset
-                // from the trackpad/mouse — no spring, no delay, no bounce.
+                // Smooth scroll animations using critically damped springs.
+                // Precision devices drive the primary screen's pixel offset
+                // directly. Discrete wheels mark their viewport jumps so we can
+                // glide one cached row from the old position to the new one.
                 const scroll_threshold: f32 = 1.0;
                 const scroll_jump_total = self.terminal_state.scroll_jump;
 
-                // Primary screen: no spring animation. Always snap immediately.
-                // The pixel scroll offset from the trackpad already provides
-                // smooth sub-line scrolling; adding a spring on top causes
-                // bouncy/laggy behavior and visual artifacts.
-                self.user_scroll_spring.reset();
-
                 if (self.config.scroll_animation_duration <= 0) {
-                    // If scroll animation is disabled, snap TUI spring too.
+                    self.user_scroll_spring.reset();
                     self.tui_scroll_spring.reset();
                     self.scroll_animating = false;
                 } else {
                     const in_alternate = critical.tui_in_alternate;
 
                     if (in_alternate) {
+                        self.user_scroll_spring.reset();
+
                         // Reset TUI spring when scroll region boundaries change.
-                        // This prevents stale spring offsets from being applied
-                        // to a new region (e.g., when nvim-cmp popup opens/closes).
-                        const new_top = self.terminal_state.scroll_region_top;
-                        const new_bottom = self.terminal_state.scroll_region_bottom;
-                        if (new_top != self.scroll_region_top or new_bottom != self.scroll_region_bottom) {
+                        if (self.terminal_state.scroll_region_top != self.scroll_region_top or
+                            self.terminal_state.scroll_region_bottom != self.scroll_region_bottom)
+                        {
                             self.tui_scroll_spring.reset();
                         }
 
-                        // Alternate screen (TUI): CriticallyDampedSpring (same as Neovim GUI).
-                        // Spring position is in lines. Accumulate scroll deltas.
                         if (@abs(scroll_jump_total) >= scroll_threshold) {
-                            // Accumulate onto existing spring (allows rapid scroll stacking).
-                            // scroll_jump_total > 0 = content moved up.
-                            // Spring starts positive → tui_scroll_offset_y positive →
-                            // shader shifts content DOWN (old position), decays to 0 (new position).
                             self.tui_scroll_spring.position += scroll_jump_total;
                             self.scroll_animating = true;
+                        } else if (self.tui_scroll_spring.position == 0) {
+                            self.scroll_animating = false;
                         }
                     } else {
-                        // Primary screen: no spring. Reset TUI spring too since
-                        // we're not in alternate mode.
                         self.tui_scroll_spring.reset();
-                        self.scroll_animating = false;
+
+                        if (critical.mouse.wheel_glide_kick != 0 and
+                            @abs(scroll_jump_total) >= scroll_threshold)
+                        {
+                            // The terminal cache has one extra row on each edge,
+                            // so bound stacked wheel kicks to one visible row.
+                            self.user_scroll_spring.position = std.math.clamp(
+                                self.user_scroll_spring.position + scroll_jump_total,
+                                -1.0,
+                                1.0,
+                            );
+                            self.scroll_animating = true;
+                        } else if (self.user_scroll_spring.position == 0) {
+                            self.scroll_animating = false;
+                        }
                     }
                 }
 
@@ -4145,10 +4145,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                         // bounciness > 0 lowers zeta below 1.0 = underdamped (oscillation).
                         const scroll_zeta = 1.0 - (self.config.scroll_animation_bounciness * 0.6);
 
-                        // Only the TUI spring is animated now. The primary screen
-                        // user_scroll_spring is always kept at 0 (no animation).
-                        if (self.tui_scroll_spring.position != 0) {
-                            self.scroll_animating = self.tui_scroll_spring.update(dt, scroll_len, scroll_zeta);
+                        const active_spring = if (self.in_alternate_screen)
+                            &self.tui_scroll_spring
+                        else
+                            &self.user_scroll_spring;
+                        if (active_spring.position != 0) {
+                            self.scroll_animating = active_spring.update(dt, scroll_len, scroll_zeta);
                         } else {
                             self.scroll_animating = false;
                         }
@@ -4224,9 +4226,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // Ghostty renders with an extra row above AND below the viewport.
                 // At rest, pixel_scroll_offset_y = cell_h hides the top extra row.
                 //
-                // Primary screen: direct pixel offset from trackpad/mouse only.
-                // No spring animation — the input device provides smoothness.
-                //
+                // Primary screen: precision input contributes a direct pixel
+                // offset; discrete wheel input contributes a spring offset.
                 // Alternate screen (TUI): fixed cell_h offset, with the TUI spring
                 // providing animated scroll within the scroll region.
 
@@ -4241,15 +4242,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     self.uniforms.tui_scroll_region_top = self.scroll_region_top + 1;
                     self.uniforms.tui_scroll_region_bottom = self.scroll_region_bottom + 1;
                 } else {
-                    // Primary screen: direct pixel offset only (no spring).
-                    // The trackpad/mouse provides sub-line offset; no animation delay.
-                    const direct_offset = self.scroll_pixel_offset;
+                    // Combine direct precision input with the discrete-wheel spring.
+                    const spring_offset = self.user_scroll_spring.position * cell_h;
+                    const combined_offset = self.scroll_pixel_offset + spring_offset;
 
-                    // Clamp to ±cell_h (one extra row in each direction).
-                    const clamped = std.math.clamp(direct_offset, -cell_h, cell_h);
+                    // One extra cached row exists on each edge.
+                    const clamped = std.math.clamp(combined_offset, -cell_h, cell_h);
                     const base_offset = cell_h - clamped;
-                    // base_offset is in [0, 2*cell_h]. Must stay > 0 so the bg shader
-                    // knows pixel scroll is active and applies the extra-row adjustment.
+                    // Keep this positive so the shaders apply the extra-row layout.
                     self.uniforms.pixel_scroll_offset_y = @max(@round(base_offset), @as(f32, 1.0));
 
                     self.uniforms.tui_scroll_offset_y = 0;

@@ -97,23 +97,6 @@ pub const Message = union(enum) {
     /// Write where the data is allocated and must be freed.
     write_alloc: WriteReq.Alloc,
 
-    /// Enter Neovim GUI mode (triggered by OSC 1338)
-    enter_neovim_gui: void,
-
-    /// Toggle panel GUI (triggered by OSC 1339)
-    toggle_panel_gui: void,
-
-    /// Start collab session (triggered by OSC 1342)
-    collab_share: void,
-
-    /// Join collab session (triggered by OSC 1343;host:port)
-    collab_join: [256]u8,
-
-    /// Connect NeovimGui to remote Neovim TCP (triggered by OSC 1344;host:port)
-    collab_nvim_connect: [256]u8,
-
-    /// Set shader preset (triggered by OSC 1345;preset)
-    set_shader_preset: [256]u8,
     /// The payload of the kitty_clipboard_grant_* messages. The
     /// password is allocated and must be freed.
     pub const KittyClipboardGrant = struct {

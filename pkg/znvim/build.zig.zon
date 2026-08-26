@@ -1,0 +1,20 @@
+.{
+    .name = .znvim,
+    .version = "1.0.0",
+    .fingerprint = 0x79f956aa821de333, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.15.1",
+    .dependencies = .{
+        .zig_msgpack = .{
+            .url = "https://github.com/zigcc/zig-msgpack/archive/refs/tags/0.0.14.tar.gz",
+            .hash = "zig_msgpack-0.0.14-evvueBpfAwBSXibTQiU8q43njtWmdnHKPguZASsrZz7k",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        // For example...
+        //"LICENSE",
+        //"README.md",
+    },
+}

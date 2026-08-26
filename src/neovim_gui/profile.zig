@@ -1,8 +1,16 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const internal_os = @import("../os/main.zig");
+const global = @import("../global.zig");
+const compat_file = @import("../lib/compat/file.zig");
 
 const log = std.log.scoped(.neovim_profile);
+
+fn home(buf: []u8) !?[]const u8 {
+    var environ_map = try global.environMap();
+    defer environ_map.deinit();
+    return internal_os.home(global.io(), &environ_map, buf);
+}
 
 /// Configuration profile mode for Neovim GUI sessions.
 pub const Mode = enum {
@@ -34,12 +42,12 @@ pub fn resolveMode(mode: Mode) ResolvedMode {
 /// Return true if ~/.config/nvim exists.
 pub fn userConfigExists() bool {
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = (internal_os.home(&home_buf) catch return false) orelse return false;
+    const home_path = (home(&home_buf) catch return false) orelse return false;
 
-    var home_dir = std.fs.openDirAbsolute(home, .{}) catch return false;
-    defer home_dir.close();
+    var home_dir = std.Io.Dir.openDirAbsolute(global.io(), home_path, .{}) catch return false;
+    defer home_dir.close(global.io());
 
-    if (home_dir.access(".config/nvim", .{})) |_| {
+    if (home_dir.access(global.io(), ".config/nvim", .{})) |_| {
         return true;
     } else |_| {
         return false;
@@ -57,7 +65,7 @@ pub fn userConfigExists() bool {
 /// Global XDG variables are intentionally *not* overridden — this keeps tools
 /// spawned from within Neovim (git, opencode, terminal shells, etc.) using
 /// the user's normal system configuration.
-pub fn applyManagedEnv(_: Allocator, env: *std.process.EnvMap) !void {
+pub fn applyManagedEnv(_: Allocator, env: *std.process.Environ.Map) !void {
     // NVIM_APPNAME supports path separators.  Setting it to "ghostty/nvim"
     // makes Neovim resolve stdpath('config') to $XDG_CONFIG_HOME/ghostty/nvim
     // (i.e. ~/.config/ghostty/nvim) without altering XDG_CONFIG_HOME itself.
@@ -68,8 +76,8 @@ pub fn applyManagedEnv(_: Allocator, env: *std.process.EnvMap) !void {
 /// Caller owns returned memory.
 pub fn managedInitPath(alloc: Allocator) !?[]const u8 {
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = (internal_os.home(&home_buf) catch return null) orelse return null;
-    return try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim/init.lua", .{home});
+    const home_path = (home(&home_buf) catch return null) orelse return null;
+    return try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim/init.lua", .{home_path});
 }
 
 /// Ensure the managed profile exists at ~/.config/ghostty/nvim by seeding it
@@ -83,13 +91,13 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
     const source_dir = try std.fmt.allocPrint(alloc, "{s}/nvim", .{base});
     defer alloc.free(source_dir);
 
-    if (std.fs.accessAbsolute(source_dir, .{})) |_| {} else |_| {
+    if (std.Io.Dir.accessAbsolute(global.io(), source_dir, .{})) |_| {} else |_| {
         log.warn("bundled nvim profile not found at: {s}", .{source_dir});
         return;
     }
 
     var home_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const home = internal_os.home(&home_buf) catch |err| {
+    const home_path = home(&home_buf) catch |err| {
         log.warn("failed to determine home directory for managed nvim seed: {}", .{err});
         return;
     } orelse {
@@ -97,19 +105,19 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
         return;
     };
 
-    const target_dir = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim", .{home});
+    const target_dir = try std.fmt.allocPrint(alloc, "{s}/.config/ghostty/nvim", .{home_path});
     defer alloc.free(target_dir);
 
     // Ensure parent path exists.
-    var home_dir = try std.fs.openDirAbsolute(home, .{});
-    defer home_dir.close();
-    try home_dir.makePath(".config/ghostty/nvim");
+    var home_dir = try std.Io.Dir.openDirAbsolute(global.io(), home_path, .{});
+    defer home_dir.close(global.io());
+    try home_dir.createDirPath(global.io(), ".config/ghostty/nvim");
     // Suppress NvChad one-time Blink integration announcement popup in
     // managed profiles by pre-creating its marker directory.
-    try home_dir.makePath(".local/share/ghostty/nvim/nvnotify1");
+    try home_dir.createDirPath(global.io(), ".local/share/ghostty/nvim/nvnotify1");
 
     // First launch: copy full bundled profile.
-    if (std.fs.accessAbsolute(target_dir, .{})) |_| {
+    if (std.Io.Dir.accessAbsolute(global.io(), target_dir, .{})) |_| {
         // Existing managed profile: only backfill missing bundled files so users
         // keep their edits while still getting newly added managed defaults.
         try copyMissingFilesRecursive(alloc, source_dir, target_dir);
@@ -139,25 +147,25 @@ pub fn ensureManagedProfileSeeded(alloc: Allocator, resources_dir: ?[]const u8) 
 }
 
 fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {
-    var source = try std.fs.openDirAbsolute(source_path, .{ .iterate = true });
-    defer source.close();
+    var source = try std.Io.Dir.openDirAbsolute(global.io(), source_path, .{ .iterate = true });
+    defer source.close(global.io());
 
-    var target = try std.fs.openDirAbsolute(target_path, .{});
-    defer target.close();
+    var target = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target.close(global.io());
 
     var walker = try source.walk(alloc);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(global.io())) |entry| {
         switch (entry.kind) {
             .directory => {
-                try target.makePath(entry.path);
+                try target.createDirPath(global.io(), entry.path);
             },
             .file => {
                 if (std.fs.path.dirname(entry.path)) |parent| {
-                    try target.makePath(parent);
+                    try target.createDirPath(global.io(), parent);
                 }
-                try source.copyFile(entry.path, target, entry.path, .{});
+                try source.copyFile(entry.path, target, entry.path, global.io(), .{});
             },
             else => {},
         }
@@ -165,11 +173,11 @@ fn copyDirRecursive(alloc: Allocator, source_path: []const u8, target_path: []co
 }
 
 fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_path: []const u8) !void {
-    var source = try std.fs.openDirAbsolute(source_path, .{ .iterate = true });
-    defer source.close();
+    var source = try std.Io.Dir.openDirAbsolute(global.io(), source_path, .{ .iterate = true });
+    defer source.close(global.io());
 
-    var target = try std.fs.openDirAbsolute(target_path, .{});
-    defer target.close();
+    var target = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target.close(global.io());
 
     // Migration guard:
     // If users already have the managed extras inside lua/plugins/init.lua
@@ -191,11 +199,11 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
     // inside lua/plugins/init.lua. Replace that file with the current minimal
     // managed template so lua/plugins/ghostty_extras.lua can be synced normally.
     if (init_has_managed_extras and (isLegacyManagedPluginsInit(alloc, target_plugins_init) catch false)) {
-        try source.copyFile("lua/plugins/init.lua", target, "lua/plugins/init.lua", .{});
+        try source.copyFile("lua/plugins/init.lua", target, "lua/plugins/init.lua", global.io(), .{});
         init_has_managed_extras = false;
     }
 
-    target.deleteFile("lua/configs/bufferline.lua") catch |err| switch (err) {
+    target.deleteFile(global.io(), "lua/configs/bufferline.lua") catch |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     };
@@ -203,10 +211,10 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
     var walker = try source.walk(alloc);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(global.io())) |entry| {
         switch (entry.kind) {
             .directory => {
-                try target.makePath(entry.path);
+                try target.createDirPath(global.io(), entry.path);
             },
             .file => {
                 const is_managed_extras = std.mem.eql(u8, entry.path, "lua/plugins/ghostty_extras.lua");
@@ -219,7 +227,7 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                 }
 
                 if (std.fs.path.dirname(entry.path)) |parent| {
-                    try target.makePath(parent);
+                    try target.createDirPath(global.io(), parent);
                 }
 
                 // Keep managed defaults current for all users:
@@ -231,19 +239,19 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
                     is_managed_tabufline_config or
                     is_managed_treesitter_config)
                 {
-                    target.deleteFile(entry.path) catch |err| switch (err) {
+                    target.deleteFile(global.io(), entry.path) catch |err| switch (err) {
                         error.FileNotFound => {},
                         else => return err,
                     };
-                    try source.copyFile(entry.path, target, entry.path, .{});
+                    try source.copyFile(entry.path, target, entry.path, global.io(), .{});
                     continue;
                 }
 
-                if (target.access(entry.path, .{})) |_| {
+                if (target.access(global.io(), entry.path, .{})) |_| {
                     continue;
                 } else |_| {}
 
-                try source.copyFile(entry.path, target, entry.path, .{});
+                try source.copyFile(entry.path, target, entry.path, global.io(), .{});
             },
             else => {},
         }
@@ -253,25 +261,25 @@ fn copyMissingFilesRecursive(alloc: Allocator, source_path: []const u8, target_p
 fn migrateManagedFilePermissionsWritable(alloc: Allocator, target_path: []const u8) !void {
     if (@import("builtin").os.tag == .windows) return;
 
-    var target = try std.fs.openDirAbsolute(target_path, .{ .iterate = true });
-    defer target.close();
+    var target = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{ .iterate = true });
+    defer target.close(global.io());
 
     var walker = try target.walk(alloc);
     defer walker.deinit();
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(global.io())) |entry| {
         if (entry.kind != .file) continue;
 
-        var file = target.openFile(entry.path, .{}) catch |err| switch (err) {
+        var file = target.openFile(global.io(), entry.path, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => return err,
         };
-        defer file.close();
+        defer file.close(global.io());
 
-        const stat = try file.stat();
-        const desired_mode = stat.mode | 0o200;
-        if (desired_mode != stat.mode) {
-            try file.chmod(desired_mode);
+        const stat = try file.stat(global.io());
+        const permissions = stat.permissions.setReadOnly(false);
+        if (permissions != stat.permissions) {
+            try file.setPermissions(global.io(), permissions);
         }
     }
 }
@@ -280,13 +288,13 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
     defer alloc.free(options_path);
 
-    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), options_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const old_showbreak = "o.showbreak = \"> \"";
@@ -301,9 +309,9 @@ fn migrateManagedOptionsShowbreak(alloc: Allocator, target_path: []const u8) !vo
     );
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/options.lua",
         .data = updated,
     });
@@ -315,13 +323,13 @@ fn migrateManagedOptionsVirtualedit(alloc: Allocator, target_path: []const u8) !
     const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
     defer alloc.free(options_path);
 
-    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), options_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const old_virtualedit = "o.virtualedit = \"all\"";
@@ -336,9 +344,9 @@ fn migrateManagedOptionsVirtualedit(alloc: Allocator, target_path: []const u8) !
     );
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/options.lua",
         .data = updated,
     });
@@ -350,13 +358,13 @@ fn migrateManagedOptionsTerminalWrap(alloc: Allocator, target_path: []const u8) 
     const options_path = try std.fmt.allocPrint(alloc, "{s}/lua/options.lua", .{target_path});
     defer alloc.free(options_path);
 
-    var file = std.fs.openFileAbsolute(options_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), options_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const marker = "ghostty_terminal_wrap";
@@ -390,9 +398,9 @@ fn migrateManagedOptionsTerminalWrap(alloc: Allocator, target_path: []const u8) 
     const updated = try std.mem.concat(alloc, u8, &.{ data, snippet });
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/options.lua",
         .data = updated,
     });
@@ -404,13 +412,13 @@ fn migrateManagedChadrcBufferline(alloc: Allocator, target_path: []const u8) !vo
     const chadrc_path = try std.fmt.allocPrint(alloc, "{s}/lua/chadrc.lua", .{target_path});
     defer alloc.free(chadrc_path);
 
-    var file = std.fs.openFileAbsolute(chadrc_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), chadrc_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     var updated = try alloc.dupe(u8, data);
@@ -455,9 +463,9 @@ fn migrateManagedChadrcBufferline(alloc: Allocator, target_path: []const u8) !vo
         updated = replaced;
     }
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/chadrc.lua",
         .data = updated,
     });
@@ -469,13 +477,13 @@ fn migrateManagedMappingsBufferline(alloc: Allocator, target_path: []const u8) !
     const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
     defer alloc.free(mappings_path);
 
-    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), mappings_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const old_block =
@@ -492,9 +500,9 @@ fn migrateManagedMappingsBufferline(alloc: Allocator, target_path: []const u8) !
     );
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/mappings.lua",
         .data = updated,
     });
@@ -506,13 +514,13 @@ fn migrateManagedMappingsLazyTelescope(alloc: Allocator, target_path: []const u8
     const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
     defer alloc.free(mappings_path);
 
-    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), mappings_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const old_block =
@@ -543,9 +551,9 @@ fn migrateManagedMappingsLazyTelescope(alloc: Allocator, target_path: []const u8
     );
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/mappings.lua",
         .data = updated,
     });
@@ -557,13 +565,13 @@ fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !voi
     const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
     defer alloc.free(mappings_path);
 
-    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), mappings_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     const block_start = std.mem.indexOf(u8, data, "local telescope_split_preview = {") orelse return;
@@ -583,9 +591,9 @@ fn migrateManagedMappingsCleanup(alloc: Allocator, target_path: []const u8) !voi
     const updated = try std.mem.concat(alloc, u8, &.{ data[0..block_start], data[cut_end..] });
     defer alloc.free(updated);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/mappings.lua",
         .data = updated,
     });
@@ -597,13 +605,13 @@ fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !vo
     const mappings_path = try std.fmt.allocPrint(alloc, "{s}/lua/mappings.lua", .{target_path});
     defer alloc.free(mappings_path);
 
-    var file = std.fs.openFileAbsolute(mappings_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), mappings_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     if (std.mem.indexOf(u8, data, "<cmd>CodeDiff<CR>") == null) return;
@@ -626,9 +634,9 @@ fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !vo
     );
     defer alloc.free(updated_desc);
 
-    var target_dir = try std.fs.openDirAbsolute(target_path, .{});
-    defer target_dir.close();
-    try target_dir.writeFile(.{
+    var target_dir = try std.Io.Dir.openDirAbsolute(global.io(), target_path, .{});
+    defer target_dir.close(global.io());
+    try target_dir.writeFile(global.io(), .{
         .sub_path = "lua/mappings.lua",
         .data = updated_desc,
     });
@@ -637,13 +645,13 @@ fn migrateManagedMappingsDiffview(alloc: Allocator, target_path: []const u8) !vo
 }
 
 fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []const u8) !bool {
-    var file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), file_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     for (needles) |needle| {
@@ -653,13 +661,13 @@ fn fileContainsAny(alloc: Allocator, file_path: []const u8, needles: []const []c
 }
 
 fn isLegacyManagedPluginsInit(alloc: Allocator, file_path: []const u8) !bool {
-    var file = std.fs.openFileAbsolute(file_path, .{}) catch |err| switch (err) {
+    var file = std.Io.Dir.openFileAbsolute(global.io(), file_path, .{}) catch |err| switch (err) {
         error.FileNotFound => return false,
         else => return err,
     };
-    defer file.close();
+    defer file.close(global.io());
 
-    const data = try file.readToEndAlloc(alloc, 1024 * 1024);
+    const data = try compat_file.readToEndAlloc(file, alloc, 1024 * 1024);
     defer alloc.free(data);
 
     // New template marker means no migration needed.

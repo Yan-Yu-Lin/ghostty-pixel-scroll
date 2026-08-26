@@ -242,7 +242,7 @@ pub const State = struct {
         self: *State,
         alloc: Allocator,
         pending_: ?Image.Pending,
-        transmit_time: std.time.Instant,
+        generation: u64,
     ) !void {
         const pending = pending_ orelse {
             if (self.images.getPtr(.nvim_preview)) |data| {
@@ -254,7 +254,7 @@ pub const State = struct {
         try self.prepImage(
             alloc,
             .nvim_preview,
-            transmit_time,
+            generation,
             pending,
         );
     }

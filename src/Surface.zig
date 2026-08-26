@@ -21,6 +21,7 @@ const assert = @import("quirks.zig").inlineAssert;
 const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const global = @import("global.zig");
+const time = @import("time.zig");
 const oni = @import("oniguruma");
 const simd = @import("simd/main.zig");
 const crash = @import("crash/main.zig");
@@ -276,7 +277,7 @@ const Mouse = struct {
     /// Tracks recent precision scroll velocity so we can inject momentum
     /// when the user lifts their fingers off the touchpad.
     precision_scroll_velocity: f64 = 0,
-    precision_scroll_last_time: ?std.time.Instant = null,
+    precision_scroll_last_time: ?time.Instant = null,
     precision_scroll_active: bool = false,
 
     /// True if the mouse is hidden
@@ -1018,14 +1019,14 @@ pub fn startCollabHost(self: *Surface) !void {
     const server = state.server orelse return;
     const port = server.port;
     {
-        const file = std.fs.createFileAbsolute("/tmp/ghostty-collab-info", .{}) catch |err| {
+        const file = std.Io.Dir.createFileAbsolute(global.io(), "/tmp/ghostty-collab-info", .{}) catch |err| {
             log.warn("failed to write collab info file: {}", .{err});
             return;
         };
-        defer file.close();
+        defer file.close(global.io());
         var buf: [128]u8 = undefined;
         const info_str = std.fmt.bufPrint(&buf, "0.0.0.0:{d}", .{port}) catch return;
-        file.writeAll(info_str) catch {};
+        file.writeStreamingAll(global.io(), info_str) catch {};
     }
     log.info("collab session started on port {d}", .{port});
 
@@ -1046,11 +1047,11 @@ pub fn startCollabHost(self: *Surface) !void {
 
     // Write join info (include nvim port)
     {
-        const file2 = std.fs.createFileAbsolute("/tmp/ghostty-collab-nvim-port", .{}) catch return;
-        defer file2.close();
+        const file2 = std.Io.Dir.createFileAbsolute(global.io(), "/tmp/ghostty-collab-nvim-port", .{}) catch return;
+        defer file2.close(global.io());
         var buf2: [16]u8 = undefined;
         const nvim_port_str = std.fmt.bufPrint(&buf2, "{d}", .{nvim_port}) catch return;
-        file2.writeAll(nvim_port_str) catch {};
+        file2.writeStreamingAll(global.io(), nvim_port_str) catch {};
     }
 }
 
@@ -1161,13 +1162,13 @@ pub fn connectRemoteNeovim(self: *Surface, host: []const u8, nvim_port: u16) !vo
     var tcp_ready = false;
     var wait_attempts: u32 = 0;
     while (wait_attempts < 50) : (wait_attempts += 1) {
-        const addr = std.net.Address.parseIp4(host, nvim_port) catch break;
-        if (std.net.tcpConnectToAddress(addr)) |stream| {
-            stream.close();
+        const address = std.Io.net.IpAddress.parse(host, nvim_port) catch break;
+        if (address.connect(global.io(), .{ .mode = .stream })) |stream| {
+            stream.close(global.io());
             tcp_ready = true;
             break;
         } else |_| {}
-        std.Thread.sleep(100 * std.time.ns_per_ms);
+        std.Io.sleep(global.io(), .fromMilliseconds(100), .awake) catch {};
     }
     if (!tcp_ready) {
         log.err("timed out waiting for remote Neovim at {s}:{d}", .{ host, nvim_port });
@@ -1246,7 +1247,7 @@ fn maybePrepareManagedNeovimProfile(
 
     neovim_gui.profile.ensureManagedProfileSeeded(
         self.alloc,
-        global_state.resources_dir.host(),
+        global.resourcesDir().host(),
     ) catch |err| {
         log.warn("failed to seed managed nvim profile, continuing with empty managed profile: {}", .{err});
     };
@@ -2131,7 +2132,7 @@ fn setLiveShaderPreset(self: *Surface, preset_raw: []const u8) void {
     @memcpy(buf[0..len], preset[0..len]);
 
     log.info("setting live shader preset: {s}", .{buf[0..len]});
-    _ = self.renderer_thread.mailbox.push(.{
+    _ = self.renderer_thread.mailbox.push(global.io(), .{
         .set_shader_preset = buf,
     }, .{ .forever = {} });
 
@@ -3938,7 +3939,7 @@ pub fn keyCallback(
             self.config.neovim_gui_socket = null; // Allow re-entering GUI mode
 
             // Reset cursor blink state so it starts animating again
-            _ = self.renderer_thread.mailbox.push(.reset_cursor_blink, .{ .instant = {} });
+            _ = self.renderer_thread.mailbox.push(global.io(), .reset_cursor_blink, .{ .instant = {} });
 
             try self.queueRender();
 
@@ -4985,30 +4986,28 @@ pub fn scrollCallback(
                 // Track velocity for kinetic momentum on touchpad finger lift.
                 if (scroll_mods.precision) {
                     self.mouse.precision_scroll_active = true;
-                    const now = std.time.Instant.now() catch null;
-                    if (now) |n| {
-                        if (self.mouse.precision_scroll_last_time) |last| {
-                            const dt_ns = n.since(last);
-                            const dt_s: f64 = @as(f64, @floatFromInt(dt_ns)) / @as(f64, @floatFromInt(std.time.ns_per_s));
-                            if (dt_s > 0 and dt_s < 0.5) {
-                                const instant_vel = -yoff_adjusted / dt_s;
-                                // EMA with alpha 0.3 for smooth velocity tracking
-                                self.mouse.precision_scroll_velocity = self.mouse.precision_scroll_velocity * 0.7 + instant_vel * 0.3;
-                            }
+                    const n = time.Instant.now();
+                    if (self.mouse.precision_scroll_last_time) |last| {
+                        const dt_ns = n.since(last);
+                        const dt_s: f64 = @as(f64, @floatFromInt(dt_ns)) / @as(f64, @floatFromInt(std.time.ns_per_s));
+                        if (dt_s > 0 and dt_s < 0.5) {
+                            const instant_vel = -yoff_adjusted / dt_s;
+                            // EMA with alpha 0.3 for smooth velocity tracking
+                            self.mouse.precision_scroll_velocity = self.mouse.precision_scroll_velocity * 0.7 + instant_vel * 0.3;
                         }
-                        self.mouse.precision_scroll_last_time = n;
                     }
+                    self.mouse.precision_scroll_last_time = n;
                 }
 
                 // Scroll viewport when we cross line boundaries.
                 // Negative offset = scrolled into history, positive = toward active.
                 while (self.mouse.pixel_scroll_offset <= -cell_height) {
                     self.mouse.pixel_scroll_offset += cell_height;
-                    try self.io.terminal.scrollViewport(.{ .delta = -1 });
+                    self.io.terminal.scrollViewport(.{ .delta = -1 });
                 }
                 while (self.mouse.pixel_scroll_offset > 0) {
                     self.mouse.pixel_scroll_offset -= cell_height;
-                    try self.io.terminal.scrollViewport(.{ .delta = 1 });
+                    self.io.terminal.scrollViewport(.{ .delta = 1 });
                 }
 
                 // When viewport is at bottom (active), snap pixel offset to zero.
@@ -5107,6 +5106,7 @@ pub fn refreshRateHintCallback(self: *Surface, refresh_period_ns: u64) void {
     self.display_refresh_hint_ns = clamped_ns;
 
     _ = self.renderer_thread.mailbox.push(
+        global.io(),
         .{ .display_refresh_ns = clamped_ns },
         .{ .instant = {} },
     );

@@ -12,6 +12,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const env = @import("../os/env.zig");
+const global = @import("../global.zig");
+const compat_file = @import("../lib/compat/file.zig");
 const RenderedPanel = @import("rendered_panel.zig").RenderedPanel;
 const Cell = @import("rendered_panel.zig").Cell;
 const Animation = @import("animation.zig");
@@ -216,7 +219,7 @@ pub const InputPurpose = enum {
 
 const SectionState = struct {
     /// Items belonging to this section
-    items: std.ArrayList(MenuItem) = .{},
+    items: std.ArrayList(MenuItem) = .empty,
 
     /// Currently selected item index within this section
     selected: usize = 0,
@@ -317,7 +320,7 @@ pub const Menu = struct {
     search_buf: [128]u8 = [_]u8{0} ** 128,
     search_len: u8 = 0,
     /// Filtered view: indices into the active section's items list
-    filtered_indices: std.ArrayList(usize) = .{},
+    filtered_indices: std.ArrayList(usize) = .empty,
 
     /// ── Text input mode (add/edit favorites) ─────────────────────────
     input_active: bool = false,
@@ -390,10 +393,10 @@ pub const Menu = struct {
         const self = try alloc.create(Self);
         self.* = .{
             .alloc = alloc,
-            .favorites = .{},
-            .recent_commands = .{},
-            .expanded_dirs = .{},
-            .filtered_indices = .{},
+            .favorites = .empty,
+            .recent_commands = .empty,
+            .expanded_dirs = .empty,
+            .filtered_indices = .empty,
             .dir_cache = std.StringHashMap([]DirEntry).init(alloc),
             .git_statuses = std.StringHashMap(GitStatus).init(alloc),
         };
@@ -457,8 +460,8 @@ pub const Menu = struct {
 
     fn getCwdAlloc(alloc: Allocator) []const u8 {
         var buf: [4096]u8 = undefined;
-        const cwd = std.posix.getcwd(&buf) catch return "";
-        return alloc.dupe(u8, cwd) catch "";
+        const len = std.process.currentPath(global.io(), &buf) catch return "";
+        return alloc.dupe(u8, buf[0..len]) catch "";
     }
 
     // ── Favorites Persistence ───────────────────────────────────────────
@@ -467,7 +470,7 @@ pub const Menu = struct {
 
     /// Get the path to the favorites file: ~/.config/ghostty/panel-favorites
     fn getFavoritesPath(buf: []u8) ?[]const u8 {
-        const home = std.posix.getenv("HOME") orelse return null;
+        const home = env.get("HOME") orelse return null;
         return std.fmt.bufPrint(buf, "{s}/.config/ghostty/{s}", .{ home, favorites_filename }) catch null;
     }
 
@@ -476,12 +479,11 @@ pub const Menu = struct {
         var path_buf: [4096]u8 = undefined;
         const path = getFavoritesPath(&path_buf) orelse return;
 
-        const file = std.fs.openFileAbsolute(path, .{}) catch return;
-        defer file.close();
+        const file = std.Io.Dir.openFileAbsolute(global.io(), path, .{}) catch return;
+        defer file.close(global.io());
 
-        var buf: [32768]u8 = undefined;
-        const bytes_read = file.readAll(&buf) catch return;
-        const content = buf[0..bytes_read];
+        const content = compat_file.readToEndAlloc(file, self.alloc, 32768) catch return;
+        defer self.alloc.free(content);
 
         var it = std.mem.splitScalar(u8, content, '\n');
         while (it.next()) |line| {
@@ -513,15 +515,15 @@ pub const Menu = struct {
 
         // Ensure the directory exists (~/.config/ghostty/)
         if (std.fs.path.dirname(path)) |dir| {
-            std.fs.cwd().makePath(dir) catch return;
+            std.Io.Dir.cwd().createDirPath(global.io(), dir) catch return;
         }
 
-        const file = std.fs.createFileAbsolute(path, .{ .truncate = true }) catch return;
-        defer file.close();
+        const file = std.Io.Dir.createFileAbsolute(global.io(), path, .{ .truncate = true }) catch return;
+        defer file.close(global.io());
 
         for (self.favorites.items) |fav| {
-            file.writeAll(fav) catch return;
-            file.writeAll("\n") catch return;
+            file.writeStreamingAll(global.io(), fav) catch return;
+            file.writeStreamingAll(global.io(), "\n") catch return;
         }
     }
 
@@ -530,7 +532,7 @@ pub const Menu = struct {
     /// plain formats (bash/zsh basic). Reads the last N unique commands.
     fn loadShellHistory(self: *Self) void {
         // Try zsh history first, then bash
-        const home = std.posix.getenv("HOME") orelse return;
+        const home = env.get("HOME") orelse return;
         const history_paths = [_][]const u8{
             "/.zsh_history",
             "/.bash_history",
@@ -545,21 +547,19 @@ pub const Menu = struct {
     }
 
     fn loadHistoryFile(self: *Self, path: []const u8) bool {
-        const file = std.fs.openFileAbsolute(path, .{}) catch return false;
-        defer file.close();
+        const file = std.Io.Dir.openFileAbsolute(global.io(), path, .{}) catch return false;
+        defer file.close(global.io());
 
-        // Read the last 128KB of the file
-        const stat = file.stat() catch return false;
+        // Read the last 128KB of the file.
+        const stat = file.stat(global.io()) catch return false;
         const file_size = stat.size;
         const read_size: u64 = @min(file_size, 128 * 1024);
         const offset: u64 = file_size - read_size;
 
-        if (offset > 0) {
-            file.seekTo(offset) catch return false;
-        }
-
         var read_buf: [128 * 1024]u8 = undefined;
-        const bytes_read = file.readAll(&read_buf) catch return false;
+        var reader = file.reader(global.io(), &.{});
+        reader.seekTo(offset) catch return false;
+        const bytes_read = reader.interface.readSliceShort(read_buf[0..@intCast(read_size)]) catch return false;
         if (bytes_read == 0) return false;
 
         const content = read_buf[0..bytes_read];
@@ -887,18 +887,18 @@ pub const Menu = struct {
             return cached;
         }
 
-        var dir = std.fs.openDirAbsolute(dir_path, .{ .iterate = true }) catch |err| {
+        var dir = std.Io.Dir.openDirAbsolute(global.io(), dir_path, .{ .iterate = true }) catch |err| {
             log.warn("failed to open dir '{s}': {}", .{ dir_path, err });
             return &[_]DirEntry{};
         };
-        defer dir.close();
+        defer dir.close(global.io());
 
-        var entries_list: std.ArrayList(DirEntry) = .{};
+        var entries_list: std.ArrayList(DirEntry) = .empty;
         defer entries_list.deinit(self.alloc);
 
         var it = dir.iterate();
         var count: usize = 0;
-        while (it.next() catch null) |entry| {
+        while (it.next(global.io()) catch null) |entry| {
             // Skip .git (too large), build artifacts, and caches
             if (std.mem.eql(u8, entry.name, ".git")) continue;
             if (std.mem.eql(u8, entry.name, "node_modules")) continue;
@@ -1012,25 +1012,25 @@ pub const Menu = struct {
         const argv = [_][]const u8{
             "git", "-C", self.file_tree_root, "status", "--porcelain=v1", "-uall",
         };
-        var child = std.process.Child.init(&argv, self.alloc);
-        child.stdout_behavior = .Pipe;
-        child.stderr_behavior = .Ignore;
-
-        child.spawn() catch return;
+        var child = std.process.spawn(global.io(), .{
+            .argv = &argv,
+            .stdout = .pipe,
+            .stderr = .ignore,
+        }) catch return;
 
         const stdout = child.stdout orelse {
-            _ = child.wait() catch {};
+            _ = child.wait(global.io()) catch {};
             return;
         };
 
         // Read up to 64KB of output
-        const output = stdout.readToEndAlloc(self.alloc, 64 * 1024) catch {
-            _ = child.wait() catch {};
+        const output = compat_file.readToEndAlloc(stdout, self.alloc, 64 * 1024) catch {
+            _ = child.wait(global.io()) catch {};
             return;
         };
         defer self.alloc.free(output);
 
-        _ = child.wait() catch {};
+        _ = child.wait(global.io()) catch {};
 
         // Parse porcelain output: "XY path\n"
         // X = index status, Y = worktree status

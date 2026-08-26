@@ -9,6 +9,7 @@ const gobject = @import("gobject");
 const gtk = @import("gtk");
 
 const i18n = @import("../../../os/main.zig").i18n;
+const env = @import("../../../os/env.zig");
 const apprt = @import("../../../apprt.zig");
 const configpkg = @import("../../../config.zig");
 const TitlebarStyle = configpkg.Config.GtkTitlebarStyle;
@@ -1045,7 +1046,7 @@ pub const Window = extern struct {
     }
 
     fn hy3TraceEnabled() bool {
-        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        const raw = env.get("GHOSTTY_HY3_TRACE") orelse return false;
         return std.ascii.eqlIgnoreCase(raw, "1") or
             std.ascii.eqlIgnoreCase(raw, "true") or
             std.ascii.eqlIgnoreCase(raw, "yes") or

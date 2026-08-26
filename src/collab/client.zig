@@ -6,6 +6,9 @@
 const std = @import("std");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
+const fd_io = @import("../os/fd.zig");
+const global = @import("../global.zig");
+const px = @import("../os/posix_compat.zig");
 const Profile = @import("profile.zig").Profile;
 const protocol = @import("protocol.zig");
 const Presence = protocol.Presence;
@@ -18,7 +21,7 @@ pub const Client = struct {
     const Self = @This();
 
     alloc: Allocator,
-    socket: ?posix.socket_t = null,
+    socket: ?std.Io.net.Stream = null,
     profile: Profile,
     my_peer_id: u8 = 0,
 
@@ -51,8 +54,8 @@ pub const Client = struct {
 
     pub fn deinit(self: *Self) void {
         self.stop();
-        if (self.socket) |fd| {
-            posix.close(fd);
+        if (self.socket) |stream| {
+            stream.close(global.io());
             self.socket = null;
         }
     }
@@ -61,22 +64,8 @@ pub const Client = struct {
     pub fn connect(self: *Self, host: []const u8, port: u16) !void {
         log.info("connecting to collab session at {s}:{d}", .{ host, port });
 
-        const addr = try std.net.Address.resolveIp(host, port);
-        const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-        errdefer posix.close(fd);
-
-        try posix.connect(fd, &addr.any, addr.getOsSockLen());
-
-        // Set non-blocking after connect
-        if (posix.fcntl(fd, posix.F.GETFL, 0)) |flags| {
-            _ = posix.fcntl(
-                fd,
-                posix.F.SETFL,
-                flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })),
-            ) catch {};
-        } else |_| {}
-
-        self.socket = fd;
+        const address = try std.Io.net.IpAddress.resolve(global.io(), host, port);
+        self.socket = try address.connect(global.io(), .{ .mode = .stream });
 
         // Send join message with our profile
         self.sendJoin();
@@ -100,36 +89,36 @@ pub const Client = struct {
 
     /// Send our presence update to the host.
     pub fn sendPresence(self: *Self, presence: Presence) void {
-        const fd = self.socket orelse return;
+        const fd = if (self.socket) |stream| stream.socket.handle else return;
         var payload_buf: [512]u8 = undefined;
         const payload_len = presence.serialize(&payload_buf);
         if (payload_len == 0) return;
 
         var msg_buf: [512]u8 = undefined;
         const len = protocol.encodeMessage(.presence, payload_buf[0..payload_len], &msg_buf) orelse return;
-        _ = posix.write(fd, msg_buf[0..len]) catch {};
+        fd_io.writeAll(fd, msg_buf[0..len]) catch {};
     }
 
     /// Send a raw pre-encoded message to the server.
     pub fn sendRaw(self: *Self, msg: []const u8) void {
-        const fd = self.socket orelse return;
-        _ = posix.write(fd, msg) catch {};
+        const fd = if (self.socket) |stream| stream.socket.handle else return;
+        fd_io.writeAll(fd, msg) catch {};
     }
 
     fn sendJoin(self: *Self) void {
-        const fd = self.socket orelse return;
+        const fd = if (self.socket) |stream| stream.socket.handle else return;
         var payload: [38]u8 = undefined;
         self.profile.serialize(&payload);
 
         var msg_buf: [128]u8 = undefined;
         if (protocol.encodeMessage(.join, &payload, &msg_buf)) |len| {
-            _ = posix.write(fd, msg_buf[0..len]) catch {};
+            fd_io.writeAll(fd, msg_buf[0..len]) catch {};
         }
     }
 
     fn clientLoop(self: *Self) void {
         log.info("collab client thread started", .{});
-        const fd = self.socket orelse return;
+        const fd = if (self.socket) |stream| stream.socket.handle else return;
 
         while (!self.should_stop.load(.acquire)) {
             var fds = [_]posix.pollfd{.{
@@ -137,11 +126,10 @@ pub const Client = struct {
                 .events = posix.POLL.IN,
                 .revents = 0,
             }};
-
-            const poll_result = posix.poll(&fds, 10) catch 0;
+            const poll_result = px.poll(&fds, 10) catch 0;
 
             if (poll_result > 0 and (fds[0].revents & posix.POLL.IN) != 0) {
-                const bytes_read = posix.read(fd, self.read_buf[self.read_pos..]) catch |err| {
+                const bytes_read = px.read(fd, self.read_buf[self.read_pos..]) catch |err| {
                     switch (err) {
                         error.WouldBlock => continue,
                         else => {

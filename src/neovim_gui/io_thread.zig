@@ -11,6 +11,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const global = @import("../global.zig");
+const fd_io = @import("../os/fd.zig");
+const px = @import("../os/posix_compat.zig");
 const znvim = @import("znvim");
 const msgpack = znvim.msgpack;
 const protocol = znvim.protocol;
@@ -25,7 +28,7 @@ const log = std.log.scoped(.neovim_io);
 pub const EventQueue = struct {
     const Self = @This();
 
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     events: std.ArrayListUnmanaged(Event) = .empty,
     alloc: Allocator,
 
@@ -42,8 +45,8 @@ pub const EventQueue = struct {
     }
 
     pub fn push(self: *Self, event: Event) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         try self.events.append(self.alloc, event);
     }
 
@@ -51,15 +54,15 @@ pub const EventQueue = struct {
     /// after accumulating a complete Neovim redraw notification).
     /// The render thread will see either all or none of the batch.
     pub fn pushAll(self: *Self, batch: []const Event) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         try self.events.appendSlice(self.alloc, batch);
     }
 
     /// Pop all events (called from render thread)
     pub fn popAll(self: *Self, out: *std.ArrayListUnmanaged(Event)) void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
 
         // Swap buffers - render thread gets all events, we get empty list
         const tmp = out.*;
@@ -652,7 +655,7 @@ pub const IoThread = struct {
     mode: ConnectionMode,
 
     // Socket connection (for socket and tcp modes)
-    socket: ?std.net.Stream = null,
+    socket: ?std.Io.net.Stream = null,
     socket_path: ?[]const u8 = null,
 
     // TCP connection info (for tcp mode)
@@ -661,8 +664,8 @@ pub const IoThread = struct {
 
     // Embedded Neovim process (for embedded mode)
     child: ?std.process.Child = null,
-    stdin_file: ?std.fs.File = null,
-    stdout_file: ?std.fs.File = null,
+    stdin_file: ?std.Io.File = null,
+    stdout_file: ?std.Io.File = null,
 
     // Working directory for spawning Neovim
     cwd: ?[]const u8 = null,
@@ -679,7 +682,7 @@ pub const IoThread = struct {
     nvim_gui: ?*anyopaque = null,
 
     // Write queue for sending input to Neovim
-    write_mutex: std.Thread.Mutex = .{},
+    write_mutex: std.Io.Mutex = .init,
     write_queue: std.ArrayListUnmanaged([]const u8) = .empty,
 
     // Local batch buffer for accumulating a complete Neovim redraw notification
@@ -695,8 +698,7 @@ pub const IoThread = struct {
     next_msgid: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     // Pending responses (for blocking requests during init)
-    response_mutex: std.Thread.Mutex = .{},
-    response_cond: std.Thread.Condition = .{},
+    response_mutex: std.Io.Mutex = .init,
     pending_response: ?Payload = null,
     pending_msgid: ?u32 = null,
 
@@ -754,7 +756,7 @@ pub const IoThread = struct {
         switch (self.mode) {
             .socket => {
                 if (self.socket) |socket| {
-                    socket.close();
+                    socket.close(global.io());
                 }
                 if (self.socket_path) |path| {
                     self.alloc.free(path);
@@ -762,7 +764,7 @@ pub const IoThread = struct {
             },
             .tcp => {
                 if (self.socket) |socket| {
-                    socket.close();
+                    socket.close(global.io());
                 }
                 if (self.tcp_host) |h| {
                     self.alloc.free(h);
@@ -770,13 +772,13 @@ pub const IoThread = struct {
             },
             .embedded => {
                 // Close pipes
-                if (self.stdin_file) |f| f.close();
-                if (self.stdout_file) |f| f.close();
+                if (self.stdin_file) |f| f.close(global.io());
+                if (self.stdout_file) |f| f.close(global.io());
 
                 // Terminate child process
                 if (self.child) |*child| {
-                    _ = child.kill() catch {};
-                    _ = child.wait() catch {};
+                    child.kill(global.io());
+                    _ = child.wait(global.io()) catch {};
                 }
             },
         }
@@ -787,52 +789,32 @@ pub const IoThread = struct {
         }
 
         // Free write queue
-        self.write_mutex.lock();
+        self.write_mutex.lockUncancelable(global.io());
         for (self.write_queue.items) |msg| {
             self.alloc.free(msg);
         }
         self.write_queue.deinit(self.alloc);
-        self.write_mutex.unlock();
+        self.write_mutex.unlock(global.io());
 
         self.read_buffer.deinit(self.alloc);
         self.alloc.destroy(self);
     }
 
     pub fn connect(self: *Self) !void {
-        const posix = std.posix;
         switch (self.mode) {
             .socket => {
                 const path = self.socket_path orelse return error.NoSocketPath;
                 log.info("Connecting to Neovim at: {s}", .{path});
-                self.socket = try std.net.connectUnixSocket(path);
-
-                // Set socket to non-blocking mode so reads don't block the I/O thread
-                const socket = self.socket.?;
-                if (posix.fcntl(socket.handle, posix.F.GETFL, 0)) |flags| {
-                    _ = posix.fcntl(
-                        socket.handle,
-                        posix.F.SETFL,
-                        flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })),
-                    ) catch {};
-                } else |_| {}
-                log.info("Connected to Neovim (non-blocking)", .{});
+                const address: std.Io.net.UnixAddress = try .init(path);
+                self.socket = try address.connect(global.io());
+                log.info("Connected to Neovim", .{});
             },
             .tcp => {
                 const host = self.tcp_host orelse return error.NoTcpHost;
                 log.info("Connecting to remote Neovim at {s}:{d}", .{ host, self.tcp_port });
-                const addr = try std.net.Address.parseIp4(host, self.tcp_port);
-                self.socket = try std.net.tcpConnectToAddress(addr);
-
-                // Set socket to non-blocking mode
-                const socket = self.socket.?;
-                if (posix.fcntl(socket.handle, posix.F.GETFL, 0)) |flags| {
-                    _ = posix.fcntl(
-                        socket.handle,
-                        posix.F.SETFL,
-                        flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })),
-                    ) catch {};
-                } else |_| {}
-                log.info("Connected to remote Neovim (non-blocking)", .{});
+                const address = try std.Io.net.IpAddress.resolve(global.io(), host, self.tcp_port);
+                self.socket = try address.connect(global.io(), .{ .mode = .stream });
+                log.info("Connected to remote Neovim", .{});
             },
             .embedded => {
                 log.info("Spawning embedded Neovim (cwd: {?s}, profile={s})", .{
@@ -860,24 +842,21 @@ pub const IoThread = struct {
                 }
                 try argv.append(self.alloc, "--embed");
 
-                var child = std.process.Child.init(argv.items, self.alloc);
-                child.stdin_behavior = .Pipe;
-                child.stdout_behavior = .Pipe;
-                child.stderr_behavior = .Inherit;
-                child.cwd = self.cwd;
-
-                var child_env: ?std.process.EnvMap = null;
-                defer if (child_env) |*env| env.deinit();
-
+                var child_env: ?std.process.Environ.Map = null;
+                defer if (child_env) |*value| value.deinit();
                 if (self.profile_mode == .managed) {
-                    child_env = try std.process.getEnvMap(self.alloc);
-                    if (child_env) |*env| {
-                        try profile.applyManagedEnv(self.alloc, env);
-                        child.env_map = env;
-                    }
+                    child_env = try global.environMap();
+                    if (child_env) |*value| try profile.applyManagedEnv(self.alloc, value);
                 }
 
-                try child.spawn();
+                var child = try std.process.spawn(global.io(), .{
+                    .argv = argv.items,
+                    .stdin = .pipe,
+                    .stdout = .pipe,
+                    .stderr = .inherit,
+                    .cwd = if (self.cwd) |path| .{ .path = path } else .inherit,
+                    .environ_map = if (child_env) |*value| value else null,
+                });
 
                 // Store the pipes
                 self.stdin_file = child.stdin;
@@ -885,16 +864,8 @@ pub const IoThread = struct {
                 child.stdin = null;
                 child.stdout = null;
 
-                // Set stdout to non-blocking mode
-                if (self.stdout_file) |f| {
-                    if (posix.fcntl(f.handle, posix.F.GETFL, 0)) |flags| {
-                        _ = posix.fcntl(
-                            f.handle,
-                            posix.F.SETFL,
-                            flags | @as(u32, @bitCast(posix.O{ .NONBLOCK = true })),
-                        ) catch {};
-                    } else |_| {}
-                }
+                // Keep the render-facing polling loop non-blocking.
+                if (self.stdout_file) |f| fd_io.setNonblocking(f.handle);
 
                 self.child = child;
                 log.info("Neovim spawned successfully (non-blocking)", .{});
@@ -966,15 +937,15 @@ pub const IoThread = struct {
         try self.writeData(encoded);
 
         // Wait for response (blocking)
-        self.response_mutex.lock();
-        defer self.response_mutex.unlock();
+        self.response_mutex.lockUncancelable(global.io());
+        defer self.response_mutex.unlock(global.io());
 
         self.pending_msgid = msgid;
         while (self.pending_msgid != null) {
             // Process incoming messages until we get our response
-            self.response_mutex.unlock();
+            self.response_mutex.unlock(global.io());
             self.readAndProcessMessages() catch {};
-            self.response_mutex.lock();
+            self.response_mutex.lockUncancelable(global.io());
         }
 
         if (self.pending_response) |resp| {
@@ -1111,7 +1082,7 @@ pub const IoThread = struct {
     /// Get the file descriptor used for reading from Neovim.
     fn getReadFd(self: *const Self) ?std.posix.fd_t {
         return switch (self.mode) {
-            .socket, .tcp => if (self.socket) |s| s.handle else null,
+            .socket, .tcp => if (self.socket) |s| s.socket.handle else null,
             .embedded => if (self.stdout_file) |f| f.handle else null,
         };
     }
@@ -1141,7 +1112,7 @@ pub const IoThread = struct {
                 .revents = 0,
             }};
 
-            const poll_result = std.posix.poll(&fds, 10) catch 0;
+            const poll_result = px.poll(&fds, 10) catch 0;
 
             if (poll_result > 0 and (fds[0].revents & std.posix.POLL.IN) != 0) {
                 // Data available - drain all of it
@@ -1171,8 +1142,8 @@ pub const IoThread = struct {
     }
 
     fn processPendingWrites(self: *Self) !void {
-        self.write_mutex.lock();
-        defer self.write_mutex.unlock();
+        self.write_mutex.lockUncancelable(global.io());
+        defer self.write_mutex.unlock(global.io());
 
         for (self.write_queue.items) |msg| {
             self.writeData(msg) catch |err| {
@@ -1203,11 +1174,12 @@ pub const IoThread = struct {
         switch (self.mode) {
             .socket, .tcp => {
                 const socket = self.socket orelse return error.NotConnected;
-                try socket.writeAll(data);
+                var writer = socket.writer(global.io(), &.{});
+                writer.interface.writeAll(data) catch return writer.err orelse error.WriteFailed;
             },
             .embedded => {
                 const file = self.stdin_file orelse return error.NotConnected;
-                try file.writeAll(data);
+                try file.writeStreamingAll(global.io(), data);
             },
         }
     }
@@ -1217,18 +1189,18 @@ pub const IoThread = struct {
         switch (self.mode) {
             .socket, .tcp => {
                 const socket = self.socket orelse return error.NotConnected;
-                return socket.read(buffer);
+                var reader = socket.reader(global.io(), &.{});
+                return reader.interface.readSliceShort(buffer) catch return reader.err orelse error.ReadFailed;
             },
             .embedded => {
                 const file = self.stdout_file orelse return error.NotConnected;
-                return file.read(buffer);
+                var reader = file.reader(global.io(), &.{});
+                return reader.interface.readSliceShort(buffer) catch return reader.err orelse error.ReadFailed;
             },
         }
     }
 
     fn tryProcessMessage(self: *Self) ?void {
-        if (self.read_buffer.items.len == 0) return null;
-
         const decode_result = decoder.decode(self.alloc, self.read_buffer.items) catch |err| {
             // Incomplete message, wait for more data
             if (err == error.LengthReading) return null;
@@ -1420,8 +1392,8 @@ pub const IoThread = struct {
             },
             .Response => |resp| {
                 // Check if this is a response we're waiting for
-                self.response_mutex.lock();
-                defer self.response_mutex.unlock();
+                self.response_mutex.lockUncancelable(global.io());
+                defer self.response_mutex.unlock(global.io());
 
                 if (self.pending_msgid) |expected| {
                     if (resp.msgid == expected) {
@@ -1429,7 +1401,6 @@ pub const IoThread = struct {
                             self.pending_response = protocol.payload_utils.clonePayload(self.alloc, result) catch null;
                         }
                         self.pending_msgid = null;
-                        self.response_cond.signal();
                     }
                 }
             },
@@ -1938,7 +1909,7 @@ pub const IoThread = struct {
             else => return,
         };
 
-        var cells = std.ArrayListUnmanaged(Event.Cell){};
+        var cells: std.ArrayListUnmanaged(Event.Cell) = .empty;
         errdefer {
             for (cells.items) |cell| {
                 self.alloc.free(cell.text);
@@ -2068,7 +2039,7 @@ pub const IoThread = struct {
 
         log.debug("mode_info_set: cursor_style_enabled={} num_modes={}", .{ cursor_style_enabled, mode_info_list.len });
 
-        var cursor_modes = std.ArrayListUnmanaged(Event.CursorMode){};
+        var cursor_modes: std.ArrayListUnmanaged(Event.CursorMode) = .empty;
         errdefer cursor_modes.deinit(self.alloc);
 
         for (mode_info_list) |mode_info_val| {
@@ -2133,7 +2104,7 @@ pub const IoThread = struct {
             else => return &[_]StyledContent{},
         };
 
-        var styled = std.ArrayListUnmanaged(StyledContent){};
+        var styled: std.ArrayListUnmanaged(StyledContent) = .empty;
         errdefer {
             for (styled.items) |sc| {
                 self.alloc.free(sc.text);
@@ -2217,7 +2188,7 @@ pub const IoThread = struct {
             else => return,
         };
 
-        var lines = std.ArrayListUnmanaged([]StyledContent){};
+        var lines: std.ArrayListUnmanaged([]StyledContent) = .empty;
         errdefer {
             for (lines.items) |line| {
                 for (line) |sc| {
@@ -2322,7 +2293,7 @@ pub const IoThread = struct {
             else => return,
         };
 
-        var entries = std.ArrayListUnmanaged(Event.MsgHistoryEntry){};
+        var entries: std.ArrayListUnmanaged(Event.MsgHistoryEntry) = .empty;
         errdefer {
             for (entries.items) |entry| {
                 for (entry.content) |sc| {
@@ -2370,7 +2341,7 @@ pub const IoThread = struct {
             else => return,
         };
 
-        var items = std.ArrayListUnmanaged(Event.PopupmenuItem){};
+        var items: std.ArrayListUnmanaged(Event.PopupmenuItem) = .empty;
         errdefer {
             for (items.items) |item| {
                 self.alloc.free(item.word);
@@ -2441,7 +2412,7 @@ pub const IoThread = struct {
             else => return,
         };
 
-        var tabs = std.ArrayListUnmanaged(Event.TabInfo){};
+        var tabs: std.ArrayListUnmanaged(Event.TabInfo) = .empty;
         errdefer {
             for (tabs.items) |tab| {
                 self.alloc.free(tab.name);

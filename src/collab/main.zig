@@ -14,6 +14,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const global = @import("../global.zig");
 pub const Profile = @import("profile.zig").Profile;
 pub const protocol = @import("protocol.zig");
 pub const Server = @import("server.zig").Server;
@@ -29,7 +30,7 @@ pub const MAX_PEERS = 8;
 pub const CollabState = struct {
     const Self = @This();
 
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
 
     /// Peer cursors visible this frame.
     peers: [MAX_PEERS]?PeerCursor = .{null} ** MAX_PEERS,
@@ -147,8 +148,8 @@ pub const CollabState = struct {
             self.client = null;
         }
         self.role = .none;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         self.peers = .{null} ** MAX_PEERS;
         self.peer_count = 0;
     }
@@ -184,8 +185,8 @@ pub const CollabState = struct {
 
     /// Get a snapshot of peer cursors for the renderer. Lock-free read.
     pub fn getPeers(self: *Self, out: *[MAX_PEERS]?PeerCursor) u8 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         out.* = self.peers;
         return self.peer_count;
     }
@@ -210,8 +211,8 @@ pub const CollabState = struct {
 
     fn onPresenceUpdate(peer_id: u8, presence: Presence, profile: Profile) void {
         const self = global_instance orelse return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
 
         // Find or create slot for this peer
         var slot_idx: ?usize = null;
@@ -259,8 +260,8 @@ pub const CollabState = struct {
 
     fn onPeerJoined(profile: Profile) void {
         const self = global_instance orelse return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
 
         // Add the peer immediately so the sidebar shows them as connected,
         // even before their first cursor position update arrives.
@@ -299,8 +300,8 @@ pub const CollabState = struct {
 
     fn onPeerLeft(peer_id: u8) void {
         const self = global_instance orelse return;
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
 
         for (&self.peers) |*slot| {
             if (slot.*) |existing| {

@@ -883,7 +883,7 @@ pub const Parser = struct {
             .@"1338",
             .@"1339",
             => switch (c) {
-                ';' => self.writeToFixed(),
+                ';' => self.captureTrailing(.fixed),
                 else => self.state = .invalid,
             },
 
@@ -930,11 +930,6 @@ pub const Parser = struct {
             .@"8",
             => switch (c) {
                 ';' => self.captureTrailing(.fixed),
-                else => self.state = .invalid,
-            },
-
-            .@"9" => switch (c) {
-                ';' => self.writeToFixed(),
                 else => self.state = .invalid,
             },
         }
@@ -1049,9 +1044,9 @@ pub const Parser = struct {
             .@"1343" => {
                 // OSC 1343 - Join collab session
                 // Usage: printf '\e]1343;host:port\a'
-                const writer = self.writer orelse return null;
-                writer.writeByte(0) catch return null;
-                const data = writer.buffered();
+                const capture = if (self.capture) |*value| value else return null;
+                capture.writeByte(0) catch return null;
+                const data = capture.trailing();
                 if (data.len <= 1) return null;
                 self.command = .{ .collab_join = .{
                     .value = data[0 .. data.len - 1 :0],
@@ -1062,9 +1057,9 @@ pub const Parser = struct {
             .@"1344" => {
                 // OSC 1344 - Connect NeovimGui to remote Neovim TCP
                 // Usage: printf '\e]1344;host:port\a'
-                const writer = self.writer orelse return null;
-                writer.writeByte(0) catch return null;
-                const data = writer.buffered();
+                const capture = if (self.capture) |*value| value else return null;
+                capture.writeByte(0) catch return null;
+                const data = capture.trailing();
                 if (data.len <= 1) return null;
                 self.command = .{ .collab_nvim_connect = .{
                     .value = data[0 .. data.len - 1 :0],
@@ -1076,9 +1071,9 @@ pub const Parser = struct {
                 // OSC 1345 - Set shader preset
                 // Usage: printf '\e]1345;crt-curved\a'
                 //        printf '\e]1345;none\a'
-                const writer = self.writer orelse return null;
-                writer.writeByte(0) catch return null;
-                const data = writer.buffered();
+                const capture = if (self.capture) |*value| value else return null;
+                capture.writeByte(0) catch return null;
+                const data = capture.trailing();
                 if (data.len <= 1) return null;
                 self.command = .{ .set_shader_preset = .{
                     .value = data[0 .. data.len - 1 :0],

@@ -5,6 +5,7 @@
 //! Loaded from ghostty config: collab-name, collab-color.
 
 const std = @import("std");
+const env = @import("../os/env.zig");
 
 pub const Profile = struct {
     /// Display name (max 32 bytes). Shows as a label above the cursor.
@@ -38,8 +39,8 @@ pub const Profile = struct {
             p.setName(name);
         } else {
             // Fallback to system username
-            const user = std.posix.getenv("USER") orelse
-                std.posix.getenv("USERNAME") orelse "anon";
+            const user = env.get("USER") orelse
+                env.get("USERNAME") orelse "anon";
             p.setName(user);
         }
         p.setColor(color_r, color_g, color_b);

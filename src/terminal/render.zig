@@ -371,7 +371,7 @@ pub const RenderState = struct {
         const row_arenas = row_data.items(.arena);
 
         row_pins[y] = row_pin;
-        const p: *page.Page = &row_pin.node.data;
+        const p: *page.Page = row_pin.node.page();
         const page_rac = row_pin.rowAndCell();
 
         var is_dirty = false;
@@ -439,7 +439,7 @@ pub const RenderState = struct {
                     cells_style[x] = .{ .bg_color = .{ .rgb = .{ .r = page_cell.content.color_rgb.r, .g = page_cell.content.color_rgb.g, .b = page_cell.content.color_rgb.b } } };
                 },
                 .bg_color_palette => {
-                    cells_style[x] = .{ .bg_color = .{ .palette = page_cell.content.color_palette } };
+                    cells_style[x] = .{ .bg_color = .{ .palette = page_cell.content.color_palette.data } };
                 },
             }
         }
@@ -519,12 +519,12 @@ pub const RenderState = struct {
                 const new_y = @as(f32, @floatFromInt(viewport_pin.y));
                 self.scroll_jump_viewport = old_y - new_y;
             } else if (old.node.next == viewport_pin.node) {
-                const page_rows = @as(f32, @floatFromInt(old.node.data.size.rows));
+                const page_rows = @as(f32, @floatFromInt(old.node.page().size.rows));
                 const old_y = @as(f32, @floatFromInt(old.y));
                 const new_y = @as(f32, @floatFromInt(viewport_pin.y));
                 self.scroll_jump_viewport = old_y - (page_rows + new_y);
             } else if (old.node.prev == viewport_pin.node) {
-                const prev_rows = @as(f32, @floatFromInt(viewport_pin.node.data.size.rows));
+                const prev_rows = @as(f32, @floatFromInt(viewport_pin.node.page().size.rows));
                 const old_y = @as(f32, @floatFromInt(old.y));
                 const new_y = @as(f32, @floatFromInt(viewport_pin.y));
                 self.scroll_jump_viewport = (prev_rows + old_y) - new_y;
@@ -607,6 +607,7 @@ pub const RenderState = struct {
         const row_data = self.row_data.slice();
         const row_pins = row_data.items(.pin);
         const row_serials = row_data.items(.serial);
+        const row_arenas = row_data.items(.arena);
         const row_rows = row_data.items(.raw);
         const row_cells = row_data.items(.cells);
         const row_sels = row_data.items(.selection);
@@ -637,10 +638,34 @@ pub const RenderState = struct {
             .pending_styles = &self.pending_styles,
             .applied_styles = row_applied,
         };
-        var y: usize = 0;
+        var last_dirty_page: ?*page.Page = null;
         var any_dirty: bool = false;
+        var y: usize = 0;
+
+        // Extra row above the viewport for sub-line pixel scrolling.
+        {
+            var prev_pin: ?PageList.Pin = null;
+            if (viewport_pin.y > 0) {
+                var pin = viewport_pin;
+                pin.y -= 1;
+                prev_pin = pin;
+            } else if (viewport_pin.node.prev) |node| {
+                prev_pin = .{ .node = node, .y = node.page().size.rows - 1 };
+            }
+
+            if (prev_pin) |pin| {
+                if (try self.updateRow(alloc, y, pin, &last_dirty_page, redraw)) {
+                    any_dirty = true;
+                }
+            } else {
+                row_cells[y].resize(alloc, 0) catch {};
+                row_dirties[y] = false;
+            }
+            y += 1;
+        }
+
         var page_it = viewport_pin.pageIterator(.right_down, null);
-        while (y < self.rows) {
+        while (y < self.rows - 1) {
             const chunk = page_it.next() orelse break;
             const node = chunk.node;
             const node_serial = node.serial;
@@ -651,7 +676,7 @@ pub const RenderState = struct {
             // exactly `rows` tall) so we clamp.
             const take: usize = @min(
                 @as(usize, chunk.end - chunk.start),
-                self.rows - y,
+                self.rows - 1 - y,
             );
 
             // Find our cursor if we haven't found it yet. We do this even
@@ -752,7 +777,7 @@ pub const RenderState = struct {
             var next_pin: ?PageList.Pin = null;
             const bl_pin_opt = s.pages.getBottomRight(.viewport);
             if (bl_pin_opt) |bl_pin| {
-                if (bl_pin.y + 1 < bl_pin.node.data.size.rows) {
+                if (bl_pin.y + 1 < bl_pin.node.page().size.rows) {
                     var p = bl_pin;
                     p.y += 1;
                     next_pin = p;
@@ -815,6 +840,7 @@ pub const RenderState = struct {
                 sel_bounds.* = .{ start.x, end.x };
             }
         }
+        if (last_dirty_page) |last_page| last_page.dirty = false;
 
         if (redraw) {
             self.screen = t.screens.active_key;

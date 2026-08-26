@@ -7,6 +7,9 @@
 const std = @import("std");
 const posix = std.posix;
 const Allocator = std.mem.Allocator;
+const global = @import("../global.zig");
+const fd_io = @import("../os/fd.zig");
+const px = @import("../os/posix_compat.zig");
 const Profile = @import("profile.zig").Profile;
 const protocol = @import("protocol.zig");
 const Presence = protocol.Presence;
@@ -28,7 +31,7 @@ pub const Server = struct {
     const Self = @This();
 
     alloc: Allocator,
-    listen_fd: ?posix.socket_t = null,
+    listener: ?std.Io.net.Server = null,
     peers: [MAX_PEERS]?Peer = .{null} ** MAX_PEERS,
     peer_count: u8 = 0,
     port: u16 = 0,
@@ -48,20 +51,19 @@ pub const Server = struct {
             .host_profile = host_profile,
         };
         // Generate random session token
-        var prng = std.Random.DefaultPrng.init(@bitCast(std.time.timestamp()));
-        prng.random().bytes(&server.session_token);
+        global.io().random(&server.session_token);
         return server;
     }
 
     pub fn deinit(self: *Self) void {
         self.stop();
-        if (self.listen_fd) |fd| {
-            posix.close(fd);
-            self.listen_fd = null;
+        if (self.listener) |*listener| {
+            listener.deinit(global.io());
+            self.listener = null;
         }
         for (&self.peers) |*slot| {
             if (slot.*) |*peer| {
-                posix.close(peer.fd);
+                fd_io.close(peer.fd);
                 slot.* = null;
             }
         }
@@ -69,22 +71,12 @@ pub const Server = struct {
 
     /// Start listening on a random available port.
     pub fn listen(self: *Self) !void {
-        const addr = try std.net.Address.parseIp4("0.0.0.0", 0);
-        const fd = try posix.socket(posix.AF.INET, posix.SOCK.STREAM | posix.SOCK.NONBLOCK, 0);
-        errdefer posix.close(fd);
-
-        // Allow port reuse
-        posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1))) catch {};
-
-        try posix.bind(fd, &addr.any, addr.getOsSockLen());
-        try posix.listen(fd, 8);
-
-        // Get the assigned port
-        var bound_addr: posix.sockaddr.in = undefined;
-        var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-        try posix.getsockname(fd, @ptrCast(&bound_addr), &addr_len);
-        self.port = std.mem.bigToNative(u16, bound_addr.port);
-        self.listen_fd = fd;
+        const address = try std.Io.net.IpAddress.parse("0.0.0.0", 0);
+        self.listener = try address.listen(global.io(), .{
+            .kernel_backlog = 8,
+            .reuse_address = true,
+        });
+        self.port = self.listener.?.socket.address.getPort();
 
         log.info("collab server listening on port {d}", .{self.port});
     }
@@ -110,32 +102,35 @@ pub const Server = struct {
         // then read the local address the kernel chose. No traffic is sent.
         var ip_str: [16]u8 = undefined;
         var ip_len: usize = 0;
-
-        const udp_fd = posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0) catch {
-            // Fallback to 127.0.0.1
+        const bind_address = std.Io.net.IpAddress.parse("0.0.0.0", 0) catch {
             @memcpy(ip_str[0..9], "127.0.0.1");
             ip_len = 9;
             return self.formatJoinCode(buf, ip_str[0..ip_len]);
         };
-        defer posix.close(udp_fd);
+        const udp_socket = bind_address.bind(global.io(), .{ .mode = .dgram }) catch {
+            @memcpy(ip_str[0..9], "127.0.0.1");
+            ip_len = 9;
+            return self.formatJoinCode(buf, ip_str[0..ip_len]);
+        };
+        defer udp_socket.close(global.io());
 
         const dest = posix.sockaddr.in{
             .port = std.mem.nativeToBig(u16, 53),
             .addr = std.mem.nativeToBig(u32, (8 << 24) | (8 << 16) | (8 << 8) | 8), // 8.8.8.8
         };
-        posix.connect(udp_fd, @ptrCast(&dest), @sizeOf(posix.sockaddr.in)) catch {
+        if (std.c.connect(udp_socket.handle, @ptrCast(&dest), @sizeOf(posix.sockaddr.in)) != 0) {
             @memcpy(ip_str[0..9], "127.0.0.1");
             ip_len = 9;
             return self.formatJoinCode(buf, ip_str[0..ip_len]);
-        };
+        }
 
         var local_addr: posix.sockaddr.in = undefined;
         var addr_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-        posix.getsockname(udp_fd, @ptrCast(&local_addr), &addr_len) catch {
+        if (std.c.getsockname(udp_socket.handle, @ptrCast(&local_addr), &addr_len) != 0) {
             @memcpy(ip_str[0..9], "127.0.0.1");
             ip_len = 9;
             return self.formatJoinCode(buf, ip_str[0..ip_len]);
-        };
+        }
 
         // Convert the 4-byte address to dotted-decimal string
         const addr_bytes: [4]u8 = @bitCast(local_addr.addr);
@@ -167,16 +162,16 @@ pub const Server = struct {
             self.pollPeers();
 
             // Small sleep to avoid spinning (1ms)
-            std.Thread.sleep(1 * std.time.ns_per_ms);
+            std.Io.sleep(global.io(), .fromMilliseconds(1), .awake) catch {};
         }
 
         log.info("collab server thread stopped", .{});
     }
 
     fn tryAccept(self: *Self) void {
-        const listen_fd = self.listen_fd orelse return;
+        const listen_fd = if (self.listener) |listener| listener.socket.handle else return;
 
-        const result = posix.accept(listen_fd, null, null, posix.SOCK.NONBLOCK) catch |err| {
+        const result = px.acceptNonblocking(listen_fd) catch |err| {
             switch (err) {
                 error.WouldBlock => return,
                 else => {
@@ -205,7 +200,7 @@ pub const Server = struct {
             log.info("new connection accepted (slot {d}, total {d})", .{ idx, self.peer_count });
         } else {
             log.warn("max peers reached, rejecting connection", .{});
-            posix.close(result);
+            fd_io.close(result);
         }
     }
 
@@ -215,7 +210,7 @@ pub const Server = struct {
             if (!peer.connected) continue;
 
             // Try to read data
-            const bytes_read = posix.read(peer.fd, peer.read_buf[peer.read_pos..]) catch |err| {
+            const bytes_read = px.read(peer.fd, peer.read_buf[peer.read_pos..]) catch |err| {
                 switch (err) {
                     error.WouldBlock => continue,
                     else => {
@@ -308,7 +303,7 @@ pub const Server = struct {
                         if (i == peer_idx) continue;
                         const other = &(slot.* orelse continue);
                         if (!other.connected) continue;
-                        _ = posix.write(other.fd, msg_buf[0..len]) catch {};
+                        fd_io.writeAll(other.fd, msg_buf[0..len]) catch {};
                     }
                 }
                 // Notify host to apply the edit locally
@@ -330,7 +325,7 @@ pub const Server = struct {
 
         var msg_buf: [128]u8 = undefined;
         if (protocol.encodeMessage(.welcome, &payload, &msg_buf)) |len| {
-            _ = posix.write(peer.fd, msg_buf[0..len]) catch {};
+            fd_io.writeAll(peer.fd, msg_buf[0..len]) catch {};
         }
     }
 
@@ -346,7 +341,7 @@ pub const Server = struct {
             if (i == new_peer_idx) continue;
             const peer = &(slot.* orelse continue);
             if (!peer.connected) continue;
-            _ = posix.write(peer.fd, msg_buf[0..len]) catch {};
+            fd_io.writeAll(peer.fd, msg_buf[0..len]) catch {};
         }
     }
 
@@ -358,7 +353,7 @@ pub const Server = struct {
             if (i == sender_idx) continue;
             const peer = &(slot.* orelse continue);
             if (!peer.connected) continue;
-            _ = posix.write(peer.fd, msg_buf[0..len]) catch {};
+            fd_io.writeAll(peer.fd, msg_buf[0..len]) catch {};
         }
     }
 
@@ -374,7 +369,7 @@ pub const Server = struct {
         for (&self.peers) |*slot| {
             const peer = &(slot.* orelse continue);
             if (!peer.connected) continue;
-            _ = posix.write(peer.fd, msg_buf[0..len]) catch {};
+            fd_io.writeAll(peer.fd, msg_buf[0..len]) catch {};
         }
     }
 
@@ -384,7 +379,7 @@ pub const Server = struct {
             const peer = &(slot.* orelse continue);
             if (!peer.connected) continue;
             if (peer.profile.peer_id == skip_peer_id) continue;
-            _ = posix.write(peer.fd, msg) catch {};
+            fd_io.writeAll(peer.fd, msg) catch {};
         }
     }
 
@@ -403,11 +398,11 @@ pub const Server = struct {
                 if (i == peer_idx) continue;
                 const other = &(slot.* orelse continue);
                 if (!other.connected) continue;
-                _ = posix.write(other.fd, msg_buf[0..len]) catch {};
+                fd_io.writeAll(other.fd, msg_buf[0..len]) catch {};
             }
         }
 
-        posix.close(peer.fd);
+        fd_io.close(peer.fd);
         self.peers[peer_idx] = null;
         if (self.peer_count > 0) self.peer_count -= 1;
     }

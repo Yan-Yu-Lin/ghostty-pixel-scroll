@@ -21,6 +21,7 @@ const compat_file = @import("../../../lib/compat/file.zig");
 const configpkg = @import("../../../config.zig");
 const input = @import("../../../input.zig");
 const internal_os = @import("../../../os/main.zig");
+const env = @import("../../../os/env.zig");
 const systemd = @import("../../../os/systemd.zig");
 const terminal = @import("../../../terminal/main.zig");
 const xev = global.xev;
@@ -1042,14 +1043,14 @@ pub const Application = extern struct {
             "HYPRLAND_INSTANCE_SIGNATURE",
             "HYPRLAND_CMD",
         }) |env_key| {
-            if (std.posix.getenv(env_key) != null) return true;
+            if (env.get(env_key) != null) return true;
         }
 
         for (&[_][:0]const u8{
             "XDG_CURRENT_DESKTOP",
             "XDG_SESSION_DESKTOP",
         }) |env_key| {
-            const raw = std.posix.getenv(env_key) orelse {
+            const raw = env.get(env_key) orelse {
                 continue;
             };
             var it = std.mem.splitAny(u8, raw, ":;");
@@ -1063,7 +1064,7 @@ pub const Application = extern struct {
     }
 
     fn hy3TraceEnabled() bool {
-        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        const raw = env.get("GHOSTTY_HY3_TRACE") orelse return false;
         return std.ascii.eqlIgnoreCase(raw, "1") or
             std.ascii.eqlIgnoreCase(raw, "true") or
             std.ascii.eqlIgnoreCase(raw, "yes") or

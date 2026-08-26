@@ -347,32 +347,6 @@ fn drainMailbox(
             .start_synchronized_output => self.startSynchronizedOutput(cb),
             .linefeed_mode => |v| self.flags.linefeed_mode = v,
             .focused => |v| try io.focusGained(data, v),
-            .enter_neovim_gui => {
-                // Forward to surface to initialize Neovim GUI
-                log.info("termio: enter_neovim_gui message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.enter_neovim_gui, .{ .forever = {} });
-            },
-            .toggle_panel_gui => {
-                // Forward to surface to toggle panel GUI
-                log.info("termio: toggle_panel_gui message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.toggle_panel_gui, .{ .forever = {} });
-            },
-            .collab_share => {
-                log.info("termio: collab_share message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.collab_share, .{ .forever = {} });
-            },
-            .collab_join => |buf| {
-                log.info("termio: collab_join message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.{ .collab_join = buf }, .{ .forever = {} });
-            },
-            .collab_nvim_connect => |buf| {
-                log.info("termio: collab_nvim_connect message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.{ .collab_nvim_connect = buf }, .{ .forever = {} });
-            },
-            .set_shader_preset => |buf| {
-                log.info("termio: set_shader_preset message - forwarding to surface", .{});
-                _ = io.surface_mailbox.push(.{ .set_shader_preset = buf }, .{ .forever = {} });
-            },
             .write_small => |v| try io.queueWrite(
                 data,
                 v.data[0..v.len],

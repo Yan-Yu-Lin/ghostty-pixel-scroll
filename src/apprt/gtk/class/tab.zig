@@ -8,6 +8,7 @@ const gtk = @import("gtk");
 const configpkg = @import("../../../config.zig");
 const apprt = @import("../../../apprt.zig");
 const CoreSurface = @import("../../../Surface.zig");
+const env = @import("../../../os/env.zig");
 const ext = @import("../ext.zig");
 const gresource = @import("../build/gresource.zig");
 const Common = @import("../class.zig").Common;
@@ -316,7 +317,7 @@ pub const Tab = extern struct {
     }
 
     fn hy3TraceEnabled() bool {
-        const raw = std.posix.getenv("GHOSTTY_HY3_TRACE") orelse return false;
+        const raw = env.get("GHOSTTY_HY3_TRACE") orelse return false;
         return std.ascii.eqlIgnoreCase(raw, "1") or
             std.ascii.eqlIgnoreCase(raw, "true") or
             std.ascii.eqlIgnoreCase(raw, "yes") or

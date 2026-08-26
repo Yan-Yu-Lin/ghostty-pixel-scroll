@@ -13,6 +13,10 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const posix = std.posix;
+const env = @import("../os/env.zig");
+const global = @import("../global.zig");
+const fd_io = @import("../os/fd.zig");
+const px = @import("../os/posix_compat.zig");
 
 const log = std.log.scoped(.panel_io);
 
@@ -20,7 +24,7 @@ const log = std.log.scoped(.panel_io);
 pub const OutputQueue = struct {
     const Self = @This();
 
-    mutex: std.Thread.Mutex = .{},
+    mutex: std.Io.Mutex = .init,
     buffer: std.ArrayListUnmanaged(u8) = .empty,
     alloc: Allocator,
 
@@ -33,15 +37,15 @@ pub const OutputQueue = struct {
     }
 
     pub fn push(self: *Self, data: []const u8) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         try self.buffer.appendSlice(self.alloc, data);
     }
 
     /// Drain all pending output. Returns owned slice, caller must free.
     pub fn drain(self: *Self, alloc: Allocator) !?[]u8 {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
 
         if (self.buffer.items.len == 0) return null;
 
@@ -52,8 +56,8 @@ pub const OutputQueue = struct {
 
     /// Check if there's pending data without draining
     pub fn hasPending(self: *Self) bool {
-        self.mutex.lock();
-        defer self.mutex.unlock();
+        self.mutex.lockUncancelable(global.io());
+        defer self.mutex.unlock(global.io());
         return self.buffer.items.len > 0;
     }
 };
@@ -102,14 +106,14 @@ pub const IoThread = struct {
         self.stop();
 
         if (self.pty_fd) |fd| {
-            posix.close(fd);
+            fd_io.close(fd);
         }
 
         // Kill child if still running
         if (self.child_pid) |pid| {
-            posix.kill(pid, posix.SIG.TERM) catch {};
+            px.kill(pid, posix.SIG.TERM) catch {};
             // Reap the child
-            _ = posix.waitpid(pid, 0);
+            _ = std.c.waitpid(pid, null, 0);
         }
 
         self.alloc.destroy(self);
@@ -122,11 +126,11 @@ pub const IoThread = struct {
         self.pty_fd = pty_result.master;
 
         // Fork the child
-        const pid = try posix.fork();
+        const pid = try px.fork();
         if (pid == 0) {
             // === CHILD PROCESS ===
             // Close master side
-            posix.close(pty_result.master);
+            fd_io.close(pty_result.master);
 
             // Create a new session
             _ = std.os.linux.setsid();
@@ -135,26 +139,26 @@ pub const IoThread = struct {
             _ = std.os.linux.ioctl(pty_result.slave, std.os.linux.T.IOCSCTTY, @as(usize, 0));
 
             // Redirect stdio to the slave PTY
-            posix.dup2(pty_result.slave, 0) catch posix.exit(1);
-            posix.dup2(pty_result.slave, 1) catch posix.exit(1);
-            posix.dup2(pty_result.slave, 2) catch posix.exit(1);
-            if (pty_result.slave > 2) posix.close(pty_result.slave);
+            px.dup2(pty_result.slave, 0) catch px.exit(1);
+            px.dup2(pty_result.slave, 1) catch px.exit(1);
+            px.dup2(pty_result.slave, 2) catch px.exit(1);
+            if (pty_result.slave > 2) fd_io.close(pty_result.slave);
 
             // Change directory if requested
             if (cwd) |dir| {
-                posix.chdir(dir) catch {};
+                px.chdir(dir) catch {};
             }
 
             // Set TERM
-            const env = [_:null]?[*:0]const u8{
+            const child_env = [_:null]?[*:0]const u8{
                 "TERM=xterm-256color",
                 "COLORTERM=truecolor",
                 // Inherit common env vars
-                if (std.posix.getenv("HOME")) |h| @ptrCast(std.fmt.bufPrint(&home_buf, "HOME={s}", .{h}) catch "HOME=/tmp") else "HOME=/tmp",
-                if (std.posix.getenv("PATH")) |p| @ptrCast(std.fmt.bufPrint(&path_buf, "PATH={s}", .{p}) catch "PATH=/usr/bin") else "PATH=/usr/bin:/bin",
-                if (std.posix.getenv("USER")) |u| @ptrCast(std.fmt.bufPrint(&user_buf, "USER={s}", .{u}) catch null) else null,
-                if (std.posix.getenv("SHELL")) |s| @ptrCast(std.fmt.bufPrint(&shell_buf, "SHELL={s}", .{s}) catch null) else null,
-                if (std.posix.getenv("LANG")) |l| @ptrCast(std.fmt.bufPrint(&lang_buf, "LANG={s}", .{l}) catch null) else null,
+                if (env.get("HOME")) |h| @ptrCast(std.fmt.bufPrint(&home_buf, "HOME={s}", .{h}) catch "HOME=/tmp") else "HOME=/tmp",
+                if (env.get("PATH")) |p| @ptrCast(std.fmt.bufPrint(&path_buf, "PATH={s}", .{p}) catch "PATH=/usr/bin") else "PATH=/usr/bin:/bin",
+                if (env.get("USER")) |u| @ptrCast(std.fmt.bufPrint(&user_buf, "USER={s}", .{u}) catch null) else null,
+                if (env.get("SHELL")) |s| @ptrCast(std.fmt.bufPrint(&shell_buf, "SHELL={s}", .{s}) catch null) else null,
+                if (env.get("LANG")) |l| @ptrCast(std.fmt.bufPrint(&lang_buf, "LANG={s}", .{l}) catch null) else null,
                 null,
             };
 
@@ -182,22 +186,22 @@ pub const IoThread = struct {
             // Filter out null entries from env
             var clean_env: [16:null]?[*:0]const u8 = .{null} ** 16;
             var env_idx: usize = 0;
-            for (env) |e| {
+            for (child_env) |e| {
                 if (e != null and env_idx < 15) {
                     clean_env[env_idx] = e;
                     env_idx += 1;
                 }
             }
 
-            posix.execvpeZ(prog_z, &args, &clean_env) catch {};
+            px.execvpeZ(prog_z, &args, &clean_env) catch {};
 
             // If exec failed
-            posix.exit(127);
+            px.exit(127);
         }
 
         // === PARENT PROCESS ===
         self.child_pid = pid;
-        posix.close(pty_result.slave);
+        fd_io.close(pty_result.slave);
     }
 
     // Static buffers for env vars in child (used after fork, before exec)
@@ -224,7 +228,7 @@ pub const IoThread = struct {
     /// Write input data to the PTY (called from main/render thread)
     pub fn writeInput(self: *Self, data: []const u8) !void {
         const fd = self.pty_fd orelse return;
-        _ = posix.write(fd, data) catch |err| {
+        fd_io.writeAll(fd, data) catch |err| {
             log.debug("PTY write error: {}", .{err});
             return err;
         };
@@ -275,7 +279,7 @@ pub const IoThread = struct {
                 },
             };
 
-            const poll_result = posix.poll(&fds, 50) catch |err| {
+            const poll_result = px.poll(&fds, 50) catch |err| {
                 log.debug("poll error: {}", .{err});
                 break;
             };
@@ -288,7 +292,7 @@ pub const IoThread = struct {
             }
 
             if (fds[0].revents & posix.POLL.IN != 0) {
-                const n = posix.read(fd, &buf) catch |err| {
+                const n = px.read(fd, &buf) catch |err| {
                     if (err == error.WouldBlock) continue;
                     log.debug("PTY read error: {}", .{err});
                     self.handleChildExit();
@@ -314,7 +318,7 @@ pub const IoThread = struct {
     fn handleChildExit(self: *Self) void {
         self.exited.store(true, .release);
         if (self.child_pid) |pid| {
-            const wait_result = posix.waitpid(pid, posix.W.NOHANG);
+            const wait_result = px.waitPidNoHang(pid);
             if (wait_result.pid != 0) {
                 self.exit_code = (wait_result.status >> 8) & 0xFF;
                 self.child_pid = null;
@@ -333,8 +337,8 @@ const PtyPair = struct {
 /// Open a new PTY pair and set the window size
 fn openPty(cols: u16, rows: u16) !PtyPair {
     // Use posix_openpt / grantpt / unlockpt / ptsname
-    const master = try posix.open("/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
-    errdefer posix.close(master);
+    const master = try px.open("/dev/ptmx", .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
+    errdefer fd_io.close(master);
 
     // Grant and unlock
     const TIOCSPTLCK = 0x40045431;
@@ -352,8 +356,8 @@ fn openPty(cols: u16, rows: u16) !PtyPair {
     // Null-terminate
     slave_path_buf[slave_path.len] = 0;
 
-    const slave = try posix.open(slave_path_buf[0..slave_path.len :0], .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
-    errdefer posix.close(slave);
+    const slave = try px.open(slave_path_buf[0..slave_path.len :0], .{ .ACCMODE = .RDWR, .NOCTTY = true }, 0);
+    errdefer fd_io.close(slave);
 
     // Set window size on the slave
     var ws = posix.winsize{

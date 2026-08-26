@@ -4,6 +4,9 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const global = @import("../global.zig");
+const px = @import("../os/posix_compat.zig");
+const os_env = @import("../os/env.zig");
 
 const io_thread = @import("io_thread.zig");
 pub const IoThread = io_thread.IoThread;
@@ -37,8 +40,8 @@ fn cleanupNvimChild() callconv(.c) void {
     const pid = nvim_child_pid_global;
     if (pid > 0) {
         // Kill the entire process group
-        std.posix.kill(-pid, std.posix.SIG.KILL) catch {
-            std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+        px.kill(-pid, std.posix.SIG.KILL) catch {
+            px.kill(pid, std.posix.SIG.KILL) catch {};
         };
         nvim_child_pid_global = 0;
     }
@@ -227,11 +230,11 @@ pub const NeovimGui = struct {
             log.info("killing spawned nvim process group (pid={})", .{pid});
             nvim_child_pid_global = 0; // Clear global so atexit doesn't double-kill
             // Kill the entire process group (negative PID = process group)
-            std.posix.kill(-pid, std.posix.SIG.KILL) catch {
+            px.kill(-pid, std.posix.SIG.KILL) catch {
                 // Fallback: kill just the process
-                std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+                px.kill(pid, std.posix.SIG.KILL) catch {};
             };
-            _ = std.posix.waitpid(pid, 0);
+            _ = std.c.waitpid(pid, null, 0);
             self.spawned_child_pid = null;
         }
 
@@ -317,10 +320,10 @@ pub const NeovimGui = struct {
 
         const socket_path = try self.makeSocketPath();
         defer self.alloc.free(socket_path);
-        std.fs.deleteFileAbsolute(socket_path) catch {};
+        std.Io.Dir.deleteFileAbsolute(global.io(), socket_path) catch {};
 
         // Support --clean via GHOSTTY_NVIM_ARGS
-        const extra_args_str = std.posix.getenv("GHOSTTY_NVIM_ARGS");
+        const extra_args_str = os_env.get("GHOSTTY_NVIM_ARGS");
         const use_clean = if (extra_args_str) |extra|
             std.mem.indexOf(u8, extra, "--clean") != null
         else
@@ -351,46 +354,43 @@ pub const NeovimGui = struct {
         // Spawn nvim using std.process.Child, but put it in its own process group.
         // On deinit we kill the entire process group, which catches wrapper scripts
         // and any children nvim may spawn.
-        var child = std.process.Child.init(argv.items, self.alloc);
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Ignore;
-        child.cwd = cwd;
-
-        var child_env: ?std.process.EnvMap = null;
-        defer if (child_env) |*env| env.deinit();
-
+        var child_env: ?std.process.Environ.Map = null;
+        defer if (child_env) |*value| value.deinit();
         if (profile_mode == .managed) {
-            child_env = try std.process.getEnvMap(self.alloc);
-            if (child_env) |*env| {
-                try profile.applyManagedEnv(self.alloc, env);
-                child.env_map = env;
-            }
+            child_env = try global.environMap();
+            if (child_env) |*value| try profile.applyManagedEnv(self.alloc, value);
         }
 
-        // Put the child in its own process group so we can kill the whole group.
-        child.pgid = 0;
-        try child.spawn();
-        self.spawned_child_pid = child.id;
+        const child = try std.process.spawn(global.io(), .{
+            .argv = argv.items,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .ignore,
+            .cwd = if (cwd) |path| .{ .path = path } else .inherit,
+            .environ_map = if (child_env) |*value| value else null,
+            .pgid = 0,
+        });
+        const child_pid = child.id.?;
+        self.spawned_child_pid = child_pid;
 
         // Store PID globally so our atexit/signal handler can kill it
         // even if deinit never runs (e.g. compositor force-close).
-        nvim_child_pid_global = child.id;
+        nvim_child_pid_global = child_pid;
         registerChildCleanup();
 
         // Poll until the socket appears (Neovim needs a moment to start)
         var attempts: u32 = 0;
         while (attempts < 100) : (attempts += 1) {
-            std.Thread.sleep(10 * std.time.ns_per_ms);
-            if (std.fs.accessAbsolute(socket_path, .{})) break else |_| {}
+            std.Io.sleep(global.io(), .fromMilliseconds(10), .awake) catch {};
+            if (std.Io.Dir.accessAbsolute(global.io(), socket_path, .{})) break else |_| {}
         }
         if (attempts >= 100) {
             log.err("timed out waiting for Neovim socket", .{});
             if (self.spawned_child_pid) |p| {
-                std.posix.kill(-p, std.posix.SIG.KILL) catch {
-                    std.posix.kill(p, std.posix.SIG.KILL) catch {};
+                px.kill(-p, std.posix.SIG.KILL) catch {
+                    px.kill(p, std.posix.SIG.KILL) catch {};
                 };
-                _ = std.posix.waitpid(p, 0);
+                _ = std.c.waitpid(p, null, 0);
             }
             self.spawned_child_pid = null;
             return error.SocketTimeout;
@@ -881,12 +881,13 @@ pub const NeovimGui = struct {
 
     /// Build a unique socket path under XDG_RUNTIME_DIR (or /tmp as fallback).
     fn makeSocketPath(self: *Self) ![:0]u8 {
-        const dir = std.posix.getenv("XDG_RUNTIME_DIR") orelse
-            std.posix.getenv("TMPDIR") orelse
+        const dir = os_env.get("XDG_RUNTIME_DIR") orelse
+            os_env.get("TMPDIR") orelse
             "/tmp";
-        const timestamp = std.time.timestamp();
-        var prng = std.Random.DefaultPrng.init(@bitCast(timestamp));
-        const random = prng.random().int(u32);
+        const timestamp = std.Io.Timestamp.now(global.io(), .real).toMilliseconds();
+        var random_bytes: [4]u8 = undefined;
+        global.io().random(&random_bytes);
+        const random: u32 = @bitCast(random_bytes);
         return std.fmt.allocPrintSentinel(self.alloc, "{s}/ghostty-nvim-{d}-{d}.sock", .{ dir, timestamp, random }, 0);
     }
 

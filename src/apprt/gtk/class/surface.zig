@@ -37,6 +37,7 @@ const InspectorWindow = @import("inspector_window.zig").InspectorWindow;
 const SplitTree = @import("split_tree.zig").SplitTree;
 const i18n = @import("../../../os/i18n.zig");
 const global = @import("../../../global.zig");
+const time = @import("../../../time.zig");
 const gtk_version = @import("../gtk_version.zig");
 
 const log = std.log.scoped(.gtk_ghostty_surface);
@@ -661,7 +662,7 @@ pub const Surface = extern struct {
         /// Smoothed frame pacing measurements from GTK render callbacks.
         /// Used to infer monitor refresh period (for example 60/120/165Hz)
         /// and feed that back into the core renderer thread.
-        frame_timing_last: ?std.time.Instant = null,
+        frame_timing_last: ?time.Instant = null,
         frame_timing_last_sent_ns: u64 = 0,
         frame_timing_samples: u32 = 0,
         frame_timing_locked: bool = false,
@@ -3560,7 +3561,7 @@ pub const Surface = extern struct {
         if (self.updateRefreshRateHintFromMonitor()) return;
 
         const priv = self.private();
-        const now = std.time.Instant.now() catch return;
+        const now = time.Instant.now();
         defer priv.frame_timing_last = now;
 
         const last = priv.frame_timing_last orelse return;

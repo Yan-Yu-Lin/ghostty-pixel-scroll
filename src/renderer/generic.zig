@@ -33,6 +33,8 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const Terminal = terminal.Terminal;
 const Health = renderer.Health;
 const compat_file = @import("../lib/compat/file.zig");
+const time = @import("../time.zig");
+const env = @import("../os/env.zig");
 
 const getConstraint = @import("../font/nerd_font_attributes.zig").getConstraint;
 
@@ -248,7 +250,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         cursor_blink_target: f32 = 1.0,
         cursor_blink_animating: bool = false,
         cursor_blink_visible_raw: bool = true,
-        last_blink_time: ?std.time.Instant = null,
+        last_blink_time: ?time.Instant = null,
         /// Whether the Neovim GUI cursor wants blinking (from mode_info blinkon > 0)
         nvim_cursor_blink: bool = false,
 
@@ -284,8 +286,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// burst began. `animation_time` accumulates how far the animation
         /// clock has advanced.  When the real clock drifts ahead we catch up
         /// smoothly (over 10 frames if < 1 frame behind, instantly if more).
-        animation_start: ?std.time.Instant = null,
+        animation_start: ?time.Instant = null,
         animation_time: u64 = 0, // nanoseconds
+        animation_last_frame_time: ?time.Instant = null,
 
         /// Estimated display refresh period in nanoseconds.  On macOS this
         /// comes from CVDisplayLink; elsewhere we fall back to a default.
@@ -294,8 +297,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Debug cadence sampling. These are used only for throttled debug logs
         /// so we can verify the renderer is pacing itself near the monitor's
         /// actual refresh rate while animations are active.
-        cadence_sample_start: ?std.time.Instant = null,
-        cadence_last_present: ?std.time.Instant = null,
+        cadence_sample_start: ?time.Instant = null,
+        cadence_last_present: ?time.Instant = null,
         cadence_frame_count: u32 = 0,
         cadence_anim_frame_count: u32 = 0,
         cadence_total_dt_ns: u64 = 0,
@@ -2000,10 +2003,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         }
 
         fn cadenceLoggingEnabled() bool {
-            return std.posix.getenv("GHOSTTY_ANIMATION_LOG") != null;
+            return env.get("GHOSTTY_ANIMATION_LOG") != null;
         }
 
-        fn recordCadenceSample(self: *Self, now: std.time.Instant, animating: bool, substeps: u32) void {
+        fn recordCadenceSample(self: *Self, now: time.Instant, animating: bool, substeps: u32) void {
             const start = self.cadence_sample_start orelse blk: {
                 self.cadence_sample_start = now;
                 self.cadence_last_present = now;
@@ -2088,11 +2091,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             //   - > 1 second behind → reset (we were suspended / huge lag)
             //
             // The base frame period comes from the display refresh rate.
-            const now = std.time.Instant.now() catch {
-                self.last_frame_time = null;
-                return;
-            };
-            self.last_frame_time = now;
+            const now = time.Instant.now();
+            self.animation_last_frame_time = now;
 
             // Initialise animation clock on first frame
             if (self.animation_start == null) {
@@ -2191,8 +2191,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             // Step 3: Render with current position and updated scrollback
-            self.draw_mutex.lock();
-            defer self.draw_mutex.unlock();
+            self.draw_mutex.lockUncancelable(global.io());
+            defer self.draw_mutex.unlock(global.io());
 
             const preview_changed = self.updateNvimImagePreview(nvim, now);
             self.nvim_image_window_id = null;
@@ -2411,7 +2411,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.font_shaper.endFrame();
         }
 
-        fn updateNvimImagePreview(self: *Self, nvim: *neovim_gui.NeovimGui, now: std.time.Instant) bool {
+        fn updateNvimImagePreview(self: *Self, nvim: *neovim_gui.NeovimGui, _: time.Instant) bool {
             if (self.nvim_image_token_seen == nvim.image_preview_token) return false;
             self.nvim_image_token_seen = nvim.image_preview_token;
 
@@ -2429,14 +2429,15 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     new_active = true;
 
                     const file_open = if (std.fs.path.isAbsolute(path))
-                        std.fs.openFileAbsolute(path, .{})
+                        std.Io.Dir.openFileAbsolute(global.io(), path, .{})
                     else
-                        std.fs.cwd().openFile(path, .{});
+                        std.Io.Dir.cwd().openFile(global.io(), path, .{});
 
                     if (file_open) |file| {
-                        defer file.close();
+                        defer file.close(global.io());
                         load_image: {
-                            const contents = file.readToEndAlloc(
+                            const contents = compat_file.readToEndAlloc(
+                                file,
                                 self.alloc,
                                 std.math.maxInt(u32),
                             ) catch |err| {
@@ -2464,7 +2465,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                             .pixel_format = .rgba,
                                             .data = image_data.data.ptr,
                                         },
-                                        now,
+                                        nvim.image_preview_token,
                                     ) catch |err| {
                                         log.warn("error updating preview image err={}", .{err});
                                         break :load_image;
@@ -2488,7 +2489,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                                             .pixel_format = .rgba,
                                             .data = image_data.data.ptr,
                                         },
-                                        now,
+                                        nvim.image_preview_token,
                                     ) catch |err| {
                                         log.warn("error updating preview image err={}", .{err});
                                         break :load_image;
@@ -2512,7 +2513,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             if (!image_updated) {
-                self.images.previewUpdate(self.alloc, null, now) catch |err| {
+                self.images.previewUpdate(self.alloc, null, nvim.image_preview_token) catch |err| {
                     log.warn("error clearing preview image err={}", .{err});
                 };
             }
@@ -3271,7 +3272,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
         /// Render a peer's ghost cursor: a colored block at their grid position.
         /// Uses the same sprite as the main cursor but tinted to the peer's color
-        /// and at reduced opacity. Appends directly to fg_rows.lists[0] so it
+        /// and at reduced opacity. Appends directly to fg_rows[0] so it
         /// draws in the same pass as the main cursor.
         fn renderPeerCursor(self: *Self, peer: gui_protocol.PeerCursor, peer_idx: usize) void {
             if (!peer.same_buffer) return;
@@ -3351,8 +3352,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Append to the animated row's fg list
             const list_idx = anim_row + 1; // fg_rows index 0 is cursor, rows start at 1
-            if (list_idx < self.cells.fg_rows.lists.len) {
-                self.cells.fg_rows.lists[list_idx].append(self.alloc, ghost_cell) catch return;
+            if (list_idx < self.cells.fg_rows.len) {
+                self.cells.fg_rows[list_idx].append(self.alloc, ghost_cell) catch return;
             }
         }
 
@@ -3419,7 +3420,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .pixel_offset_y = 0,
                 };
 
-                self.cells.fg_rows.lists[0].append(self.alloc, label_cell) catch break;
+                self.cells.fg_rows[0].append(self.alloc, label_cell) catch break;
                 x += 1;
             }
         }
@@ -3567,14 +3568,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             raws[0] = .{
                 .content_tag = if (cps.len > 1) .codepoint_grapheme else .codepoint,
-                .content = .{ .codepoint = cps[0] },
+                .content = .{ .codepoint = .{ .data = cps[0] } },
                 .wide = if (cell_width == 2) .wide else .narrow,
             };
             graphemes[0] = if (cps.len > 1) cps[1..] else &.{};
             styles[0] = .{ .flags = .{ .bold = style.bold, .italic = style.italic } };
 
             if (cols == 2) {
-                raws[1] = .{ .content = .{ .codepoint = 0 }, .wide = .spacer_tail };
+                raws[1] = .{ .content = .{ .codepoint = .{ .data = 0 } }, .wide = .spacer_tail };
                 graphemes[1] = &.{};
                 styles[1] = .{};
             }
@@ -3732,8 +3733,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 while (row < grid_end_row) : (row += 1) {
                     // fg_rows are indexed at y + 1 (index 0 is cursor)
                     const list_idx: usize = @as(usize, row) + 1;
-                    if (list_idx >= self.cells.fg_rows.lists.len) continue;
-                    const list = &self.cells.fg_rows.lists[list_idx];
+                    if (list_idx >= self.cells.fg_rows.len) continue;
+                    const list = &self.cells.fg_rows[list_idx];
 
                     // In-place removal: keep only cells outside panel columns
                     var write: usize = 0;
@@ -4039,13 +4040,14 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.draw_mutex.lockUncancelable(global.io());
             defer self.draw_mutex.unlock(global.io());
 
-            // If our swap chain is defunct (e.g., after displayUnrealized but before
-            // displayRealized), we can't draw. This can happen during window moves
-            // on Wayland/Hyprland where GTK unrealizes but doesn't immediately re-realize.
-            // In this case, try to reinitialize the rendering resources.
-            if (self.swap_chain.defunct or self.shaders.defunct) {
+            // A compositor can unrealize a surface before the replacement is
+            // realized. Rebuild both GPU objects together when either side is
+            // absent or defunct so no stale swap chain survives the cutover.
+            const swap_chain_defunct = self.swap_chain == null;
+            if (swap_chain_defunct or self.shaders.defunct) {
                 log.debug("drawFrame: swap_chain or shaders defunct, attempting reinit", .{});
-                // Try to reinitialize - this is what displayRealized would do
+                if (self.swap_chain) |*sc| sc.deinit();
+                self.swap_chain = null;
                 self.shaders.deinit(self.alloc);
                 try self.initShaders();
                 self.swap_chain = try SwapChain.init(
@@ -4060,7 +4062,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             }
 
             // --- Terminal mode timing with sub-stepping & proper fallback ---
-            const now = std.time.Instant.now() catch return;
+            const now = time.Instant.now();
 
             // Update smooth blink opacity target from the raw timer state.
             // Terminal mode: terminal_state.cursor.blinking + timer toggle.
@@ -4091,7 +4093,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             const fallback_dt_ns: f32 = @floatFromInt(self.display_refresh_ns);
             const fallback_dt: f32 = fallback_dt_ns / @as(f32, @floatFromInt(std.time.ns_per_s));
 
-            const raw_dt: f32 = if (self.last_frame_time) |last| blk: {
+            const raw_dt: f32 = if (self.animation_last_frame_time) |last| blk: {
                 if (now.order(last) == .lt) {
                     break :blk fallback_dt;
                 }
@@ -4100,9 +4102,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             } else fallback_dt;
 
             if (any_anim) {
-                self.last_frame_time = now;
+                self.animation_last_frame_time = now;
             } else {
-                self.last_frame_time = null;
+                self.animation_last_frame_time = null;
             }
 
             var cadence_substeps: u32 = if (self.nvim_gui != null and any_anim)
@@ -4165,7 +4167,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
             // Smooth blink opacity transition with independent timing.
             // Uses its own last_blink_time so the lerp works correctly even
-            // when updateFrameNeovim clobbers last_frame_time (raw_dt ≈ 0).
+            // when updateFrameNeovim updates the animation frame clock.
             {
                 if (self.config.cursor_blink_smooth) {
                     const blink_dt: f32 = if (self.last_blink_time) |last| blk: {
@@ -4806,8 +4808,8 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// `phosphor-green+crt-curve`.
         /// `none` / `off` / `default` clears all custom shaders.
         pub fn setCustomShaderPreset(self: *Self, preset: []const u8) !void {
-            self.draw_mutex.lock();
-            defer self.draw_mutex.unlock();
+            self.draw_mutex.lockUncancelable(global.io());
+            defer self.draw_mutex.unlock(global.io());
 
             try self.setCustomShaderPresetLocked(preset);
         }
@@ -5288,26 +5290,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             //     // "[rebuildCells time] <START us>\t<TIME_TAKEN us>"
             //     std.log.warn("[rebuildCells time] {}\t{}", .{start_micro, end.since(start) / std.time.ns_per_us});
             // }
-
-            // Determine our x/y range for preedit. We don't want to render anything
-            // here because we will render the preedit separately.
-            const preedit_range: ?PreeditRange = if (preedit) |preedit_v| preedit: {
-                // We base the preedit on the position of the cursor in the
-                // viewport. If the cursor isn't visible in the viewport we
-                // don't show it.
-                const cursor_vp = state.cursor.viewport orelse
-                    break :preedit null;
-
-                const range = preedit_v.range(
-                    cursor_vp.x,
-                    state.cols - 1,
-                );
-                break :preedit .{
-                    .y = @intCast(cursor_vp.y),
-                    .x = .{ range.start, range.end },
-                    .cp_offset = range.cp_offset,
-                };
-            } else null;
 
             // When a panel is open (or animating closed), we need the cell
             // buffer to be wider than the terminal grid so the panel can
@@ -6510,7 +6492,6 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 log.warn("failed to find font for preedit codepoint={X}", .{cp.codepoint});
                 return;
             };
-
 
             // Add our text
             try self.cells.add(self.alloc, .text, .{

@@ -31,26 +31,36 @@ class BaseTerminalController: NSWindowController,
                               TerminalViewDelegate,
                               TerminalViewModel,
                               ClipboardConfirmationViewDelegate,
-                              FullscreenDelegate
-{
+                              FullscreenDelegate {
+    /// Weak surface-to-controller ownership independent of AppKit's transient
+    /// view and window attachment state.
+    private static let surfaceControllers =
+        NSMapTable<Ghostty.SurfaceView, BaseTerminalController>.weakToWeakObjects()
+
     /// The app instance that this terminal view will represent.
     let ghostty: Ghostty.App
 
     /// The currently focused surface.
-    var focusedSurface: Ghostty.SurfaceView? = nil {
+    var focusedSurface: Ghostty.SurfaceView? {
         didSet { syncFocusToSurfaceTree() }
     }
 
     /// The tree of splits within this terminal window.
     @Published var surfaceTree: SplitTree<Ghostty.SurfaceView> = .init() {
-        didSet { surfaceTreeDidChange(from: oldValue, to: surfaceTree) }
+        didSet {
+            Self.updateSurfaceControllers(self, from: oldValue, to: surfaceTree)
+            surfaceTreeDidChange(from: oldValue, to: surfaceTree)
+        }
     }
 
     /// This can be set to show/hide the command palette.
     @Published var commandPaletteIsShowing: Bool = false
-    
+
     /// Set if the terminal view should show the update overlay.
     @Published var updateOverlayIsVisible: Bool = false
+
+    /// True when any surface in this controller currently has an active bell.
+    @Published private(set) var bell: Bool = false
 
     /// Whether the terminal surface should focus when the mouse is over it.
     var focusFollowsMouse: Bool {
@@ -58,19 +68,19 @@ class BaseTerminalController: NSWindowController,
     }
 
     /// Non-nil when an alert is active so we don't overlap multiple.
-    private var alert: NSAlert? = nil
+    private var alert: NSAlert?
 
     /// The clipboard confirmation window, if shown.
-    private var clipboardConfirmation: ClipboardConfirmationController? = nil
+    private var clipboardConfirmation: ClipboardConfirmationController?
 
     /// Fullscreen state management.
     private(set) var fullscreenStyle: FullscreenStyle?
 
     /// Event monitor (see individual events for why)
-    private var eventMonitor: Any? = nil
+    private var eventMonitor: Any?
 
     /// The previous frame information from the window
-    private var savedFrame: SavedFrame? = nil
+    private var savedFrame: SavedFrame?
 
     /// Cache previously applied appearance to avoid unnecessary updates
     private var appliedColorScheme: ghostty_color_scheme_e?
@@ -84,9 +94,15 @@ class BaseTerminalController: NSWindowController,
     /// The cancellables related to our focused surface.
     private var focusedSurfaceCancellables: Set<AnyCancellable> = []
 
+    /// Cancellable for aggregating bell state across all surfaces in this controller.
+    private var bellStateCancellable: AnyCancellable?
+
+    /// Cancellable for clipboard confirmation requests from surfaces in this controller.
+    private var clipboardConfirmationCancellable: AnyCancellable?
+
     /// An override title for the tab/window set by the user via prompt_tab_title.
     /// When set, this takes precedence over the computed title from the terminal.
-    var titleOverride: String? = nil {
+    var titleOverride: String? {
         didSet { applyTitleToWindow() }
     }
 
@@ -135,14 +151,14 @@ class BaseTerminalController: NSWindowController,
         // Initialize our initial surface.
         guard let ghostty_app = ghostty.app else { preconditionFailure("app must be loaded") }
         self.surfaceTree = tree ?? .init(view: Ghostty.SurfaceView(ghostty_app, baseConfig: base))
+        Self.updateSurfaceControllers(self, from: .init(), to: surfaceTree)
+
+        // Setup our bell state for the window
+        setupBellNotificationPublisher()
+        setupClipboardConfirmationPublisher()
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
-        center.addObserver(
-            self,
-            selector: #selector(onConfirmClipboardRequest),
-            name: Ghostty.Notification.confirmClipboard,
-            object: nil)
         center.addObserver(
             self,
             selector: #selector(didChangeScreenParametersNotification),
@@ -223,6 +239,44 @@ class BaseTerminalController: NSWindowController,
 
     // MARK: Methods
 
+    /// Finds the controller whose split tree owns the given surface.
+    ///
+    /// A surface's `window` can briefly be nil or point at its previous window
+    /// while AppKit is attaching or moving a native tab. Callers performing
+    /// lifecycle operations must use tree ownership rather than that transient
+    /// view relationship.
+    static func controller(owning surface: Ghostty.SurfaceView) -> BaseTerminalController? {
+        if let controller = surfaceControllers.object(forKey: surface),
+           controller.surfaceTree.contains(surface) {
+            return controller
+        }
+
+        if let controller = surface.window?.windowController as? BaseTerminalController,
+           controller.surfaceTree.contains(surface) {
+            return controller
+        }
+
+        return NSApp.windows
+            .compactMap { $0.windowController as? BaseTerminalController }
+            .first { $0.surfaceTree.contains(surface) }
+    }
+
+    private static func updateSurfaceControllers(
+        _ controller: BaseTerminalController,
+        from oldTree: SplitTree<Ghostty.SurfaceView>,
+        to newTree: SplitTree<Ghostty.SurfaceView>
+    ) {
+        for surface in oldTree where !newTree.contains(surface) {
+            if surfaceControllers.object(forKey: surface) === controller {
+                surfaceControllers.removeObject(forKey: surface)
+            }
+        }
+
+        for surface in newTree {
+            surfaceControllers.setObject(controller, forKey: surface)
+        }
+    }
+
     /// Create a new split.
     @discardableResult
     func newSplit(
@@ -248,7 +302,7 @@ class BaseTerminalController: NSWindowController,
             // If splitting fails for any reason (it should not), then we just log
             // and return. The new view we created will be deinitialized and its
             // no big deal.
-            Ghostty.logger.warning("failed to insert split: \(error)")
+            Ghostty.logger.warning("failed to insert split: \(error, privacy: .public)")
             return nil
         }
 
@@ -280,23 +334,33 @@ class BaseTerminalController: NSWindowController,
     ///
     /// Subclasses should call super first.
     func surfaceTreeDidChange(from: SplitTree<Ghostty.SurfaceView>, to: SplitTree<Ghostty.SurfaceView>) {
+        for surfaceView in from where !to.contains(surfaceView) {
+            cancelPendingClipboardConfirmation(for: surfaceView)
+        }
+
         // If our surface tree becomes empty then we have no focused surface.
-        if (to.isEmpty) {
+        if to.isEmpty {
             focusedSurface = nil
         }
+        syncSurfaceTreeOcclusionState()
     }
 
     /// Update all surfaces with the focus state. This ensures that libghostty has an accurate view about
     /// what surface is focused. This must be called whenever a surface OR window changes focus.
     func syncFocusToSurfaceTree() {
+        var newlyFocused: Ghostty.SurfaceView?
         for surfaceView in surfaceTree {
             // Our focus state requires that this window is key and our currently
             // focused surface is the surface in this view.
             let focused: Bool = (window?.isKeyWindow ?? false) &&
-                !commandPaletteIsShowing &&
-                focusedSurface != nil &&
-                surfaceView == focusedSurface!
+                surfaceView == focusedSurface &&
+                surfaceView.isFirstResponder
             surfaceView.focusDidChange(focused)
+            if focused { newlyFocused = surfaceView }
+        }
+
+        if let newlyFocused {
+            presentPendingClipboardConfirmation(for: newlyFocused)
         }
     }
 
@@ -309,19 +373,18 @@ class BaseTerminalController: NSWindowController,
         savedFrame = .init(window: window.frame, screen: screen.visibleFrame)
     }
 
-    func confirmClose(
+    func confirmCloseAsync(
         messageText: String,
         informativeText: String,
-        completion: @escaping () -> Void
-    ) {
+        confirmButtonTitle: String = "Close",
+    ) async -> NSApplication.ModalResponse? {
         // If we already have an alert, we need to wait for that one.
-        guard alert == nil else { return }
+        guard alert == nil else { return nil }
 
         // If there is no window to attach the modal then we assume success
         // since we'll never be able to show the modal.
         guard let window else {
-            completion()
-            return
+            return .OK
         }
 
         // If we need confirmation by any, show one confirmation for all windows
@@ -329,22 +392,35 @@ class BaseTerminalController: NSWindowController,
         let alert = NSAlert()
         alert.messageText = messageText
         alert.informativeText = informativeText
-        alert.addButton(withTitle: "Close")
+        alert.addButton(withTitle: confirmButtonTitle)
         alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
-        alert.beginSheetModal(for: window) { response in
-            let alertWindow = alert.window
+        // Store our alert so we only ever show one.
+        self.alert = alert
+        defer {
+            // This is important so that we avoid losing focus when Stage
+            // Manager is used (#8336)
+            alert.window.orderOut(nil)
             self.alert = nil
-            if response == .alertFirstButtonReturn {
-                // This is important so that we avoid losing focus when Stage
-                // Manager is used (#8336)
-                alertWindow.orderOut(nil)
+        }
+        return await alert.beginSheetModal(for: window)
+    }
+
+    func confirmClose(
+        messageText: String,
+        informativeText: String,
+        confirmButtonTitle: String = "Close",
+        completion: @escaping () -> Void
+    ) {
+        Task {
+            guard let response = await confirmCloseAsync(messageText: messageText, informativeText: informativeText, confirmButtonTitle: confirmButtonTitle) else {
+                completion()
+                return
+            }
+            if [.alertFirstButtonReturn, .OK].contains(response) {
                 completion()
             }
         }
-
-        // Store our alert so we only ever show one.
-        self.alert = alert
     }
 
     /// Prompt the user to change the tab/window title.
@@ -424,7 +500,7 @@ class BaseTerminalController: NSWindowController,
     /// Goes to previous split unless we're the leftmost leaf, then goes to next.
     private func findNextFocusTargetAfterClosing(node: SplitTree<Ghostty.SurfaceView>.Node) -> Ghostty.SurfaceView? {
         guard let root = surfaceTree.root else { return nil }
-        
+
         // If we're the leftmost, then we move to the next surface after closing.
         // Otherwise, we move to the previous.
         if root.leftmostLeaf() == node.leftmostLeaf() {
@@ -433,7 +509,7 @@ class BaseTerminalController: NSWindowController,
             return surfaceTree.focusTarget(for: .previous, from: node)
         }
     }
-    
+
     /// Remove a node from the surface tree and move focus appropriately.
     ///
     /// This also updates the undo manager to support restoring this node.
@@ -451,8 +527,12 @@ class BaseTerminalController: NSWindowController,
 
         replaceSurfaceTree(
             surfaceTree.removing(node),
-            moveFocusTo: nextFocus,
-            moveFocusFrom: focusedSurface,
+            // When a non-focused surface is removed and this window stays as the key window,
+            // we should refocus the `focusedSurface` to make sure the window's firstResponder remains as it is.
+            //
+            // This is a weird workaround, since `resignFirstResponder` wasn't called on `focusedSurface` after drag,
+            // but the first responder became the window itself.
+            moveFocusTo: nextFocus ?? focusedSurface,
             undoAction: "Close Terminal"
         )
     }
@@ -471,13 +551,13 @@ class BaseTerminalController: NSWindowController,
                 Ghostty.moveFocus(to: newView, from: oldView)
             }
         }
-        
+
         // Setup our undo
         guard let undoManager else { return }
         if let undoAction {
             undoManager.setActionName(undoAction)
         }
-        
+
         undoManager.registerUndo(
             withTarget: self,
             expiresAfter: undoExpiration
@@ -488,7 +568,7 @@ class BaseTerminalController: NSWindowController,
                     Ghostty.moveFocus(to: oldView, from: target.focusedSurface)
                 }
             }
-            
+
             undoManager.registerUndo(
                 withTarget: target,
                 expiresAfter: target.undoExpiration
@@ -531,14 +611,14 @@ class BaseTerminalController: NSWindowController,
         // then we let it stay that way.
         x: if newFrame.origin.x < visibleFrame.origin.x {
             if let savedFrame, savedFrame.window.origin.x < savedFrame.screen.origin.x {
-                break x;
+                break x
             }
 
             newFrame.origin.x = visibleFrame.origin.x
         }
         y: if newFrame.origin.y < visibleFrame.origin.y {
             if let savedFrame, savedFrame.window.origin.y < savedFrame.screen.origin.y {
-                break y;
+                break y
             }
 
             newFrame.origin.y = visibleFrame.origin.y
@@ -596,7 +676,7 @@ class BaseTerminalController: NSWindowController,
         guard let directionAny = notification.userInfo?["direction"] else { return }
         guard let direction = directionAny as? ghostty_action_split_direction_e else { return }
         let splitDirection: SplitTree<Ghostty.SurfaceView>.NewDirection
-        switch (direction) {
+        switch direction {
         case GHOSTTY_SPLIT_DIRECTION_RIGHT: splitDirection = .right
         case GHOSTTY_SPLIT_DIRECTION_LEFT: splitDirection = .left
         case GHOSTTY_SPLIT_DIRECTION_DOWN: splitDirection = .down
@@ -609,14 +689,14 @@ class BaseTerminalController: NSWindowController,
 
     @objc private func ghosttyDidEqualizeSplits(_ notification: Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        
+
         // Check if target surface is in current controller's tree
         guard surfaceTree.contains(target) else { return }
-        
+
         // Equalize the splits
         surfaceTree = surfaceTree.equalized()
     }
-    
+
     @objc private func ghosttyDidFocusSplit(_ notification: Notification) {
         // The target must be within our tree
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
@@ -628,7 +708,7 @@ class BaseTerminalController: NSWindowController,
 
         // Find the node for the target surface
         guard let targetNode = surfaceTree.root?.node(view: target) else { return }
-        
+
         // Find the next surface to focus
         guard let nextSurface = surfaceTree.focusTarget(for: direction.toSplitTreeFocusDirection(), from: targetNode) else {
             return
@@ -649,7 +729,7 @@ class BaseTerminalController: NSWindowController,
             Ghostty.moveFocus(to: nextSurface, from: target)
         }
     }
-    
+
     @objc private func ghosttyDidToggleSplitZoom(_ notification: Notification) {
         // The target must be within our tree
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
@@ -677,19 +757,19 @@ class BaseTerminalController: NSWindowController,
             Ghostty.moveFocus(to: target)
         }
     }
-    
+
     @objc private func ghosttyDidResizeSplit(_ notification: Notification) {
         // The target must be within our tree
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard let targetNode = surfaceTree.root?.node(view: target) else { return }
-        
+
         // Extract direction and amount from notification
         guard let directionAny = notification.userInfo?[Ghostty.Notification.ResizeSplitDirectionKey] else { return }
         guard let direction = directionAny as? Ghostty.SplitResizeDirection else { return }
-        
+
         guard let amountAny = notification.userInfo?[Ghostty.Notification.ResizeSplitAmountKey] else { return }
         guard let amount = amountAny as? UInt16 else { return }
-        
+
         // Convert Ghostty.SplitResizeDirection to SplitTree.Spatial.Direction
         let spatialDirection: SplitTree<Ghostty.SurfaceView>.Spatial.Direction
         switch direction {
@@ -698,15 +778,15 @@ class BaseTerminalController: NSWindowController,
         case .left: spatialDirection = .left
         case .right: spatialDirection = .right
         }
-        
+
         // Use viewBounds for the spatial calculation bounds
         let bounds = CGRect(origin: .zero, size: surfaceTree.viewBounds())
-        
+
         // Perform the resize using the new SplitTree resize method
         do {
             surfaceTree = try surfaceTree.resizing(node: targetNode, by: amount, in: spatialDirection, with: bounds)
         } catch {
-            Ghostty.logger.warning("failed to resize split: \(error)")
+            Ghostty.logger.warning("failed to resize split: \(error, privacy: .public)")
         }
     }
 
@@ -716,7 +796,7 @@ class BaseTerminalController: NSWindowController,
 
         // Bring the window to front and focus the surface.
         window?.makeKeyAndOrderFront(nil)
-        
+
         // We use a small delay to ensure this runs after any UI cleanup
         // (e.g., command palette restoring focus to its original surface).
         Ghostty.moveFocus(to: target)
@@ -729,11 +809,11 @@ class BaseTerminalController: NSWindowController,
     @objc private func ghosttySurfaceDragEndedNoTarget(_ notification: Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard let targetNode = surfaceTree.root?.node(view: target) else { return }
-        
+
         // If our tree isn't split, then we never create a new window, because
         // it is already a single split.
         guard surfaceTree.isSplit else { return }
-        
+
         // If we are removing our focused surface then we move it. We need to
         // keep track of our old one so undo sends focus back to the right place.
         let oldFocusedSurface = focusedSurface
@@ -746,20 +826,21 @@ class BaseTerminalController: NSWindowController,
 
         // Create a new tree with the dragged surface and open a new window
         let newTree = SplitTree<Ghostty.SurfaceView>(view: target)
-        
+
         // Treat our undo below as a full group.
         undoManager?.beginUndoGrouping()
         undoManager?.setActionName("Move Split")
         defer {
             undoManager?.endUndoGrouping()
         }
-        
+
         replaceSurfaceTree(removedTree, moveFocusFrom: oldFocusedSurface)
         _ = TerminalController.newWindow(
             ghostty,
             tree: newTree,
             position: notification.userInfo?[Notification.Name.ghosttySurfaceDragEndedNoTargetPointKey] as? NSPoint,
-            confirmUndo: false)
+            confirmUndo: false,
+            inheritBackgroundOpacity: isBackgroundOpaque)
     }
 
     // MARK: Local Events
@@ -783,7 +864,7 @@ class BaseTerminalController: NSWindowController,
         if NSApp.mainWindow == window {
             surfaces = surfaces.filter { $0 != focusedSurface }
         }
-        
+
         for surface in surfaces {
             surface.flagsChanged(with: event)
         }
@@ -817,10 +898,10 @@ class BaseTerminalController: NSWindowController,
             titleDidChange(to: "👻")
         }
     }
-    
+
     private func computeTitle(title: String, bell: Bool) -> String {
         var result = title
-        if (bell && ghostty.config.bellFeatures.contains(.title)) {
+        if bell && ghostty.config.bellFeatures.contains(.title) {
             result = "🔔 \(result)"
         }
 
@@ -834,17 +915,17 @@ class BaseTerminalController: NSWindowController,
 
     private func applyTitleToWindow() {
         guard let window else { return }
-        
+
         if let titleOverride {
             window.title = computeTitle(
                 title: titleOverride,
                 bell: focusedSurface?.bell ?? false)
             return
         }
-        
+
         window.title = lastComputedTitle
     }
-    
+
     func pwdDidChange(to: URL?) {
         guard let window else { return }
 
@@ -855,7 +936,6 @@ class BaseTerminalController: NSWindowController,
             window.representedURL = nil
         }
     }
-
 
     func cellSizeDidChange(to: NSSize) {
         guard derivedConfig.windowStepResize else { return }
@@ -880,7 +960,7 @@ class BaseTerminalController: NSWindowController,
         do {
             surfaceTree = try surfaceTree.replacing(node: node, with: resizedNode)
         } catch {
-            Ghostty.logger.warning("failed to replace node during split resize: \(error)")
+            Ghostty.logger.warning("failed to replace node during split resize: \(error, privacy: .public)")
         }
     }
 
@@ -896,7 +976,7 @@ class BaseTerminalController: NSWindowController,
         case .left: .left
         case .right: .right
         }
-        
+
         // Check if source is in our tree
         if let sourceNode = surfaceTree.root?.node(view: source) {
             // Source is in our tree - same window move
@@ -905,10 +985,10 @@ class BaseTerminalController: NSWindowController,
             do {
                 newTree = try treeWithoutSource.inserting(view: source, at: destination, direction: direction)
             } catch {
-                Ghostty.logger.warning("failed to insert surface during drop: \(error)")
+                Ghostty.logger.warning("failed to insert surface during drop: \(error, privacy: .public)")
                 return
             }
-            
+
             replaceSurfaceTree(
                 newTree,
                 moveFocusTo: source,
@@ -916,7 +996,7 @@ class BaseTerminalController: NSWindowController,
                 undoAction: "Move Split")
             return
         }
-        
+
         // Source is not in our tree - search other windows
         var sourceController: BaseTerminalController?
         var sourceNode: SplitTree<Ghostty.SurfaceView>.Node?
@@ -929,12 +1009,12 @@ class BaseTerminalController: NSWindowController,
                 break
             }
         }
-        
+
         guard let sourceController, let sourceNode else {
             Ghostty.logger.warning("source surface not found in any window during drop")
             return
         }
-        
+
         // Remove from source controller's tree and add it to our tree.
         // We do this first because if there is an error then we can
         // abort.
@@ -942,20 +1022,20 @@ class BaseTerminalController: NSWindowController,
         do {
             newTree = try surfaceTree.inserting(view: source, at: destination, direction: direction)
         } catch {
-            Ghostty.logger.warning("failed to insert surface during cross-window drop: \(error)")
+            Ghostty.logger.warning("failed to insert surface during cross-window drop: \(error, privacy: .public)")
             return
         }
-        
+
         // Treat our undo below as a full group.
         undoManager?.beginUndoGrouping()
         undoManager?.setActionName("Move Split")
         defer {
             undoManager?.endUndoGrouping()
         }
-        
+
         // Remove the node from the source.
         sourceController.removeSurfaceNode(sourceNode)
-        
+
         // Add in the surface to our tree
         replaceSurfaceTree(
             newTree,
@@ -966,7 +1046,7 @@ class BaseTerminalController: NSWindowController,
     func performAction(_ action: String, on surfaceView: Ghostty.SurfaceView) {
         guard let surface = surfaceView.surface else { return }
         let len = action.utf8CString.count
-        if (len == 0) { return }
+        if len == 0 { return }
         _ = action.withCString { cString in
             ghostty_surface_binding_action(surface, cString, UInt(len - 1))
         }
@@ -980,17 +1060,21 @@ class BaseTerminalController: NSWindowController,
     func toggleBackgroundOpacity() {
         // Do nothing if config is already fully opaque
         guard ghostty.config.backgroundOpacity < 1 else { return }
-        
+
         // Do nothing if in fullscreen (transparency doesn't apply in fullscreen)
         guard let window, !window.styleMask.contains(.fullScreen) else { return }
 
-        // Toggle between transparent and opaque
-        isBackgroundOpaque.toggle()
-        
-        // Update our appearance
-        syncAppearance()
+        let newValue = !isBackgroundOpaque
+        let controllers = NSApplication.shared.windows.compactMap {
+            $0.windowController as? BaseTerminalController
+        }
+
+        for controller in controllers {
+            controller.isBackgroundOpaque = newValue
+            controller.syncAppearance()
+        }
     }
-    
+
     /// Override this to resync any appearance related properties. This will be called automatically
     /// when certain window properties change that affect appearance. The list below should be updated
     /// as we add new things:
@@ -1052,7 +1136,7 @@ class BaseTerminalController: NSWindowController,
 
     func fullscreenDidChange() {
         guard let fullscreenStyle else { return }
-        
+
         // When we enter fullscreen, we want to show the update overlay so that it
         // is easily visible. For native fullscreen this is visible by showing the
         // menubar but we don't want to rely on that.
@@ -1061,72 +1145,9 @@ class BaseTerminalController: NSWindowController,
         } else {
             updateOverlayIsVisible = defaultUpdateOverlayVisibility()
         }
-        
+
         // Always resync our appearance
         syncAppearance()
-    }
-
-    // MARK: Clipboard Confirmation
-
-    @objc private func onConfirmClipboardRequest(notification: SwiftUI.Notification) {
-        guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        guard target == self.focusedSurface else { return }
-        guard let surface = target.surface else { return }
-
-        // We need a window
-        guard let window = self.window else { return }
-
-        // Check whether we use non-native fullscreen
-        guard let str = notification.userInfo?[Ghostty.Notification.ConfirmClipboardStrKey] as? String else { return }
-        guard let state = notification.userInfo?[Ghostty.Notification.ConfirmClipboardStateKey] as? UnsafeMutableRawPointer? else { return }
-        guard let request = notification.userInfo?[Ghostty.Notification.ConfirmClipboardRequestKey] as? Ghostty.ClipboardRequest else { return }
-
-        // If we already have a clipboard confirmation view up, we ignore this request.
-        // This shouldn't be possible...
-        guard self.clipboardConfirmation == nil else {
-            Ghostty.App.completeClipboardRequest(surface, data: "", state: state, confirmed: true)
-            return
-        }
-
-        // Show our paste confirmation
-        self.clipboardConfirmation = ClipboardConfirmationController(
-            surface: surface,
-            contents: str,
-            request: request,
-            state: state,
-            delegate: self
-        )
-        window.beginSheet(self.clipboardConfirmation!.window!)
-    }
-
-    func clipboardConfirmationComplete(_ action: ClipboardConfirmationView.Action, _ request: Ghostty.ClipboardRequest) {
-        // End our clipboard confirmation no matter what
-        guard let cc = self.clipboardConfirmation else { return }
-        self.clipboardConfirmation = nil
-
-        // Close the sheet
-        if let ccWindow = cc.window {
-            window?.endSheet(ccWindow)
-        }
-
-        switch (request) {
-        case let .osc_52_write(pasteboard):
-            guard case .confirm = action else { break }
-            let pb = pasteboard ?? NSPasteboard.general
-            pb.declareTypes([.string], owner: nil)
-            pb.setString(cc.contents, forType: .string)
-        case .osc_52_read, .paste:
-            let str: String
-            switch (action) {
-            case .cancel:
-                str = ""
-
-            case .confirm:
-                str = cc.contents
-            }
-
-            Ghostty.App.completeClipboardRequest(cc.surface, data: str, state: cc.state, confirmed: true)
-        }
     }
 
     // MARK: NSWindowController
@@ -1146,38 +1167,36 @@ class BaseTerminalController: NSWindowController,
             fullscreenStyle = NativeFullscreen(window)
             fullscreenStyle?.delegate = self
         }
-        
+
         // Set our update overlay state
         updateOverlayIsVisible = defaultUpdateOverlayVisibility()
     }
-    
+
     func defaultUpdateOverlayVisibility() -> Bool {
         guard let window else { return true }
-        
+
         // No titlebar we always show the update overlay because it can't support
         // updates in the titlebar
         guard window.styleMask.contains(.titled) else {
             return true
         }
-        
+
         // If it's a non terminal window we can't trust it has an update accessory,
         // so we always want to show the overlay.
         guard let window = window as? TerminalWindow else {
             return true
         }
-        
+
         // Show the overlay if the window isn't.
         return !window.supportsUpdateAccessory
     }
 
     // MARK: NSWindowDelegate
 
-    // This is called when performClose is called on a window (NOT when close()
-    // is called directly). performClose is called primarily when UI elements such
-    // as the "red X" are pressed.
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
+    /// Check whether window should be closed without showing an alert
+    func windowCanBeClosedWithoutConfirmation() -> Bool {
         // We must have a window. Is it even possible not to?
-        guard let window = self.window else { return true }
+        guard window != nil else { return true }
 
         // If we have no surfaces, close.
         if surfaceTree.isEmpty { return true }
@@ -1188,12 +1207,22 @@ class BaseTerminalController: NSWindowController,
         // If our surfaces don't require confirmation, close.
         if !surfaceTree.contains(where: { $0.needsConfirmQuit }) { return true }
 
+        return false
+    }
+
+    // This is called when performClose is called on a window (NOT when close()
+    // is called directly). performClose is called primarily when UI elements such
+    // as the "red X" are pressed.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard !windowCanBeClosedWithoutConfirmation() else {
+            return true
+        }
         // We require confirmation, so show an alert as long as we aren't already.
         confirmClose(
             messageText: "Close Terminal?",
             informativeText: "The terminal still has a running process. If you close the terminal the process will be killed."
-        ) {
-            window.close()
+        ) { [weak self] in
+            self?.window?.close()
         }
 
         return false
@@ -1201,6 +1230,21 @@ class BaseTerminalController: NSWindowController,
 
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
+
+        for surfaceView in surfaceTree {
+            cancelPendingClipboardConfirmation(for: surfaceView)
+        }
+
+        // Emit a final bell-state transition so any observers can clear state
+        // without separately tracking NSWindow lifecycle events.
+        if bell {
+            bell = false
+            NotificationCenter.default.post(
+                name: .terminalWindowBellDidChangeNotification,
+                object: self,
+                userInfo: [Notification.Name.terminalWindowHasBellKey: false]
+            )
+        }
 
         // I don't know if this is required anymore. We previously had a ref cycle between
         // the view and the window so we had to nil this out to break it but I think this
@@ -1221,9 +1265,11 @@ class BaseTerminalController: NSWindowController,
             }
         }
 
-        // Becoming/losing key means we have to notify our surface(s) that we have focus
-        // so things like cursors blink, pty events are sent, etc.
-        self.syncFocusToSurfaceTree()
+        // Becoming key can race with responder updates when activating a window.
+        // Sync on the next runloop so split focus has settled first.
+        DispatchQueue.main.async {
+            self.syncFocusToSurfaceTree()
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
@@ -1233,10 +1279,15 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidChangeOcclusionState(_ notification: Notification) {
+        syncSurfaceTreeOcclusionState()
+    }
+
+    private func syncSurfaceTreeOcclusionState() {
         let visible = self.window?.occlusionState.contains(.visible) ?? false
         for view in surfaceTree {
-            if let surface = view.surface {
+            if let surface = view.surface, view.isWindowVisible != visible {
                 ghostty_surface_set_occlusion(surface, visible)
+                view.isWindowVisible = visible
             }
         }
     }
@@ -1267,6 +1318,17 @@ class BaseTerminalController: NSWindowController,
     }
 
     @IBAction func changeTabTitle(_ sender: Any) {
+        if let targetWindow = window {
+            let inlineHostWindow =
+                targetWindow.tabbedWindows?
+                    .first(where: { $0.tabBarView != nil }) as? TerminalWindow
+                ?? (targetWindow as? TerminalWindow)
+
+            if let inlineHostWindow, inlineHostWindow.beginInlineTabTitleEdit(for: targetWindow) {
+                return
+            }
+        }
+
         promptTabTitle()
     }
 
@@ -1294,7 +1356,6 @@ class BaseTerminalController: NSWindowController,
         guard let surface = focusedSurface?.surface else { return }
         ghostty.splitToggleZoom(surface: surface)
     }
-
 
     @IBAction func splitMoveFocusPrevious(_ sender: Any) {
         splitMoveFocus(direction: .previous)
@@ -1367,8 +1428,23 @@ class BaseTerminalController: NSWindowController,
 
     @IBAction func toggleCommandPalette(_ sender: Any?) {
         commandPaletteIsShowing.toggle()
+        if commandPaletteIsShowing {
+            // Fix the incorrect focus when toggling from InlineTitleEditor
+            // When toggling the command palette from the inline title editor,
+            // the first responder state of the surface is changed quickly from true to false.
+
+            // `makeFirstResponder:` is called by the title editor when finishing,
+            // but it happens **after** the command palette is shown,
+            // so the `focused` is set to `true` while the command palette is shown.
+            // (Could be an AppKit issue as well, since the resign is not called after but the command palette is receiving `keyDown`).
+
+            // Since `performKeyEquivalent(with:)` is called on all of the subviews
+            // until one of the return `true` so the paste action is consumed by the surface
+            // instead of the first responder (command palette).
+            _ = focusedSurface?.resignFirstResponder()
+        }
     }
-    
+
     @IBAction func find(_ sender: Any) {
         focusedSurface?.find(sender)
     }
@@ -1384,11 +1460,11 @@ class BaseTerminalController: NSWindowController,
     @IBAction func findNext(_ sender: Any) {
         focusedSurface?.findNext(sender)
     }
-    
+
     @IBAction func findPrevious(_ sender: Any) {
         focusedSurface?.findNext(sender)
     }
-    
+
     @IBAction func findHide(_ sender: Any) {
         focusedSurface?.findHide(sender)
     }
@@ -1430,7 +1506,7 @@ extension BaseTerminalController: NSMenuItemValidation {
             return true
         }
     }
-	
+
     // MARK: - Surface Color Scheme
 
     /// Update the surface tree's color scheme only when it actually changes.
@@ -1461,4 +1537,205 @@ extension BaseTerminalController: NSMenuItemValidation {
         }
         appliedColorScheme = scheme
     }
+}
+
+// MARK: Clipboard Confirmation
+
+extension BaseTerminalController {
+    /// Presents clipboard confirmations published by surfaces in this controller.
+    private func setupClipboardConfirmationPublisher() {
+        clipboardConfirmationCancellable = $surfaceTree
+            // Rebuild the merged publisher whenever the split tree changes.
+            .map { tree in
+                Publishers.MergeMany(tree.map { surface in
+                    // Carry the stable value-type ID rather than capturing the
+                    // surface in the operator chain. The subscription therefore
+                    // cannot extend the SurfaceView's lifetime.
+                    let id = surface.id
+                    return surface.$pendingClipboardConfirmation
+                        .map { (id, $0) }
+                        .eraseToAnyPublisher()
+                })
+                .eraseToAnyPublisher()
+            }
+            // Cancelling the old MergeMany releases every subscription for
+            // surfaces removed from the current tree.
+            .switchToLatest()
+            // Published emits synchronously from the libghostty callback. Hop
+            // to the main queue both for AppKit and so completing a request
+            // cannot invalidate callback state while that callback is active.
+            .receive(on: DispatchQueue.main)
+            // The cancellable is controller-owned, so capture it weakly here to
+            // avoid controller -> cancellable -> sink -> controller.
+            .sink { [weak self] id, request in
+                guard let self,
+                      let surface = surfaceTree.first(where: { $0.id == id }) else { return }
+                onConfirmClipboardRequest(request, for: surface)
+            }
+    }
+
+    private func onConfirmClipboardRequest(
+        _ request: Ghostty.ClipboardConfirmationRequest?,
+        for target: Ghostty.SurfaceView
+    ) {
+        guard let request else {
+            guard target.pendingClipboardConfirmation == nil,
+                  let confirmation = clipboardConfirmation,
+                  confirmation.confirmation.surface === target else { return }
+            dismissClipboardConfirmation(confirmation)
+            return
+        }
+
+        // Ignore values queued before a newer request replaced them.
+        guard target.pendingClipboardConfirmation === request else { return }
+
+        // SurfaceView.didSet has already cancelled the request that this one
+        // replaced. If that request owns the visible sheet, update the sheet
+        // in place. Dismissing it would briefly return focus to the terminal,
+        // which can produce another request and repeat the cycle. Requests
+        // from other surfaces cannot replace a window-modal sheet.
+        if let confirmation = clipboardConfirmation {
+            if confirmation.confirmation === request { return }
+            guard confirmation.confirmation.surface === target else {
+                target.pendingClipboardConfirmation = nil
+                return
+            }
+            confirmation.replaceConfirmation(with: request)
+            return
+        }
+
+        // A clipboard confirmation can originate from a surface that isn't
+        // focused. Presenting its sheet immediately would bring that surface's
+        // window or tab forward and steal focus. Signal that it needs attention,
+        // retain the request on the surface, and present it only after the
+        // surface gains focus.
+        if !target.focused {
+            if !target.bell {
+                NotificationCenter.default.post(
+                    name: .ghosttyBellDidRing,
+                    object: target)
+            }
+            return
+        }
+
+        // Preserve the prior behavior for confirmation types other than an
+        // OSC 52 read: only the controller's selected surface may present it.
+        guard target == focusedSurface else {
+            target.pendingClipboardConfirmation = nil
+            return
+        }
+        _ = presentClipboardConfirmation(request)
+    }
+
+    private func presentClipboardConfirmation(
+        _ request: Ghostty.ClipboardConfirmationRequest
+    ) -> Bool {
+        guard clipboardConfirmation == nil, let window else { return false }
+
+        clipboardConfirmation = ClipboardConfirmationController(
+            confirmation: request,
+            delegate: self
+        )
+        window.beginSheet(clipboardConfirmation!.window!)
+        return true
+    }
+
+    private func dismissClipboardConfirmation(
+        _ confirmation: ClipboardConfirmationController
+    ) {
+        guard clipboardConfirmation === confirmation else { return }
+        clipboardConfirmation = nil
+        if let confirmationWindow = confirmation.window {
+            window?.endSheet(confirmationWindow)
+        }
+    }
+
+    private func presentPendingClipboardConfirmation(for target: Ghostty.SurfaceView) {
+        guard target.focused,
+              target == focusedSurface,
+              let request = target.pendingClipboardConfirmation else { return }
+        onConfirmClipboardRequest(request, for: target)
+    }
+
+    private func cancelPendingClipboardConfirmation(for target: Ghostty.SurfaceView) {
+        if let confirmation = clipboardConfirmation,
+           confirmation.confirmation.surface === target {
+            dismissClipboardConfirmation(confirmation)
+        }
+        target.pendingClipboardConfirmation = nil
+    }
+
+    func clipboardConfirmationComplete(_ action: ClipboardConfirmationView.Action, remember: Bool) {
+        // End our clipboard confirmation no matter what
+        guard let cc = self.clipboardConfirmation else { return }
+        dismissClipboardConfirmation(cc)
+
+        switch action {
+        case .cancel:
+            cc.confirmation.cancel()
+        case .confirm:
+            cc.confirmation.complete(remember: remember)
+        }
+
+        // Clear only if this is still the surface's current request. Completing
+        // the request may synchronously cause a newer request to replace it.
+        if let target = cc.confirmation.surface,
+           target.pendingClipboardConfirmation === cc.confirmation {
+            target.pendingClipboardConfirmation = nil
+        }
+    }
+}
+
+// MARK: Combine Methods
+
+extension BaseTerminalController {
+    /// Publishes an app-wide notification whenever this terminal window's aggregate
+    /// bell state changes.
+    private func setupBellNotificationPublisher() {
+        bellStateCancellable = surfaceValuesPublisher(valueKeyPath: \.bell, publisherKeyPath: \.$bell)
+            .map { $0.values.contains(true) }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasBell in
+                guard let self else { return }
+                bell = hasBell
+                NotificationCenter.default.post(
+                    name: .terminalWindowBellDidChangeNotification,
+                    object: self,
+                    userInfo: [Notification.Name.terminalWindowHasBellKey: hasBell]
+                )
+            }
+    }
+
+    /// Creates a publisher for values on all surfaces in this controller's tree.
+    ///
+    /// The publisher emits a dictionary of surface IDs to values whenever the tree changes
+    /// or any surface publishes a new value for the key path.
+    func surfaceValuesPublisher<Value>(
+        valueKeyPath: KeyPath<Ghostty.SurfaceView, Value>,
+        publisherKeyPath: KeyPath<Ghostty.SurfaceView, Published<Value>.Publisher>
+    ) -> AnyPublisher<[Ghostty.SurfaceView.ID: Value], Never> {
+        // `surfaceTree` can be replaced entirely when splits are added/removed/closed.
+        // For each tree snapshot we build a fresh publisher that watches all surfaces
+        // in that snapshot.
+        $surfaceTree
+            .map { tree in
+                tree.valuesPublisher(
+                    valueKeyPath: valueKeyPath,
+                    publisherKeyPath: publisherKeyPath
+                )
+            }
+            // Keep only the latest tree publisher active. This automatically cancels
+            // subscriptions for old/removed surfaces when the tree changes.
+            .switchToLatest()
+            .eraseToAnyPublisher()
+    }
+}
+
+// MARK: Notifications
+
+extension Notification.Name {
+    /// Terminal window aggregate bell state changed.
+    static let terminalWindowBellDidChangeNotification = Notification.Name("com.mitchellh.ghostty.terminalWindowBellDidChange")
+    static let terminalWindowHasBellKey = terminalWindowBellDidChangeNotification.rawValue + ".hasBell"
 }

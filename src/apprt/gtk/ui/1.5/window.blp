@@ -40,14 +40,17 @@ template $GhosttyWindow: Adw.ApplicationWindow {
         visible: bind template.headerbar-visible;
 
         title-widget: Adw.WindowTitle {
-          title: bind template.title;
+          title: bind $computed_title(template.config, template.title, template.title-override) as <string>;
           // Blueprint auto-formatter won't let me split this into multiple
           // lines. Let me explain myself. All parameters to a closure are used
           // as notifications to recompute the value of the closure. All
           // elements of a property chain are also subscribed to for changes.
           // This one long, ugly line saves us from manually building up this
           // massive notify chain in code.
-          subtitle: bind $computed_subtitle(template.config, tab_view.selected-page.child as <$GhosttyTab>.active-surface as <$GhosttySurface>.pwd) as <string>;
+          subtitle: bind $computed_subtitle(
+            template.config,
+            tab_view.selected-page.child as <$GhosttyTab>.active-surface as <$GhosttySurface>.pwd
+            ) as <string>;
         };
 
         [start]
@@ -162,6 +165,8 @@ template $GhosttyWindow: Adw.ApplicationWindow {
             page-attached => $page_attached();
             page-detached => $page_detached();
             create-window => $tab_create_window();
+            setup-menu => $setup_tab_menu();
+            menu-model: tab_context_menu;
             shortcuts: none;
           }
         }
@@ -207,6 +212,11 @@ menu main_menu {
 
   section {
     item {
+      label: _("Change Window Title…");
+      action: "win.prompt-window-title";
+    }
+
+    item {
       label: _("New Window");
       action: "win.new-window";
     }
@@ -218,6 +228,11 @@ menu main_menu {
   }
 
   section {
+    item {
+      label: _("Change Tab Title…");
+      action: "win.prompt-tab-title";
+    }
+
     item {
       label: _("New Tab");
       action: "win.new-tab";
@@ -236,7 +251,7 @@ menu main_menu {
 
       item {
         label: _("Change Title…");
-        action: "win.prompt-title";
+        action: "win.prompt-surface-title";
       }
 
       item {
@@ -284,14 +299,25 @@ menu main_menu {
       action: "win.toggle-inspector";
     }
 
-    item {
-      label: _("Open Configuration");
-      action: "app.open-config";
-    }
+    submenu {
+      label: _("Config");
 
-    item {
-      label: _("Reload Configuration");
-      action: "app.reload-config";
+      item {
+        label: _("Open Configuration in OS Editor");
+        action: "app.open-config";
+        target: "os-open";
+      }
+
+      item {
+        label: _("Open Configuration in New Window");
+        action: "app.open-config";
+        target: "new-window";
+      }
+
+      item {
+        label: _("Reload Configuration");
+        action: "app.reload-config";
+      }
     }
   }
 
@@ -305,5 +331,12 @@ menu main_menu {
       label: _("Quit");
       action: "app.quit";
     }
+  }
+}
+
+menu tab_context_menu {
+  item {
+    label: _("Change Tab Title…");
+    action: "win.prompt-context-tab-title";
   }
 }

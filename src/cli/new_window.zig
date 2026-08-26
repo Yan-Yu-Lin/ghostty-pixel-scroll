@@ -5,41 +5,93 @@ const Action = @import("../cli.zig").ghostty.Action;
 const apprt = @import("../apprt.zig");
 const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
+const homedir = @import("../os/homedir.zig");
+const global = @import("../global.zig");
 
 pub const Options = struct {
+    /// We store an I/O implementation to make maintenance easier.
+    _io: std.Io,
+
     /// This is set by the CLI parser for deinit.
     _arena: ?ArenaAllocator = null,
 
     /// If set, open up a new window in a custom instance of Ghostty.
     class: ?[:0]const u8 = null,
 
-    /// If `-e` is found in the arguments, this will contain all of the
-    /// arguments to pass to Ghostty as the command.
-    _arguments: ?[][:0]const u8 = null,
+    /// Did the user specify a `--working-directory` argument on the command line?
+    _working_directory_seen: bool = false,
+
+    /// All of the arguments after `+new-window`. They will be sent to Ghosttty
+    /// for processing.
+    _arguments: std.ArrayList([:0]const u8) = .empty,
 
     /// Enable arg parsing diagnostics so that we don't get an error if
     /// there is a "normal" config setting on the cli.
     _diagnostics: diagnostics.DiagnosticList = .{},
 
-    /// Manual parse hook, used to deal with `-e`
-    pub fn parseManuallyHook(self: *Options, alloc: Allocator, arg: []const u8, iter: anytype) Allocator.Error!bool {
-        // If it's not `-e` continue with the standard argument parsning.
-        if (!std.mem.eql(u8, arg, "-e")) return true;
+    pub const ParseManuallyHookError = error{InvalidValue} ||
+        homedir.ExpandError ||
+        std.Io.Dir.RealPathFileAllocError ||
+        Allocator.Error;
 
-        var arguments: std.ArrayList([:0]const u8) = .empty;
-        errdefer {
-            for (arguments.items) |argument| alloc.free(argument);
-            arguments.deinit(alloc);
-        }
+    /// Manual parse hook, collect all of the arguments after `+new-window`.
+    pub fn parseManuallyHook(
+        self: *Options,
+        alloc: Allocator,
+        arg: []const u8,
+        iter: anytype,
+    ) ParseManuallyHookError!bool {
+        var e_seen: bool = std.mem.eql(u8, arg, "-e");
 
-        // Otherwise gather up the rest of the arguments to use as the command.
+        // Include the argument that triggered the manual parse hook.
+        if (try self.checkArg(alloc, arg)) |a| try self._arguments.append(alloc, a);
+
+        // Gather up the rest of the arguments to use as the command.
         while (iter.next()) |param| {
-            try arguments.append(alloc, try alloc.dupeZ(u8, param));
+            if (e_seen) {
+                try self._arguments.append(alloc, try alloc.dupeZ(u8, param));
+                continue;
+            }
+            if (std.mem.eql(u8, param, "-e")) {
+                e_seen = true;
+                try self._arguments.append(alloc, try alloc.dupeZ(u8, param));
+                continue;
+            }
+            if (try self.checkArg(alloc, param)) |a| try self._arguments.append(alloc, a);
         }
-
-        self._arguments = try arguments.toOwnedSlice(alloc);
 
         return false;
+    }
+
+    const CheckArgError = error{InvalidValue} ||
+        homedir.ExpandError ||
+        std.Io.Dir.RealPathFileAllocError ||
+        Allocator.Error;
+
+    fn checkArg(self: *Options, alloc: Allocator, arg: []const u8) CheckArgError!?[:0]const u8 {
+        if (std.mem.cutPrefix(u8, arg, "--class=")) |rest| {
+            self.class = try alloc.dupeZ(u8, std.mem.trim(u8, rest, &std.ascii.whitespace));
+            return null;
+        }
+
+        if (std.mem.cutPrefix(u8, arg, "--working-directory=")) |rest| {
+            const stripped = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (std.mem.eql(u8, stripped, "home")) return try alloc.dupeZ(u8, arg);
+            if (std.mem.eql(u8, stripped, "inherit")) return try alloc.dupeZ(u8, arg);
+            const cwd: std.Io.Dir = .cwd();
+            var expandhome_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const expanded = expanded: {
+                var environ_map = try global.environMap();
+                defer environ_map.deinit();
+                break :expanded try homedir.expandHome(global.io(), &environ_map, stripped, &expandhome_buf);
+            };
+            var realpath_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const realpath = realpath_buf[0..try cwd.realPathFile(self._io, expanded, &realpath_buf)];
+            self._working_directory_seen = true;
+            return try std.fmt.allocPrintSentinel(alloc, "--working-directory={s}", .{realpath}, 0);
+        }
+
+        return try alloc.dupeZ(u8, arg);
     }
 
     pub fn deinit(self: *Options) void {
@@ -63,11 +115,24 @@ pub const Options = struct {
 /// and contact a running Ghostty instance that was configured with the same
 /// `class` as was given on the command line.
 ///
-/// If the `-e` flag is included on the command line, any arguments that follow
-/// will be sent to the running Ghostty instance and used as the command to run
-/// in the new window rather than the default. If `-e` is not specified, Ghostty
-/// will use the default command (either specified with `command` in your config
-/// or your default shell as configured on your system).
+/// All of the arguments after the `+new-window` argument (except for the
+/// `--class` flag) will be sent to the remote Ghostty instance and will be
+/// parsed as command line flags. These flags will override certain settings
+/// when creating the first surface in the new window. Currently, only
+/// `--working-directory`, `--command`, `--shell-integration=<mode>`, and
+/// `--title` are supported. `-e` will also work as an alias for `--command`, except that if
+/// `-e` is found on the command line all following arguments will become part
+/// of the command and no more arguments will be parsed for configuration
+/// settings.
+///
+/// If `--working-directory` is found on the command line and is a relative
+/// path (i.e. doesn't start with `/`) it will be resolved to an absolute path
+/// relative to the current working directory that the `ghostty +new-window`
+/// command is run from. `~/` prefixes will also be expanded to the user's home
+/// directory.
+///
+/// If `--working-directory` is _not_ found on the command line, the working
+/// directory that `ghostty +new-window` is run from will be passed to Ghostty.
 ///
 /// GTK uses an application ID to identify instances of applications. If Ghostty
 /// is compiled with release optimizations, the default application ID will be
@@ -92,16 +157,28 @@ pub const Options = struct {
 ///   * `--class=<class>`: If set, open up a new window in a custom instance of
 ///     Ghostty. The class must be a valid GTK application ID.
 ///
+///   * `--command`: The command to be executed in the first surface of the new window.
+///
+///   * `--shell-integration=<mode>`: Whether to enable shell integration and
+///     which shell to use. See the main configuration documentation for
+///     supported values.
+///
+///   * `--working-directory=<directory>`: The working directory to pass to Ghostty.
+///
+///   * `--title`: A title that will override the title of the first surface in
+///     the new window. The title override may be edited or removed later.
+///
 ///   * `-e`: Any arguments after this will be interpreted as a command to
-///     execute inside the new window instead of the default command.
+///     execute inside the first surface of the new window instead of the
+///     default command.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
-    var iter = try args.argsIterator(alloc);
+    var iter = try args.argsIterator(alloc, global.args());
     defer iter.deinit();
 
     var buffer: [1024]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&buffer);
+    var stderr_writer = std.Io.File.stderr().writer(global.io(), &buffer);
     const stderr = &stderr_writer.interface;
 
     const result = runArgs(alloc, &iter, stderr);
@@ -114,7 +191,7 @@ fn runArgs(
     argsIter: anytype,
     stderr: *std.Io.Writer,
 ) !u8 {
-    var opts: Options = .{};
+    var opts: Options = .{ ._io = global.io() };
     defer opts.deinit();
 
     args.parse(Options, alloc_gpa, &opts, argsIter) catch |err| switch (err) {
@@ -143,11 +220,18 @@ fn runArgs(
         if (exit) return 1;
     }
 
-    if (opts._arguments) |arguments| {
-        if (arguments.len == 0) {
-            try stderr.print("The -e flag was specified on the command line, but no other arguments were found.\n", .{});
-            return 1;
-        }
+    if (!opts._working_directory_seen) {
+        const alloc = opts._arena.?.allocator();
+        const cwd: std.Io.Dir = .cwd();
+        var buf: [std.fs.max_path_bytes]u8 = undefined;
+        const wd = buf[0..try cwd.realPathFile(global.io(), ".", &buf)];
+        // This should be inserted at the beginning of the list, just in case `-e` was used.
+        try opts._arguments.insert(alloc, 0, try std.fmt.allocPrintSentinel(
+            alloc,
+            "--working-directory={s}",
+            .{wd},
+            0,
+        ));
     }
 
     var arena = ArenaAllocator.init(alloc_gpa);
@@ -159,7 +243,7 @@ fn runArgs(
         if (opts.class) |class| .{ .class = class } else .detect,
         .new_window,
         .{
-            .arguments = opts._arguments,
+            .arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items,
         },
     ) catch |err| switch (err) {
         error.IPCFailed => {

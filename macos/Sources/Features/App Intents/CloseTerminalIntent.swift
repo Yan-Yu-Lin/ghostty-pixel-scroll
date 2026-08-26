@@ -22,12 +22,12 @@ struct CloseTerminalIntent: AppIntent {
         guard await requestIntentPermission() else {
             throw GhosttyIntentError.permissionDenied
         }
-        
+
         guard let surfaceView = terminal.surfaceView else {
             throw GhosttyIntentError.surfaceNotFound
         }
 
-        guard let controller = surfaceView.window?.windowController as? BaseTerminalController else {
+        guard let controller = BaseTerminalController.controller(owning: surfaceView) else {
             return .result()
         }
 

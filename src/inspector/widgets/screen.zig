@@ -57,7 +57,7 @@ pub const Info = struct {
 
             if (cimgui.c.ImGui_CollapsingHeader(
                 "Cursor",
-                cimgui.c.ImGuiTreeNodeFlags_None,
+                cimgui.c.ImGuiTreeNodeFlags_DefaultOpen,
             )) {
                 cursorTable(&screen.cursor);
                 cimgui.c.ImGui_Separator();
@@ -69,21 +69,26 @@ pub const Info = struct {
 
             if (cimgui.c.ImGui_CollapsingHeader(
                 "Keyboard",
-                cimgui.c.ImGuiTreeNodeFlags_None,
+                cimgui.c.ImGuiTreeNodeFlags_DefaultOpen,
             )) keyboardTable(
                 screen,
                 data.modify_other_keys_2,
             );
 
             if (cimgui.c.ImGui_CollapsingHeader(
+                "Semantic Prompt",
+                cimgui.c.ImGuiTreeNodeFlags_DefaultOpen,
+            )) semanticPromptTable(&screen.semantic_prompt);
+
+            if (cimgui.c.ImGui_CollapsingHeader(
                 "Kitty Graphics",
-                cimgui.c.ImGuiTreeNodeFlags_None,
+                cimgui.c.ImGuiTreeNodeFlags_DefaultOpen,
             )) kittyGraphicsTable(&screen.kitty_images);
 
             if (cimgui.c.ImGui_CollapsingHeader(
-                "Internal Terminal State",
-                cimgui.c.ImGuiTreeNodeFlags_None,
-            )) internalStateTable(&screen.pages);
+                "Other Screen State",
+                cimgui.c.ImGuiTreeNodeFlags_DefaultOpen,
+            )) internalStateTable(screen);
         }
 
         // Cell window
@@ -327,8 +332,10 @@ pub fn kittyGraphicsTable(
 
 /// Render internal terminal state table.
 pub fn internalStateTable(
-    pages: *const terminal.PageList,
+    screen: *const terminal.Screen,
 ) void {
+    const pages = &screen.pages;
+
     if (!cimgui.c.ImGui_BeginTable(
         "##terminal_state",
         2,
@@ -346,10 +353,53 @@ pub fn internalStateTable(
     _ = cimgui.c.ImGui_TableSetColumnIndex(0);
     cimgui.c.ImGui_Text("Memory Limit");
     _ = cimgui.c.ImGui_TableSetColumnIndex(1);
-    cimgui.c.ImGui_Text("%d bytes (%d KiB)", pages.maxSize(), units.toKibiBytes(pages.maxSize()));
+    const max_bytes = pages.limits.max(.bytes);
+    cimgui.c.ImGui_Text(
+        "%d bytes (%d KiB)",
+        max_bytes,
+        units.toKibiBytes(max_bytes),
+    );
+
     cimgui.c.ImGui_TableNextRow();
     _ = cimgui.c.ImGui_TableSetColumnIndex(0);
     cimgui.c.ImGui_Text("Viewport Location");
     _ = cimgui.c.ImGui_TableSetColumnIndex(1);
     cimgui.c.ImGui_Text("%s", @tagName(pages.viewport).ptr);
+}
+
+/// Render semantic prompt state table.
+pub fn semanticPromptTable(
+    semantic_prompt: *const terminal.Screen.SemanticPrompt,
+) void {
+    if (!cimgui.c.ImGui_BeginTable(
+        "##semantic_prompt",
+        2,
+        cimgui.c.ImGuiTableFlags_None,
+    )) return;
+    defer cimgui.c.ImGui_EndTable();
+
+    {
+        cimgui.c.ImGui_TableNextRow();
+        _ = cimgui.c.ImGui_TableSetColumnIndex(0);
+        cimgui.c.ImGui_Text("Seen");
+        cimgui.c.ImGui_SameLine();
+        widgets.helpMarker("Whether any semantic prompt markers (OSC 133) have been seen in this screen.");
+        _ = cimgui.c.ImGui_TableSetColumnIndex(1);
+        var value: bool = semantic_prompt.seen;
+        _ = cimgui.c.ImGui_Checkbox("##seen", &value);
+    }
+
+    {
+        cimgui.c.ImGui_TableNextRow();
+        _ = cimgui.c.ImGui_TableSetColumnIndex(0);
+        cimgui.c.ImGui_Text("Click Handling");
+        cimgui.c.ImGui_SameLine();
+        widgets.helpMarker("How click events are handled in prompts. Set via 'cl' or 'click_events' options in OSC 133.");
+        _ = cimgui.c.ImGui_TableSetColumnIndex(1);
+        switch (semantic_prompt.click) {
+            .none => cimgui.c.ImGui_TextDisabled("(none)"),
+            .click_events => |click_events| cimgui.c.ImGui_Text("click_events=%s", @tagName(click_events).ptr),
+            .cl => |cl| cimgui.c.ImGui_Text("cl=%s", @tagName(cl).ptr),
+        }
+    }
 }

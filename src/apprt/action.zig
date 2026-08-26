@@ -7,6 +7,8 @@ const input = @import("../input.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
 const CoreSurface = @import("../Surface.zig");
+const lib = @import("../lib/main.zig");
+const compat_testing = @import("../lib/compat/testing.zig");
 
 /// The target for an action. This is generally the thing that had focus
 /// while the action was made but the concept of "focus" is not guaranteed
@@ -19,6 +21,10 @@ pub const Target = union(Key) {
     pub const Key = enum(c_int) {
         app,
         surface,
+
+        test "ghostty.h Target.Key" {
+            try lib.checkGhosttyHEnum(Key, "GHOSTTY_TARGET_");
+        }
     };
 
     // Sync with: ghostty_target_u
@@ -109,7 +115,7 @@ pub const Action = union(Key) {
     /// Toggle the quick terminal in or out.
     toggle_quick_terminal,
 
-    /// Toggle the command palette. This currently only works on macOS.
+    /// Toggle the command palette.
     toggle_command_palette,
 
     /// Toggle the visibility of all Ghostty terminal windows.
@@ -190,11 +196,20 @@ pub const Action = union(Key) {
     /// rendered at the next opportunity.
     render_inspector,
 
+    /// Export the Terminal IO inspector event log.
+    export_terminal_io: ExportTerminalIO,
+
     /// Show a desktop notification.
     desktop_notification: DesktopNotification,
 
     /// Set the title of the target to the requested value.
     set_title: SetTitle,
+
+    /// Set the tab title override for the target's tab.
+    set_tab_title: SetTitle,
+
+    /// Set the window title override for the target's tab.
+    set_window_title: SetTitle,
 
     /// Set the title of the target to a prompted value. It is up to
     /// the apprt to prompt. The value specifies whether to prompt for the
@@ -219,7 +234,7 @@ pub const Action = union(Key) {
     /// Open the Ghostty configuration. This is platform-specific about
     /// what it means; it can mean opening a dedicated UI or just opening
     /// a file in a text editor.
-    open_config,
+    open_config: OpenConfig,
 
     /// Called when there are no more surfaces and the app should quit
     /// after the configured delay.
@@ -287,6 +302,10 @@ pub const Action = union(Key) {
     /// it needs to ring the bell. This is usually a sound or visual effect.
     ring_bell,
 
+    /// Called when the active selection changes. The apprt should read the
+    /// current selection itself; this carries no payload.
+    selection_changed,
+
     /// Undo the last action. See the "undo" keybinding for more
     /// details on what can and cannot be undone.
     undo,
@@ -330,6 +349,14 @@ pub const Action = union(Key) {
     /// The readonly state of the surface has changed.
     readonly: Readonly,
 
+    /// Copy the effective title of the surface to the clipboard.
+    /// The effective title is the user-overridden title if set,
+    /// otherwise the terminal-set title.
+    copy_title_to_clipboard,
+
+    /// Move a tab to a new window.
+    move_tab_to_new_window,
+
     /// Sync with: ghostty_action_tag_e
     pub const Key = enum(c_int) {
         quit,
@@ -363,8 +390,11 @@ pub const Action = union(Key) {
         inspector,
         show_gtk_inspector,
         render_inspector,
+        export_terminal_io,
         desktop_notification,
         set_title,
+        set_tab_title,
+        set_window_title,
         prompt_title,
         pwd,
         mouse_shape,
@@ -382,6 +412,7 @@ pub const Action = union(Key) {
         config_change,
         close_window,
         ring_bell,
+        selection_changed,
         undo,
         redo,
         check_for_updates,
@@ -395,13 +426,22 @@ pub const Action = union(Key) {
         search_total,
         search_selected,
         readonly,
+        copy_title_to_clipboard,
+        move_tab_to_new_window,
+
+        test "ghostty.h Action.Key" {
+            try lib.checkGhosttyHEnum(Key, "GHOSTTY_ACTION_");
+        }
     };
 
     /// Sync with: ghostty_action_u
     pub const CValue = cvalue: {
         const key_fields = @typeInfo(Key).@"enum".fields;
-        var union_fields: [key_fields.len]std.builtin.Type.UnionField = undefined;
-        for (key_fields, 0..) |field, i| {
+        var names: [key_fields.len][]const u8 = undefined;
+        var types: [key_fields.len]type = undefined;
+        var attrs: [key_fields.len]std.builtin.Type.UnionField.Attributes = undefined;
+
+        for (key_fields, &names, &types, &attrs) |field, *name, *ty, *attr| {
             const action = @unionInit(Action, field.name, undefined);
             const Type = t: {
                 const Type = @TypeOf(@field(action, field.name));
@@ -410,19 +450,12 @@ pub const Action = union(Key) {
                 break :t Type;
             };
 
-            union_fields[i] = .{
-                .name = field.name,
-                .type = Type,
-                .alignment = @alignOf(Type),
-            };
+            name.* = field.name;
+            ty.* = Type;
+            attr.* = .{ .@"align" = @alignOf(Type) };
         }
 
-        break :cvalue @Type(.{ .@"union" = .{
-            .layout = .@"extern",
-            .tag_type = null,
-            .fields = &union_fields,
-            .decls = &.{},
-        } });
+        break :cvalue @Union(.@"extern", null, &names, &types, &attrs);
     };
 
     /// Sync with: ghostty_action_s
@@ -436,7 +469,7 @@ pub const Action = union(Key) {
         // At the time of writing, we don't promise ABI compatibility
         // so we can change this but I want to be aware of it.
         assert(@sizeOf(CValue) == switch (@sizeOf(usize)) {
-            4 => 16,
+            4 => 24,
             8 => 24,
             else => unreachable,
         });
@@ -476,6 +509,10 @@ pub const SplitDirection = enum(c_int) {
     down,
     left,
     up,
+
+    test "ghostty.h SplitDirection" {
+        try lib.checkGhosttyHEnum(SplitDirection, "GHOSTTY_SPLIT_DIRECTION_");
+    }
 };
 
 // This is made extern (c_int) to make interop easier with our embedded
@@ -488,6 +525,10 @@ pub const GotoSplit = enum(c_int) {
     left,
     down,
     right,
+
+    test "ghostty.h GotoSplit" {
+        try lib.checkGhosttyHEnum(GotoSplit, "GHOSTTY_GOTO_SPLIT_");
+    }
 };
 
 // This is made extern (c_int) to make interop easier with our embedded
@@ -495,6 +536,10 @@ pub const GotoSplit = enum(c_int) {
 pub const GotoWindow = enum(c_int) {
     previous,
     next,
+
+    test "ghostty.h GotoWindow" {
+        try lib.checkGhosttyHEnum(GotoWindow, "GHOSTTY_GOTO_WINDOW_");
+    }
 };
 
 /// The amount to resize the split by and the direction to resize it in.
@@ -507,6 +552,10 @@ pub const ResizeSplit = extern struct {
         down,
         left,
         right,
+
+        test "ghostty.h ResizeSplit.Direction" {
+            try lib.checkGhosttyHEnum(Direction, "GHOSTTY_RESIZE_SPLIT_");
+        }
     };
 };
 
@@ -522,6 +571,11 @@ pub const GotoTab = enum(c_int) {
     next = -2,
     last = -3,
     _,
+
+    // TODO: check non-exhaustive enums
+    // test "ghostty.h GotoTab" {
+    //     try lib.checkGhosttyHEnum(GotoTab, "GHOSTTY_GOTO_TAB_");
+    // }
 };
 
 /// The fullscreen mode to toggle to if we're moving to fullscreen.
@@ -533,18 +587,30 @@ pub const Fullscreen = enum(c_int) {
     macos_non_native,
     macos_non_native_visible_menu,
     macos_non_native_padded_notch,
+
+    test "ghostty.h Fullscreen" {
+        try lib.checkGhosttyHEnum(Fullscreen, "GHOSTTY_FULLSCREEN_");
+    }
 };
 
 pub const FloatWindow = enum(c_int) {
     on,
     off,
     toggle,
+
+    test "ghostty.h FloatWindow" {
+        try lib.checkGhosttyHEnum(FloatWindow, "GHOSTTY_FLOAT_WINDOW_");
+    }
 };
 
 pub const SecureInput = enum(c_int) {
     on,
     off,
     toggle,
+
+    test "ghostty.h SecureInput" {
+        try lib.checkGhosttyHEnum(SecureInput, "GHOSTTY_SECURE_INPUT_");
+    }
 };
 
 /// The inspector mode to toggle to if we're toggling the inspector.
@@ -552,27 +618,79 @@ pub const Inspector = enum(c_int) {
     toggle,
     show,
     hide,
+
+    test "ghostty.h Inspector" {
+        try lib.checkGhosttyHEnum(Inspector, "GHOSTTY_INSPECTOR_");
+    }
+};
+
+/// Terminal IO inspector contents to export. The contents are only valid for
+/// the duration of the action callback.
+pub const ExportTerminalIO = struct {
+    contents: []const u8,
+
+    // Sync with: ghostty_action_export_terminal_io_s
+    pub const C = extern struct {
+        contents: [*]const u8,
+        len: usize,
+    };
+
+    pub fn cval(self: ExportTerminalIO) C {
+        return .{
+            .contents = self.contents.ptr,
+            .len = self.contents.len,
+        };
+    }
+
+    pub fn format(
+        value: @This(),
+        comptime _: []const u8,
+        _: std.fmt.Options,
+        writer: *std.Io.Writer,
+    ) !void {
+        try writer.print(
+            "{s}{{ contents: {d} bytes }}",
+            .{ @typeName(@This()), value.contents.len },
+        );
+    }
 };
 
 pub const QuitTimer = enum(c_int) {
     start,
     stop,
+
+    test "ghostty.h QuitTimer" {
+        try lib.checkGhosttyHEnum(QuitTimer, "GHOSTTY_QUIT_TIMER_");
+    }
 };
 
 pub const Readonly = enum(c_int) {
     off,
     on,
+
+    test "ghostty.h Readonly" {
+        try lib.checkGhosttyHEnum(Readonly, "GHOSTTY_READONLY_");
+    }
 };
 
 pub const MouseVisibility = enum(c_int) {
     visible,
     hidden,
+
+    test "ghostty.h MouseVisibility" {
+        try lib.checkGhosttyHEnum(MouseVisibility, "GHOSTTY_MOUSE_");
+    }
 };
 
-/// Whether to prompt for the surface title or tab title.
+/// Whether to prompt for the surface, tab, or window title.
 pub const PromptTitle = enum(c_int) {
     surface,
     tab,
+    window,
+
+    test "ghostty.h PromptTitle" {
+        try lib.checkGhosttyHEnum(PromptTitle, "GHOSTTY_PROMPT_TITLE_");
+    }
 };
 
 pub const MouseOverLink = struct {
@@ -636,7 +754,7 @@ pub const SetTitle = struct {
     pub fn format(
         value: @This(),
         comptime _: []const u8,
-        _: std.fmt.FormatOptions,
+        _: std.fmt.Options,
         writer: *std.Io.Writer,
     ) !void {
         try writer.print("{s}{{ {s} }}", .{ @typeName(@This()), value.title });
@@ -660,7 +778,7 @@ pub const Pwd = struct {
     pub fn format(
         value: @This(),
         comptime _: []const u8,
-        _: std.fmt.FormatOptions,
+        _: std.fmt.Options,
         writer: *std.Io.Writer,
     ) !void {
         try writer.print("{s}{{ {s} }}", .{ @typeName(@This()), value.pwd });
@@ -688,7 +806,7 @@ pub const DesktopNotification = struct {
     pub fn format(
         value: @This(),
         comptime _: []const u8,
-        _: std.fmt.FormatOptions,
+        _: std.fmt.Options,
         writer: *std.Io.Writer,
     ) !void {
         try writer.print("{s}{{ title: {s}, body: {s} }}", .{
@@ -776,6 +894,11 @@ pub const ColorKind = enum(c_int) {
 
     // 0+ values indicate a palette index
     _,
+
+    // TODO: check non-non-exhaustive enums
+    // test "ghostty.h ColorKind" {
+    //     try lib.checkGhosttyHEnum(ColorKind, "GHOSTTY_COLOR_KIND_");
+    // }
 };
 
 pub const ReloadConfig = extern struct {
@@ -826,6 +949,15 @@ pub const OpenUrl = struct {
 
         /// The URL is known to contain HTML content.
         html,
+
+        /// The URL came from an OSC 8 hyperlink. Application runtimes should
+        /// treat this as untrusted terminal output and apply a platform-specific
+        /// safe-opening policy.
+        osc8,
+
+        test "ghostty.h OpenUrl.Kind" {
+            try lib.checkGhosttyHEnum(Kind, "GHOSTTY_ACTION_OPEN_URL_KIND_");
+        }
     };
 
     // Sync with: ghostty_action_open_url_s
@@ -852,6 +984,10 @@ pub const CloseTabMode = enum(c_int) {
     other,
     /// Close all tabs to the right of the current tab.
     right,
+
+    test "ghostty.h CloseTabMode" {
+        try lib.checkGhosttyHEnum(CloseTabMode, "GHOSTTY_ACTION_CLOSE_TAB_MODE_");
+    }
 };
 
 pub const CommandFinished = struct {
@@ -916,3 +1052,20 @@ pub const SearchSelected = struct {
         };
     }
 };
+
+/// sync with ghostty_action_close_tab_mode_e in ghostty.h
+pub const OpenConfig = enum(c_int) {
+    /// Open the config in the OS default editor.
+    os_open,
+
+    /// Open the config in a new window using $EDITOR or $VISUAL
+    new_window,
+
+    test "ghostty.h OpenConfig" {
+        try lib.checkGhosttyHEnum(OpenConfig, "GHOSTTY_ACTION_OPEN_CONFIG_");
+    }
+};
+
+test {
+    _ = compat_testing.refAllDeclsRecursive(@This());
+}

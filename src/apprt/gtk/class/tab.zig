@@ -5,6 +5,7 @@ const glib = @import("glib");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
 
+const configpkg = @import("../../../config.zig");
 const apprt = @import("../../../apprt.zig");
 const CoreSurface = @import("../../../Surface.zig");
 const ext = @import("../ext.zig");
@@ -14,6 +15,7 @@ const Config = @import("config.zig").Config;
 const Application = @import("application.zig").Application;
 const SplitTree = @import("split_tree.zig").SplitTree;
 const Surface = @import("surface.zig").Surface;
+const TitleDialog = @import("title_dialog.zig").TitleDialog;
 
 const log = std.log.scoped(.gtk_ghostty_window);
 
@@ -125,6 +127,18 @@ pub const Tab = extern struct {
                 },
             );
         };
+        pub const @"title-override" = struct {
+            pub const name = "title-override";
+            const impl = gobject.ext.defineProperty(
+                name,
+                Self,
+                ?[:0]const u8,
+                .{
+                    .default = null,
+                    .accessor = C.privateStringFieldAccessor("title_override"),
+                },
+            );
+        };
     };
 
     pub const signals = struct {
@@ -148,6 +162,9 @@ pub const Tab = extern struct {
         /// The title of this tab. This is usually bound to the active surface.
         title: ?[:0]const u8 = null,
 
+        /// The manually overridden title.
+        title_override: ?[:0]const u8 = null,
+
         /// The tooltip of this tab. This is usually bound to the active surface.
         tooltip: ?[:0]const u8 = null,
 
@@ -170,22 +187,36 @@ pub const Tab = extern struct {
         }
     }
 
-    fn init(self: *Self, _: *Class) callconv(.c) void {
-        gtk.Widget.initTemplate(self.as(gtk.Widget));
+    pub fn new(config: ?*Config, overrides: struct {
+        command: ?configpkg.Command = null,
+        shell_integration: ?configpkg.Config.ShellIntegration = null,
+        working_directory: ?[:0]const u8 = null,
+        title: ?[:0]const u8 = null,
 
-        // Init our actions
-        self.initActionMap();
+        pub const none: @This() = .{};
+    }) *Self {
+        const tab = gobject.ext.newInstance(Tab, .{});
+
+        const priv: *Private = tab.private();
+
+        if (config) |c| priv.config = c.ref();
 
         // If our configuration is null then we get the configuration
         // from the application.
-        const priv = self.private();
         if (priv.config == null) {
             const app = Application.default();
             priv.config = app.getConfig();
         }
 
+        tab.as(gobject.Object).notifyByPspec(properties.config.impl.param_spec);
+
         // Create our initial surface in the split tree.
-        priv.split_tree.newSplit(.right, null) catch |err| switch (err) {
+        priv.split_tree.newSplit(.right, null, .{
+            .command = overrides.command,
+            .shell_integration = overrides.shell_integration,
+            .working_directory = overrides.working_directory,
+            .title = overrides.title,
+        }) catch |err| switch (err) {
             error.OutOfMemory => {
                 // TODO: We should make our "no surfaces" state more aesthetically
                 // pleasing and show something like an "Oops, something went wrong"
@@ -193,6 +224,15 @@ pub const Tab = extern struct {
                 @panic("oom");
             },
         };
+
+        return tab;
+    }
+
+    fn init(self: *Self, _: *Class) callconv(.c) void {
+        gtk.Widget.initTemplate(self.as(gtk.Widget));
+
+        // Init our actions
+        self.initActionMap();
     }
 
     fn initActionMap(self: *Self) void {
@@ -202,6 +242,9 @@ pub const Tab = extern struct {
         const actions = [_]ext.actions.Action(Self){
             .init("close", actionClose, s_param_type),
             .init("ring-bell", actionRingBell, null),
+            .init("next-page", actionNextPage, null),
+            .init("previous-page", actionPreviousPage, null),
+            .init("prompt-tab-title", actionPromptTabTitle, null),
         };
 
         _ = ext.actions.addAsGroup(Self, self, "tab", &actions);
@@ -209,6 +252,37 @@ pub const Tab = extern struct {
 
     //---------------------------------------------------------------
     // Properties
+
+    /// Overridden title. This will be generally be shown over the title
+    /// unless this is unset (null).
+    pub fn setTitleOverride(self: *Self, title: ?[:0]const u8) void {
+        const priv = self.private();
+        if (priv.title_override) |v| glib.free(@ptrCast(@constCast(v)));
+        priv.title_override = null;
+        if (title) |v| priv.title_override = glib.ext.dupeZ(u8, v);
+        self.as(gobject.Object).notifyByPspec(properties.@"title-override".impl.param_spec);
+    }
+    fn titleDialogSet(
+        _: *TitleDialog,
+        title_ptr: [*:0]const u8,
+        self: *Self,
+    ) callconv(.c) void {
+        const title = std.mem.span(title_ptr);
+        self.setTitleOverride(if (title.len == 0) null else title);
+    }
+    pub fn promptTabTitle(self: *Self) void {
+        const priv = self.private();
+        const dialog = TitleDialog.new(.tab, priv.title_override orelse priv.title);
+        _ = TitleDialog.signals.set.connect(
+            dialog,
+            *Self,
+            titleDialogSet,
+            self,
+            .{},
+        );
+
+        dialog.present(self.as(gtk.Widget));
+    }
 
     /// Get the currently active surface. See the "active-surface" property.
     /// This does not ref the value.
@@ -249,12 +323,17 @@ pub const Tab = extern struct {
             std.ascii.eqlIgnoreCase(raw, "on");
     }
 
-    /// Get the tab page holding this tab, if any.
-    fn getTabPage(self: *Self) ?*adw.TabPage {
-        const tab_view = ext.getAncestor(
+    /// Get the tab view holding this tab, if any.
+    fn getTabView(self: *Self) ?*adw.TabView {
+        return ext.getAncestor(
             adw.TabView,
             self.as(gtk.Widget),
-        ) orelse return null;
+        );
+    }
+
+    /// Get the tab page holding this tab, if any.
+    fn getTabPage(self: *Self) ?*adw.TabPage {
+        const tab_view = self.getTabView() orelse return null;
         return tab_view.getPage(self.as(gtk.Widget));
     }
 
@@ -288,6 +367,10 @@ pub const Tab = extern struct {
         if (priv.title) |v| {
             glib.free(@ptrCast(@constCast(v)));
             priv.title = null;
+        }
+        if (priv.title_override) |v| {
+            glib.free(@ptrCast(@constCast(v)));
+            priv.title_override = null;
         }
 
         gobject.Object.virtual_methods.finalize.call(
@@ -339,11 +422,7 @@ pub const Tab = extern struct {
         var str: ?[*:0]const u8 = null;
         param.get("&s", &str);
 
-        const tab_view = ext.getAncestor(
-            adw.TabView,
-            self.as(gtk.Widget),
-        ) orelse return;
-
+        const tab_view = self.getTabView() orelse return;
         const page = tab_view.getPage(self.as(gtk.Widget));
 
         const mode = std.meta.stringToEnum(
@@ -369,6 +448,14 @@ pub const Tab = extern struct {
         }
     }
 
+    fn actionPromptTabTitle(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        self.promptTabTitle();
+    }
+
     fn actionRingBell(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,
@@ -386,11 +473,32 @@ pub const Tab = extern struct {
         page.setNeedsAttention(@intFromBool(true));
     }
 
+    /// Select the next tab page.
+    fn actionNextPage(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        const tab_view = self.getTabView() orelse return;
+        _ = tab_view.selectNextPage();
+    }
+
+    /// Select the previous tab page.
+    fn actionPreviousPage(
+        _: *gio.SimpleAction,
+        _: ?*glib.Variant,
+        self: *Self,
+    ) callconv(.c) void {
+        const tab_view = self.getTabView() orelse return;
+        _ = tab_view.selectPreviousPage();
+    }
+
     fn closureComputedTitle(
         _: *Self,
         config_: ?*Config,
         terminal_: ?[*:0]const u8,
-        override_: ?[*:0]const u8,
+        surface_override_: ?[*:0]const u8,
+        tab_override_: ?[*:0]const u8,
         zoomed_: c_int,
         bell_ringing_: c_int,
         _: *gobject.ParamSpec,
@@ -398,12 +506,6 @@ pub const Tab = extern struct {
         const zoomed = zoomed_ != 0;
         const bell_ringing = bell_ringing_ != 0;
 
-        // Our plain title is the overridden title if it exists, otherwise
-        // the terminal title if it exists, otherwise a default string.
-        //
-        // Empty strings are treated as unset. Some compositor integrations
-        // (e.g. Hy3 tab bars) can render poorly when a window briefly reports
-        // an empty title during tab/window transitions.
         const plain = plain: {
             const default = "Ghostty";
             const config_title: ?[]const u8 = title: {
@@ -413,54 +515,52 @@ pub const Tab = extern struct {
             };
             const terminal_title: ?[]const u8 = title: {
                 const raw = terminal_ orelse break :title null;
-                const v = std.mem.span(raw);
-                break :title if (v.len > 0) v else null;
+                const value = std.mem.span(raw);
+                break :title if (value.len > 0) value else null;
             };
-            const override_title: ?[]const u8 = title: {
-                const raw = override_ orelse break :title null;
-                const v = std.mem.span(raw);
-                break :title if (v.len > 0) v else null;
+            const surface_override: ?[]const u8 = title: {
+                const raw = surface_override_ orelse break :title null;
+                const value = std.mem.span(raw);
+                break :title if (value.len > 0) value else null;
+            };
+            const tab_override: ?[]const u8 = title: {
+                const raw = tab_override_ orelse break :title null;
+                const value = std.mem.span(raw);
+                break :title if (value.len > 0) value else null;
             };
 
-            const plain = override_title orelse
+            break :plain tab_override orelse
+                surface_override orelse
                 terminal_title orelse
                 config_title orelse
-                break :plain default;
-            break :plain plain;
+                default;
         };
 
-        // We don't need a config in every case, but if we don't have a config
-        // let's just assume something went terribly wrong and use our
-        // default title. Its easier then guarding on the config existing
-        // in every case for something so unlikely.
-        const config = if (config_) |v| v.get() else {
+        const config = if (config_) |value| value.get() else {
             log.warn("config unavailable for computed title, likely bug", .{});
             return glib.ext.dupeZ(u8, plain);
         };
 
-        // Use an allocator to build up our string as we write it.
         var buf: std.Io.Writer.Allocating = .init(Application.default().allocator());
         defer buf.deinit();
 
-        // If our bell is ringing, then we prefix the bell icon to the title.
         if (bell_ringing and config.@"bell-features".title) {
             buf.writer.writeAll("🔔 ") catch {};
         }
-
-        // If we're zoomed, prefix with the magnifying glass emoji.
         if (zoomed) {
             buf.writer.writeAll("🔍 ") catch {};
         }
 
         buf.writer.writeAll(plain) catch return glib.ext.dupeZ(u8, plain);
         if (hy3TraceEnabled()) log.info(
-            "hy3-trace event=computed-tab-title plain={s} zoomed={} bell={} term={?s} override={?s}",
+            "hy3-trace event=computed-tab-title plain={s} zoomed={} bell={} term={?s} surface-override={?s} tab-override={?s}",
             .{
                 plain,
                 zoomed,
                 bell_ringing,
                 terminal_,
-                override_,
+                surface_override_,
+                tab_override_,
             },
         );
         return glib.ext.dupeZ(u8, buf.written());
@@ -496,6 +596,7 @@ pub const Tab = extern struct {
                 properties.@"split-tree".impl,
                 properties.@"surface-tree".impl,
                 properties.title.impl,
+                properties.@"title-override".impl,
                 properties.tooltip.impl,
             });
 

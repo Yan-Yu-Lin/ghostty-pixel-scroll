@@ -7,6 +7,7 @@ const adw = @import("adw");
 const gdk = @import("gdk");
 const gobject = @import("gobject");
 const gtk = @import("gtk");
+const global = @import("../../../global.zig");
 
 const input = @import("../../../input.zig");
 const gresource = @import("../build/gresource.zig");
@@ -61,7 +62,13 @@ pub const ImguiWidget = extern struct {
         ig_context: ?*cimgui.c.ImGuiContext = null,
 
         /// Our previous instant used to calculate delta time for animations.
-        instant: ?std.time.Instant = null,
+        instant: ?std.Io.Timestamp = null,
+
+        /// Tick callback ID for timed updates.
+        tick_callback_id: c_uint = 0,
+
+        /// Last render time for throttling to 30 FPS.
+        last_render_time: ?std.Io.Timestamp = null,
 
         pub var offset: c_int = 0;
     };
@@ -134,10 +141,11 @@ pub const ImguiWidget = extern struct {
         const priv = self.private();
         const io: *cimgui.c.ImGuiIO = cimgui.c.ImGui_GetIO();
 
+        const now: std.Io.Timestamp = .now(global.io(), .awake);
+
         // Determine our delta time
-        const now = std.time.Instant.now() catch unreachable;
         io.DeltaTime = if (priv.instant) |prev| delta: {
-            const since_ns: f64 = @floatFromInt(now.since(prev));
+            const since_ns: f64 = @floatFromInt(prev.durationTo(now).nanoseconds);
             const ns_per_s: f64 = @floatFromInt(std.time.ns_per_s);
             const since_s: f32 = @floatCast(since_ns / ns_per_s);
             break :delta @max(0.00001, since_s);
@@ -231,13 +239,38 @@ pub const ImguiWidget = extern struct {
 
         // Call the virtual method to setup the UI.
         self.setup();
+
+        // Add a tick callback to drive timed updates via the frame clock.
+        priv.tick_callback_id = self.as(gtk.Widget).addTickCallback(
+            tickCallback,
+            null,
+            null,
+        );
     }
 
     /// Handle a request to unrealize the GLArea
     fn glAreaUnrealize(_: *gtk.GLArea, self: *ImguiWidget) callconv(.c) void {
-        assert(self.private().ig_context != null);
+        const priv = self.private();
+        assert(priv.ig_context != null);
+
+        // Remove the tick callback if it was registered.
+        if (priv.tick_callback_id != 0) {
+            self.as(gtk.Widget).removeTickCallback(priv.tick_callback_id);
+            priv.tick_callback_id = 0;
+        }
+
+        // Unrealize is not guaranteed to be called with a current GL context,
+        // so we make it current for ImGui cleanup.
+        priv.gl_area.makeCurrent();
+        if (priv.gl_area.getError()) |err| {
+            log.warn("GLArea for Dear ImGui widget failed to realize: {s}", .{err.f_message orelse "(unknown)"});
+            return;
+        }
+
         self.setCurrentContext() catch return;
-        cimgui.ImGui_ImplOpenGL3_Shutdown();
+        cimgui.ImGui_ImplOpenGL3_ShutdownWithLoaderCleanup();
+        cimgui.c.ImGui_DestroyContext(priv.ig_context);
+        priv.ig_context = null;
     }
 
     /// Handle a request to resize the GLArea
@@ -264,6 +297,10 @@ pub const ImguiWidget = extern struct {
     /// Handle a request to render the contents of our GLArea
     fn glAreaRender(_: *gtk.GLArea, _: *gdk.GLContext, self: *Self) callconv(.c) c_int {
         self.setCurrentContext() catch return @intFromBool(false);
+
+        // Update last render time for tick callback throttling.
+        const priv = self.private();
+        priv.last_render_time = .now(global.io(), .awake);
 
         // Setup our frame. We render twice because some ImGui behaviors
         // take multiple renders to process. I don't know how to make this
@@ -409,6 +446,29 @@ pub const ImguiWidget = extern struct {
         self.setCurrentContext() catch return;
         const io: *cimgui.c.ImGuiIO = cimgui.c.ImGui_GetIO();
         cimgui.c.ImGuiIO_AddInputCharactersUTF8(io, bytes);
+    }
+
+    /// Tick callback for timed updates. This drives periodic redraws.
+    /// Redraws are limited to 30 FPS max since our imgui widgets don't
+    /// usually need higher frame rates than that.
+    fn tickCallback(
+        widget: *gtk.Widget,
+        _: *gdk.FrameClock,
+        _: ?*anyopaque,
+    ) callconv(.c) c_int {
+        const self: *Self = gobject.ext.cast(Self, widget) orelse return 0;
+        const priv = self.private();
+
+        // Throttle to 30 FPS (~33ms between frames)
+        const frame_time_ns: u64 = std.time.ns_per_s / 30;
+        const should_render = if (priv.last_render_time) |last|
+            last.untilNow(global.io(), .awake).nanoseconds >= frame_time_ns
+        else
+            true;
+
+        if (should_render) self.queueRender();
+
+        return 1; // Continue the tick callback
     }
 
     //---------------------------------------------------------------

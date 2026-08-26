@@ -343,9 +343,13 @@ pub fn presentLastTarget(self: *OpenGL) !void {
     if (self.last_target) |target| try self.present(target);
 }
 
-/// Clear the cached last target. This should be called when the surface
-/// size changes to prevent stale buffer blits.
+/// Clear the cached last target after a size change.
 pub fn clearLastTarget(self: *OpenGL) void {
+    self.last_target = null;
+}
+
+/// Drop the cached target when GPU resources are released.
+pub fn gpuResourcesReleased(self: *OpenGL) void {
     self.last_target = null;
 }
 

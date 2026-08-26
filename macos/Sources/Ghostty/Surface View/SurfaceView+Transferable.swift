@@ -1,6 +1,4 @@
-#if canImport(AppKit)
 import AppKit
-#endif
 import CoreTransferable
 import UniformTypeIdentifiers
 
@@ -17,11 +15,11 @@ extension Ghostty.SurfaceView: Transferable {
             let uuid = data.withUnsafeBytes {
                 $0.load(as: UUID.self)
             }
-            
+
             guard let imported = await Self.find(uuid: uuid) else {
                 throw TransferError.invalidData
             }
-            
+
             return imported
         }
     }
@@ -29,18 +27,11 @@ extension Ghostty.SurfaceView: Transferable {
     enum TransferError: Error {
         case invalidData
     }
-    
+
     @MainActor
     static func find(uuid: UUID) -> Self? {
-        #if canImport(AppKit)
         guard let del = NSApp.delegate as? Ghostty.Delegate else { return nil }
         return del.ghosttySurface(id: uuid) as? Self
-        #elseif canImport(UIKit)
-        // We should be able to use UIApplication here.
-        return nil
-        #else
-        return nil
-        #endif
     }
 }
 
@@ -50,9 +41,7 @@ extension UTType {
     static let ghosttySurfaceId = UTType(exportedAs: "com.mitchellh.ghosttySurfaceId")
 }
 
-#if canImport(AppKit)
 extension NSPasteboard.PasteboardType {
     /// Pasteboard type for dragging surface IDs.
     static let ghosttySurfaceId = NSPasteboard.PasteboardType(UTType.ghosttySurfaceId.identifier)
 }
-#endif

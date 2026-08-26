@@ -1,6 +1,21 @@
 import SwiftUI
 import GhosttyKit
 
+func sortedTerminalPaletteOptions(_ options: [CommandOption]) -> [CommandOption] {
+    options.sorted { lhs, rhs in
+        let lhsTitle = lhs.title.replacingOccurrences(of: ":", with: "\t")
+        let rhsTitle = rhs.title.replacingOccurrences(of: ":", with: "\t")
+        let comparison = lhsTitle.localizedCaseInsensitiveCompare(rhsTitle)
+        if comparison != .orderedSame {
+            return comparison == .orderedAscending
+        }
+        if let lhsKey = lhs.sortKey, let rhsKey = rhs.sortKey {
+            return lhsKey < rhsKey
+        }
+        return false
+    }
+}
+
 struct TerminalCommandPaletteView: View {
     /// The surface that this command palette represents.
     let surfaceView: Ghostty.SurfaceView
@@ -11,7 +26,7 @@ struct TerminalCommandPaletteView: View {
 
     /// The configuration so we can lookup keyboard shortcuts.
     @ObservedObject var ghosttyConfig: Ghostty.Config
-    
+
     /// The update view model for showing update commands.
     var updateViewModel: UpdateViewModel?
 
@@ -54,66 +69,58 @@ struct TerminalCommandPaletteView: View {
             }
         }
     }
-    
+
     /// All commands available in the command palette, combining update and terminal options.
     private var commandOptions: [CommandOption] {
         var options: [CommandOption] = []
         // Updates always appear first
         options.append(contentsOf: updateOptions)
-        
+
         // Sort the rest. We replace ":" with a character that sorts before space
         // so that "Foo:" sorts before "Foo Bar:". Use sortKey as a tie-breaker
         // for stable ordering when titles are equal.
-        options.append(contentsOf: (jumpOptions + terminalOptions).sorted { a, b in
-            let aNormalized = a.title.replacingOccurrences(of: ":", with: "\t")
-            let bNormalized = b.title.replacingOccurrences(of: ":", with: "\t")
-            let comparison = aNormalized.localizedCaseInsensitiveCompare(bNormalized)
-            if comparison != .orderedSame {
-                return comparison == .orderedAscending
-            }
-            // Tie-breaker: use sortKey if both have one
-            if let aSortKey = a.sortKey, let bSortKey = b.sortKey {
-                return aSortKey < bSortKey
-            }
-            return false
-        })
+        options.append(contentsOf: sortedTerminalPaletteOptions(jumpOptions + terminalOptions))
         return options
     }
 
     /// Commands for installing or canceling available updates.
     private var updateOptions: [CommandOption] {
         var options: [CommandOption] = []
-        
-        guard let updateViewModel, updateViewModel.state.isInstallable else {
+
+        guard let updateViewModel else {
             return options
         }
-        
-        // We override the update available one only because we want to properly
-        // convey it'll go all the way through.
-        let title: String
-        if case .updateAvailable = updateViewModel.state {
-            title = "Update Ghostty and Restart"
-        } else {
-            title = updateViewModel.text
+
+        if updateViewModel.state.isInstallable {
+            // We override the update available one only because we want to properly
+            // convey it'll go all the way through.
+            let title: String
+            if case .updateAvailable = updateViewModel.state {
+                title = "Update Ghostty and Restart"
+            } else {
+                title = updateViewModel.text
+            }
+
+            options.append(CommandOption(
+                title: title,
+                description: updateViewModel.description,
+                leadingIcon: updateViewModel.iconName ?? "shippingbox.fill",
+                badge: updateViewModel.badge,
+                emphasis: true
+            ) {
+                (NSApp.delegate as? AppDelegate)?.updateController.viewModel.state.confirm()
+            })
         }
-        
-        options.append(CommandOption(
-            title: title,
-            description: updateViewModel.description,
-            leadingIcon: updateViewModel.iconName ?? "shippingbox.fill",
-            badge: updateViewModel.badge,
-            emphasis: true
-        ) {
-            (NSApp.delegate as? AppDelegate)?.updateController.installUpdate()
-        })
-        
-        options.append(CommandOption(
-            title: "Cancel or Skip Update",
-            description: "Dismiss the current update process"
-        ) {
-            updateViewModel.state.cancel()
-        })
-        
+
+        if updateViewModel.state.isCancellable {
+            options.append(CommandOption(
+                title: "Cancel or Skip Update",
+                description: "Dismiss the current update process"
+            ) {
+                updateViewModel.state.cancel()
+            })
+        }
+
         return options
     }
 
@@ -123,9 +130,11 @@ struct TerminalCommandPaletteView: View {
         return appDelegate.ghostty.config.commandPaletteEntries
             .filter(\.isSupported)
             .map { c in
-                CommandOption(
+                let symbols = appDelegate.ghostty.config.keyboardShortcut(for: c.action)?.keyList
+                return CommandOption(
                     title: c.title,
-                    description: c.description
+                    description: c.description,
+                    symbols: symbols
                 ) {
                     onAction(c.action)
                 }
@@ -141,8 +150,15 @@ struct TerminalCommandPaletteView: View {
             let displayColor = color != TerminalTabColor.none ? color : nil
 
             return controller.surfaceTree.map { surface in
-                let title = surface.title.isEmpty ? window.title : surface.title
-                let displayTitle = title.isEmpty ? "Untitled" : title
+                let terminalTitle = surface.title.isEmpty ? window.title : surface.title
+                let displayTitle: String
+                if let override = controller.titleOverride, !override.isEmpty {
+                    displayTitle = override
+                } else if !terminalTitle.isEmpty {
+                    displayTitle = terminalTitle
+                } else {
+                    displayTitle = "Untitled"
+                }
                 let pwd = surface.pwd?.abbreviatedPath
                 let subtitle: String? = if let pwd, !displayTitle.contains(pwd) {
                     pwd
@@ -155,7 +171,7 @@ struct TerminalCommandPaletteView: View {
                     subtitle: subtitle,
                     leadingIcon: "rectangle.on.rectangle",
                     leadingColor: displayColor?.displayColor.map { Color($0) },
-                    sortKey: AnySortKey(ObjectIdentifier(surface))
+                    sortKey: ObjectIdentifier(surface)
                 ) {
                     NotificationCenter.default.post(
                         name: Ghostty.Notification.ghosttyPresentTerminal,
@@ -169,7 +185,7 @@ struct TerminalCommandPaletteView: View {
 }
 
 /// This is done to ensure that the given view is in the responder chain.
-fileprivate struct ResponderChainInjector: NSViewRepresentable {
+private struct ResponderChainInjector: NSViewRepresentable {
     let responder: NSResponder
 
     func makeNSView(context: Context) -> NSView {

@@ -123,7 +123,7 @@ pub const Command = union(enum) {
 
     /// Iterates over each argument in the command.
     pub const ArgIterator = union(enum) {
-        shell: std.process.ArgIteratorGeneral(.{}),
+        shell: std.process.Args.IteratorGeneral(.{}),
         direct: struct {
             i: usize = 0,
             args: []const [:0]const u8,
@@ -163,6 +163,16 @@ pub const Command = union(enum) {
                 break :direct .{ .direct = copy };
             },
         };
+    }
+
+    pub fn deinit(self: *const Self, alloc: Allocator) void {
+        switch (self.*) {
+            .shell => |v| alloc.free(v),
+            .direct => |l| {
+                for (l) |v| alloc.free(v);
+                alloc.free(l);
+            },
+        }
     }
 
     pub fn formatEntry(self: Self, formatter: formatterpkg.EntryFormatter) !void {

@@ -6,11 +6,10 @@
     # glibc versions used by our dependencies from Nix are compatible with the
     # system glibc that the user is building for.
     #
-    # We are currently on nixpkgs-unstable to get Zig 0.15 for our package.nix and
-    # Gnome 49/Gtk 4.20.
+    # We are currently on nixpkgs-unstable to get Zig 0.16 for our package.nix,
+    # Gnome 50/Gtk 4.22, and fontconfig 2.18.
     #
-    nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz";
-    flake-utils.url = "github:numtide/flake-utils";
+    nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.zst";
 
     # Used for shell.nix
     flake-compat = {
@@ -18,17 +17,22 @@
       flake = false;
     };
 
+    systems = {
+      url = "github:nix-systems/default";
+      flake = false;
+    };
+
     zig = {
       url = "github:mitchellh/zig-overlay";
       inputs = {
         nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
         flake-compat.follows = "flake-compat";
+        systems.follows = "systems";
       };
     };
 
     zon2nix = {
-      url = "github:jcollie/zon2nix?rev=c28e93f3ba133d4c1b1d65224e2eebede61fd071";
+      url = "github:jcollie/zon2nix?ref=main";
       inputs = {
         nixpkgs.follows = "nixpkgs";
       };
@@ -63,41 +67,63 @@
 
     forAllPlatforms = f: lib.genAttrs platforms (s: f legacyPackages.${s});
     forBuildablePlatforms = f: lib.genAttrs buildablePlatforms (s: f legacyPackages.${s});
-  in {
-    devShell = forAllPlatforms (pkgs:
-      pkgs.callPackage ./nix/devShell.nix {
-        zig = zig.packages.${pkgs.stdenv.hostPlatform.system}."0.15.2";
-        wraptest = pkgs.callPackage ./nix/pkgs/wraptest.nix {};
-        zon2nix = zon2nix;
 
-        python3 = pkgs.python3.override {
-          self = pkgs.python3;
-          packageOverrides = pyfinal: pyprev: {
-            blessed = pyfinal.callPackage ./nix/pkgs/blessed.nix {};
-            ucs-detect = pyfinal.callPackage ./nix/pkgs/ucs-detect.nix {};
+    mkPkgArgs = optimize: {
+      inherit optimize;
+      revision = self.shortRev or self.dirtyShortRev or "dirty";
+    };
+  in {
+    devShells = forAllPlatforms (pkgs: {
+      default =
+        pkgs.callPackage ./nix/devShell.nix
+        {
+          zig = zig.packages.${pkgs.stdenv.hostPlatform.system}."0.16.0";
+          wraptest = pkgs.callPackage ./nix/pkgs/wraptest.nix {};
+          zon2nix = zon2nix;
+
+          python3 = pkgs.python3.override {
+            self = pkgs.python3;
+            packageOverrides = pyfinal: pyprev: {
+              blessed = pyfinal.callPackage ./nix/pkgs/blessed.nix {};
+              ucs-detect = pyfinal.callPackage ./nix/pkgs/ucs-detect.nix {};
+              wcwidth = pyfinal.callPackage ./nix/pkgs/wcwidth.nix {};
+            };
           };
         };
-      });
+    });
 
     packages =
-      forAllPlatforms (pkgs: {
-        # Deps are needed for environmental setup on macOS
-        deps = pkgs.callPackage ./build.zig.zon.nix {};
-      })
-      // forBuildablePlatforms (pkgs: let
-        mkArgs = optimize: {
-          inherit optimize;
-          revision = self.shortRev or self.dirtyShortRev or "dirty";
-        };
-      in rec {
-        ghostty-debug = pkgs.callPackage ./nix/package.nix (mkArgs "Debug");
-        ghostty-releasesafe = pkgs.callPackage ./nix/package.nix (mkArgs "ReleaseSafe");
-        ghostty-releasefast = pkgs.callPackage ./nix/package.nix (mkArgs "ReleaseFast");
+      builtins.foldl'
+      lib.recursiveUpdate
+      {}
+      [
+        (
+          forAllPlatforms (pkgs: rec {
+            # Deps are needed for environmental setup on macOS
+            deps = pkgs.callPackage ./build.zig.zon.nix {};
 
-        "ghostty-pixel-scroll" = ghostty-releasefast;
-        ghostty = ghostty-releasefast;
-        default = ghostty-releasefast;
-      });
+            libghostty-vt-debug = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "Debug");
+            libghostty-vt-releasesafe = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "ReleaseSafe");
+            libghostty-vt-releasefast = pkgs.callPackage ./nix/libghostty-vt.nix (mkPkgArgs "ReleaseFast");
+            libghostty-vt-debug-no-simd = pkgs.callPackage ./nix/libghostty-vt.nix ((mkPkgArgs "Debug") // {simd = false;});
+            libghostty-vt-releasesafe-no-simd = pkgs.callPackage ./nix/libghostty-vt.nix ((mkPkgArgs "ReleaseSafe") // {simd = false;});
+            libghostty-vt-releasefast-no-simd = pkgs.callPackage ./nix/libghostty-vt.nix ((mkPkgArgs "ReleaseFast") // {simd = false;});
+
+            libghostty-vt = libghostty-vt-releasefast;
+          })
+        )
+        (
+          forBuildablePlatforms (pkgs: rec {
+            ghostty-debug = pkgs.callPackage ./nix/package.nix (mkPkgArgs "Debug");
+            ghostty-releasesafe = pkgs.callPackage ./nix/package.nix (mkPkgArgs "ReleaseSafe");
+            ghostty-releasefast = pkgs.callPackage ./nix/package.nix (mkPkgArgs "ReleaseFast");
+
+            "ghostty-pixel-scroll" = ghostty-releasefast;
+            ghostty = ghostty-releasefast;
+            default = ghostty;
+          })
+        )
+      ];
 
     formatter = forAllPlatforms (pkgs: pkgs.alejandra);
 
@@ -138,11 +164,11 @@
       default = self.overlays.releasefast;
       releasefast = final: prev: {
         "ghostty-pixel-scroll" = self.packages.${prev.stdenv.hostPlatform.system}."ghostty-pixel-scroll";
-        ghostty = self.packages.${prev.stdenv.hostPlatform.system}.ghostty-releasefast;
+        ghostty = final.callPackage ./nix/package.nix (mkPkgArgs "ReleaseFast");
       };
       debug = final: prev: {
         "ghostty-pixel-scroll" = self.packages.${prev.stdenv.hostPlatform.system}."ghostty-pixel-scroll";
-        ghostty = self.packages.${prev.stdenv.hostPlatform.system}.ghostty-debug;
+        ghostty = final.callPackage ./nix/package.nix (mkPkgArgs "Debug");
       };
     };
   };

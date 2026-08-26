@@ -16,21 +16,36 @@ extension Ghostty {
     /// (F1, F2, ...) with a KeyboardShortcut. This doesn't represent a practical issue because input
     /// handling for Ghostty is handled at a lower level (usually). This function should generally only
     /// be used for things like NSMenu that only support keyboard shortcuts anyways.
-    static func keyboardShortcut(for trigger: ghostty_input_trigger_s) -> KeyboardShortcut? {
+    @MainActor static func keyboardShortcut(for trigger: ghostty_input_trigger_s) -> KeyboardShortcut? {
+        let modifierFlags = Self.eventModifierFlags(mods: trigger.mods)
         let key: KeyEquivalent
-        switch (trigger.tag) {
+        switch trigger.tag {
         case GHOSTTY_TRIGGER_PHYSICAL:
-            // Only functional keys can be converted to a KeyboardShortcut. Other physical
-            // mappings cannot because KeyboardShortcut in Swift is inherently layout-dependent.
-            if let equiv = Self.keyToEquivalent[trigger.key.physical] {
-                key = equiv
+            let physical = trigger.key.physical
+            if let equivalent = Self.keyToEquivalent[physical] {
+                key = equivalent
             } else {
-                return nil
+                guard
+                    Self.writingSystemKeyRange.contains(physical.rawValue),
+                    let inputKey = Input.Key(cKey: physical),
+                    let keyCode = inputKey.keyCode,
+                    // Command can select a distinct layout table. Other modifiers remain
+                    // separate in the menu's modifier mask and must not affect this character.
+                    let character = KeyboardLayout.character(
+                        for: keyCode,
+                        modifiers: modifierFlags.intersection(.command))
+                else { return nil }
+
+                // Printable physical keys must be translated through the current layout.
+                key = KeyEquivalent(character)
             }
 
         case GHOSTTY_TRIGGER_UNICODE:
-            guard let scalar = UnicodeScalar(trigger.key.unicode) else { return nil }
-            key = KeyEquivalent(Character(scalar))
+            guard
+                let scalar = UnicodeScalar(trigger.key.unicode),
+                let normalized = Character(scalar).lowercased().first
+            else { return nil }
+            key = KeyEquivalent(normalized)
 
         case GHOSTTY_TRIGGER_CATCH_ALL:
             // catch_all matches any key, so it can't be represented as a KeyboardShortcut
@@ -42,18 +57,18 @@ extension Ghostty {
 
         return KeyboardShortcut(
             key,
-            modifiers: EventModifiers(nsFlags: Ghostty.eventModifierFlags(mods: trigger.mods)))
+            modifiers: EventModifiers(nsFlags: modifierFlags))
     }
 
     // MARK: Mods
 
     /// Returns the event modifier flags set for the Ghostty mods enum.
     static func eventModifierFlags(mods: ghostty_input_mods_e) -> NSEvent.ModifierFlags {
-        var flags = NSEvent.ModifierFlags(rawValue: 0);
-        if (mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0) { flags.insert(.shift) }
-        if (mods.rawValue & GHOSTTY_MODS_CTRL.rawValue != 0) { flags.insert(.control) }
-        if (mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0) { flags.insert(.option) }
-        if (mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0) { flags.insert(.command) }
+        var flags = NSEvent.ModifierFlags(rawValue: 0)
+        if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
+        if mods.rawValue & GHOSTTY_MODS_CTRL.rawValue != 0 { flags.insert(.control) }
+        if mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0 { flags.insert(.option) }
+        if mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0 { flags.insert(.command) }
         return flags
     }
 
@@ -61,19 +76,19 @@ extension Ghostty {
     static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
         var mods: UInt32 = GHOSTTY_MODS_NONE.rawValue
 
-        if (flags.contains(.shift)) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
-        if (flags.contains(.control)) { mods |= GHOSTTY_MODS_CTRL.rawValue }
-        if (flags.contains(.option)) { mods |= GHOSTTY_MODS_ALT.rawValue }
-        if (flags.contains(.command)) { mods |= GHOSTTY_MODS_SUPER.rawValue }
-        if (flags.contains(.capsLock)) { mods |= GHOSTTY_MODS_CAPS.rawValue }
+        if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
+        if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
+        if flags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
+        if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
+        if flags.contains(.capsLock) { mods |= GHOSTTY_MODS_CAPS.rawValue }
 
         // Handle sided input. We can't tell that both are pressed in the
         // Ghostty structure but that's okay -- we don't use that information.
         let rawFlags = flags.rawValue
-        if (rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0) { mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
-        if (rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0) { mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
-        if (rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0) { mods |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
-        if (rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0) { mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 { mods |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 { mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
 
         return ghostty_input_mods_e(mods)
     }
@@ -81,7 +96,7 @@ extension Ghostty {
     /// A map from the Ghostty key enum to the keyEquivalent string for shortcuts. Note that
     /// not all ghostty key enum values are represented here because not all of them can be
     /// mapped to a KeyEquivalent.
-    static let keyToEquivalent: [ghostty_input_key_e : KeyEquivalent] = [
+    static let keyToEquivalent: [ghostty_input_key_e: KeyEquivalent] = [
         // Function keys
         GHOSTTY_KEY_ARROW_UP: .upArrow,
         GHOSTTY_KEY_ARROW_DOWN: .downArrow,
@@ -89,7 +104,7 @@ extension Ghostty {
         GHOSTTY_KEY_ARROW_RIGHT: .rightArrow,
         GHOSTTY_KEY_HOME: .home,
         GHOSTTY_KEY_END: .end,
-        GHOSTTY_KEY_DELETE: .delete,
+        GHOSTTY_KEY_DELETE: .deleteForward,
         GHOSTTY_KEY_PAGE_UP: .pageUp,
         GHOSTTY_KEY_PAGE_DOWN: .pageDown,
         GHOSTTY_KEY_ESCAPE: .escape,
@@ -98,6 +113,10 @@ extension Ghostty {
         GHOSTTY_KEY_BACKSPACE: .delete,
         GHOSTTY_KEY_SPACE: .space,
     ]
+
+    /// The contiguous W3C "Writing System Keys" § 3.1.1 key range.
+    private static let writingSystemKeyRange =
+        GHOSTTY_KEY_BACKQUOTE.rawValue...GHOSTTY_KEY_SLASH.rawValue
 }
 
 // MARK: Ghostty.Input.BindingFlags
@@ -243,7 +262,7 @@ extension Ghostty.Input {
 extension Ghostty.Input.Action: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Key Action")
 
-    static var caseDisplayRepresentations: [Ghostty.Input.Action : DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [Ghostty.Input.Action: DisplayRepresentation] = [
         .release: "Release",
         .press: "Press",
         .repeat: "Repeat"
@@ -355,7 +374,7 @@ extension Ghostty.Input {
 extension Ghostty.Input.MouseState: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Mouse State")
 
-    static var caseDisplayRepresentations: [Ghostty.Input.MouseState : DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [Ghostty.Input.MouseState: DisplayRepresentation] = [
         .release: "Release",
         .press: "Press"
     ]
@@ -420,7 +439,7 @@ extension Ghostty.Input {
 extension Ghostty.Input.MouseButton: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Mouse Button")
 
-    static var caseDisplayRepresentations: [Ghostty.Input.MouseButton : DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [Ghostty.Input.MouseButton: DisplayRepresentation] = [
         .unknown: "Unknown",
         .left: "Left",
         .right: "Right",
@@ -504,7 +523,7 @@ extension Ghostty.Input {
 extension Ghostty.Input.Momentum: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Scroll Momentum")
 
-    static var caseDisplayRepresentations: [Ghostty.Input.Momentum : DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [Ghostty.Input.Momentum: DisplayRepresentation] = [
         .none: "None",
         .began: "Began",
         .stationary: "Stationary",
@@ -515,7 +534,6 @@ extension Ghostty.Input.Momentum: AppEnum {
     ]
 }
 
-#if canImport(AppKit)
 import AppKit
 
 extension Ghostty.Input.Momentum {
@@ -532,7 +550,6 @@ extension Ghostty.Input.Momentum {
         }
     }
 }
-#endif
 
 // MARK: Ghostty.Input.Mods
 
@@ -770,14 +787,15 @@ extension Ghostty.Input {
         case cut
         case paste
 
+        init?(cKey: ghostty_input_key_e) {
+            guard let key = Key.allCases.first(where: { $0.cKey == cKey }) else { return nil }
+            self = key
+        }
+
         /// Get a key from a keycode
         init?(keyCode: UInt16) {
-            if let key = Key.allCases.first(where: { $0.keyCode == keyCode }) {
-                self = key
-                return
-            }
-
-            return nil
+            guard let key = Key.allCases.first(where: { $0.keyCode == keyCode }) else { return nil }
+            self = key
         }
 
         var cKey: ghostty_input_key_e {
@@ -1223,7 +1241,7 @@ extension Ghostty.Input.Key: AppEnum {
         ]
     }
 
-    static var caseDisplayRepresentations: [Ghostty.Input.Key : DisplayRepresentation] = [
+    static var caseDisplayRepresentations: [Ghostty.Input.Key: DisplayRepresentation] = [
         // Letters (A-Z)
         .a: "A", .b: "B", .c: "C", .d: "D", .e: "E", .f: "F", .g: "G", .h: "H", .i: "I", .j: "J",
         .k: "K", .l: "L", .m: "M", .n: "N", .o: "O", .p: "P", .q: "Q", .r: "R", .s: "S", .t: "T",

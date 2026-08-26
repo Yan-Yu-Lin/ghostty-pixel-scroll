@@ -9,6 +9,7 @@ const input = @import("../../input.zig");
 const renderer = @import("../../renderer.zig");
 const terminal = @import("../../terminal/main.zig");
 const Surface = @import("../../Surface.zig");
+const global = @import("../../global.zig");
 
 /// This is discovered via the hardcoded string in the ImGui demo window.
 const window_imgui_demo = "Dear ImGui Demo";
@@ -25,6 +26,7 @@ pub const Inspector = struct {
     terminal_info: widgets.terminal.Info,
     vt_stream: widgets.termio.Stream,
     renderer_info: widgets.renderer.Info,
+    show_demo_window: bool,
 
     pub fn init(alloc: Allocator) !Inspector {
         return .{
@@ -33,6 +35,7 @@ pub const Inspector = struct {
             .terminal_info = .empty,
             .vt_stream = try .init(alloc),
             .renderer_info = .empty,
+            .show_demo_window = true,
         };
     }
 
@@ -44,7 +47,7 @@ pub const Inspector = struct {
 
     pub fn draw(
         self: *Inspector,
-        surface: *const Surface,
+        surface: *Surface,
         mouse: Mouse,
     ) void {
         // Create our dockspace first. If we had to setup our dockspace,
@@ -52,17 +55,10 @@ pub const Inspector = struct {
         const dockspace_id = cimgui.c.ImGui_GetID("Main Dockspace");
         const first_render = createDockSpace(dockspace_id);
 
-        // In debug we show the ImGui demo window so we can easily view
-        // available widgets and such.
-        if (comptime builtin.mode == .Debug) {
-            var show: bool = true; // Always show it
-            cimgui.c.ImGui_ShowDemoWindow(&show);
-        }
-
         // Draw everything that requires the terminal state mutex.
         {
-            surface.renderer_state.mutex.lock();
-            defer surface.renderer_state.mutex.unlock();
+            surface.renderer_state.mutex.lockUncancelable(global.io());
+            defer surface.renderer_state.mutex.unlock(global.io());
             const t = surface.renderer_state.terminal;
 
             // Terminal info window
@@ -115,7 +111,7 @@ pub const Inspector = struct {
                 defer cimgui.c.ImGui_End();
                 if (open) {
                     self.vt_stream.draw(
-                        surface.alloc,
+                        surface,
                         &t.colors.palette.current,
                     );
                 }
@@ -133,6 +129,14 @@ pub const Inspector = struct {
                     surface.alloc,
                     open,
                 );
+            }
+        }
+
+        // In debug we show the ImGui demo window so we can easily view
+        // available widgets and such.
+        if (comptime builtin.mode == .Debug) {
+            if (self.show_demo_window) {
+                cimgui.c.ImGui_ShowDemoWindow(&self.show_demo_window);
             }
         }
 
@@ -171,12 +175,12 @@ pub const Inspector = struct {
             // this is the point we'd pre-split and so on for the initial
             // layout.
             const dock_id_main: cimgui.c.ImGuiID = dockspace_id;
+            cimgui.ImGui_DockBuilderDockWindow(window_imgui_demo, dock_id_main);
             cimgui.ImGui_DockBuilderDockWindow(window_terminal, dock_id_main);
             cimgui.ImGui_DockBuilderDockWindow(window_surface, dock_id_main);
             cimgui.ImGui_DockBuilderDockWindow(window_keyboard, dock_id_main);
             cimgui.ImGui_DockBuilderDockWindow(window_termio, dock_id_main);
             cimgui.ImGui_DockBuilderDockWindow(window_renderer, dock_id_main);
-            cimgui.ImGui_DockBuilderDockWindow(window_imgui_demo, dock_id_main);
             cimgui.ImGui_DockBuilderFinish(dockspace_id);
         }
 
@@ -439,7 +443,7 @@ fn mouseTable(
                 if (state != .press) continue;
                 const button: input.MouseButton = @enumFromInt(i);
                 cimgui.c.ImGui_SameLine();
-                cimgui.c.ImGui_Text("%s", (switch (button) {
+                cimgui.c.ImGui_Text("%s", @as([*]const u8, @ptrCast(switch (button) {
                     .unknown => "?",
                     .left => "L",
                     .middle => "M",
@@ -452,14 +456,15 @@ fn mouseTable(
                     .nine => "{9}",
                     .ten => "{10}",
                     .eleven => "{11}",
-                }).ptr);
+                })));
             }
         }
     }
 
     {
         const left_click_point: terminal.point.Coordinate = pt: {
-            const p = surface_mouse.left_click_pin orelse break :pt .{};
+            const p = surface_mouse.selection_gesture.validatedLeftClickPin(&t.screens) orelse
+                break :pt .{};
             const pt = t.screens.active.pages.pointFromPin(
                 .active,
                 p.*,
@@ -492,8 +497,8 @@ fn mouseTable(
             _ = cimgui.c.ImGui_TableSetColumnIndex(1);
             cimgui.c.ImGui_Text(
                 "(%dpx, %dpx)",
-                @as(u32, @intFromFloat(surface_mouse.left_click_xpos)),
-                @as(u32, @intFromFloat(surface_mouse.left_click_ypos)),
+                @as(u32, @intFromFloat(surface_mouse.selection_gesture.left_click_xpos)),
+                @as(u32, @intFromFloat(surface_mouse.selection_gesture.left_click_ypos)),
             );
         }
     }

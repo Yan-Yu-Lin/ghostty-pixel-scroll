@@ -106,14 +106,18 @@ pub const ghostty: Source = .{
         // Curly, dashed, etc underlines
         .{ .name = "Smulx", .value = .{ .string = "\\E[4:%p1%dm" } },
 
+        // Overline
+        .{ .name = "Smol", .value = .{ .string = "\\E[53m" } },
+        .{ .name = "Rmol", .value = .{ .string = "\\E[55m" } },
+
         // Colored underlines
         .{ .name = "Setulc", .value = .{ .string = "\\E[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%d%;m" } },
 
         // Cursor styles
         .{ .name = "Ss", .value = .{ .string = "\\E[%p1%d q" } },
 
-        // Cursor style reset
-        .{ .name = "Se", .value = .{ .string = "\\E[2 q" } },
+        // Cursor style reset (to user configured default)
+        .{ .name = "Se", .value = .{ .string = "\\E[0 q" } },
 
         // OSC 52 Clipboard
         .{ .name = "Ms", .value = .{ .string = "\\E]52;%p1%s;%p2%s\\007" } },
@@ -220,7 +224,7 @@ pub const ghostty: Source = .{
         .{ .name = "setaf", .value = .{ .string = "\\E[%?%p1%{8}%<%t3%p1%d%e%p1%{16}%<%t9%p1%{8}%-%d%e38;5;%p1%d%;m" } },
         .{ .name = "setrgbb", .value = .{ .string = "\\E[48:2:%p1%d:%p2%d:%p3%dm" } },
         .{ .name = "setrgbf", .value = .{ .string = "\\E[38:2:%p1%d:%p2%d:%p3%dm" } },
-        .{ .name = "sgr", .value = .{ .string = "%?%p9%t\\E(0%e\\E(B%;\\E[0%?%p6%t;1%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m" } },
+        .{ .name = "sgr", .value = .{ .string = "%?%p9%t\\E(0%e\\E(B%;\\E[0%?%p6%t;1%;%?%p5%t;2%;%?%p2%t;4%;%?%p1%p3%|%t;7%;%?%p4%t;5%;%?%p7%t;8%;m" } },
         .{ .name = "sgr0", .value = .{ .string = "\\E(B\\E[m" } },
         .{ .name = "sitm", .value = .{ .string = "\\E[3m" } },
         .{ .name = "smacs", .value = .{ .string = "\\E(0" } },
@@ -386,6 +390,15 @@ pub const ghostty: Source = .{
         .{ .name = "rs1", .value = .{ .string = "\\E]\\E\\\\\\Ec" } },
         .{ .name = "sc", .value = .{ .string = "\\E7" } },
     },
+};
+
+/// A content-derived version of the encoded terminfo source.
+pub const version = version: {
+    @setEvalBranchQuota(100_000);
+    var hashing: std.Io.Writer.Hashing(std.hash.Wyhash) =
+        .initHasher(.init(0), &.{});
+    ghostty.encode(&hashing.writer) catch unreachable;
+    break :version std.fmt.comptimePrint("{x}", .{hashing.hasher.final()});
 };
 
 test "encode" {

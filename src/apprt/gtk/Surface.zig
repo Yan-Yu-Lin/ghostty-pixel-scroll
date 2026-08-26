@@ -2,6 +2,7 @@ const Self = @This();
 
 const std = @import("std");
 const apprt = @import("../../apprt.zig");
+const configpkg = @import("../../config.zig");
 const CoreSurface = @import("../../Surface.zig");
 const ApprtApp = @import("App.zig");
 const Application = @import("class/application.zig").Application;
@@ -73,7 +74,7 @@ pub fn clipboardRequest(
     self: *Self,
     clipboard_type: apprt.Clipboard,
     state: apprt.ClipboardRequest,
-) !bool {
+) !apprt.ClipboardReadResult {
     return try self.surface.clipboardRequest(
         clipboard_type,
         state,
@@ -93,7 +94,7 @@ pub fn setClipboard(
     );
 }
 
-pub fn defaultTermioEnv(self: *Self) !std.process.EnvMap {
+pub fn defaultTermioEnv(self: *Self) !std.process.Environ.Map {
     return try self.surface.defaultTermioEnv();
 }
 

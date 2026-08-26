@@ -9,6 +9,7 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
     private var lastSurfaceConfig: Ghostty.SurfaceView.DerivedConfig?
 
     /// KVO observation for tab group window changes.
+    private weak var observedTabGroup: NSWindowTabGroup?
     private var tabGroupWindowsObservation: NSKeyValueObservation?
     private var tabBarVisibleObservation: NSKeyValueObservation?
 
@@ -92,8 +93,8 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
             // For glass background styles, use a transparent titlebar to let the glass effect show through
             // Only apply this for transparent and tabs titlebar styles
             let isGlassStyle = derivedConfig.backgroundBlur.isGlassStyle
-            let isTransparentTitlebar = derivedConfig.macosTitlebarStyle == "transparent" ||
-                                       derivedConfig.macosTitlebarStyle == "tabs"
+            let isTransparentTitlebar = derivedConfig.macosTitlebarStyle == .transparent ||
+            derivedConfig.macosTitlebarStyle == .tabs
 
             titlebarView.layer?.backgroundColor = (isGlassStyle && isTransparentTitlebar)
                 ? NSColor.clear.cgColor
@@ -129,9 +130,27 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
     // MARK: Tab Group Observation
 
     private func setupKVO() {
-        // See the docs for the respective setup functions for why.
-        setupTabGroupObservation()
-        setupTabBarVisibleObservation()
+        // This can run from one of the observation callbacks below. Replacing
+        // an observation before its callback returns leaves the window retained
+        // by AppKit, so always rebind on the next main-queue turn.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            // Recheck because the tab group and observation state may have changed
+            // while this work was waiting on the main queue.
+            let currentTabGroup = self.tabGroup
+            let observationsValid = currentTabGroup == nil || (
+                self.tabGroupWindowsObservation != nil &&
+                self.tabBarVisibleObservation != nil
+            )
+
+            // Keep the existing observations when they already match.
+            guard self.observedTabGroup !== currentTabGroup || !observationsValid else { return }
+
+            self.observedTabGroup = currentTabGroup
+            self.setupTabGroupObservation()
+            self.setupTabBarVisibleObservation()
+        }
     }
 
     /// Monitors the tabGroup windows value for any changes and resyncs the appearance on change.
@@ -151,7 +170,7 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         tabGroupWindowsObservation = tabGroup.observe(
             \.windows,
              options: [.new]
-        ) { [weak self] _, change in
+        ) { [weak self] _, _ in
             // NOTE: At one point, I guarded this on only if we went from 0 to N
             // or N to 0 under the assumption that the tab bar would only get
             // replaced on those cases. This turned out to be false (Tahoe).
@@ -175,7 +194,7 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         tabBarVisibleObservation = tabGroup?.observe(
             \.isTabBarVisible,
              options: [.new]
-        ) { [weak self] _, change in
+        ) { [weak self] _, _ in
             guard let self else { return }
             guard let lastSurfaceConfig else { return }
             self.syncAppearance(lastSurfaceConfig)
